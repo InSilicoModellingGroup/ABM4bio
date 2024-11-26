@@ -40,12 +40,15 @@ fresh:
 	cd $(ABM4bio)/examples/$@; rm -rf results; make run
 tests:
 	make clean; make fresh; \
+	make blood_vessel_CTC; \
 	make cancer_angiogenesis; \
 	make cancer_radiation; \
 	make HeLa_cells; \
 	make neuron_astrocyte; \
 	make neuron_bipolar; \
-	make obstacle_demo_1; make obstacle_demo_2; \
+	make obstacle_demo_1; \
+	make obstacle_demo_2; \
+	make tumour_spheroid; \
 	make vasculogenesis; \
 	make wound_assay; \
 	echo "\n\n ***************************"; \
