@@ -1,0 +1,86 @@
+parameter_name, type, parameter_value
+### START , ### , ###
+output_directory,               string, results
+simulation_title,               string, ABM4bio
+#,#,#
+number_of_time_steps,           int,   100
+time_step,                      float, 1.0
+visualization_interval,         int,   1
+#,#,#
+min_boundary,                   float, -100.0
+max_boundary,                   float, +100.0
+domain_tolerance,               float, 2.0
+safe_distance_ratio,            float,  0.50
+min_vessel_length,              float,  0.100
+max_vessel_length,              float,  9.999
+default_vessel_stiffness,       float,  100
+default_vessel_adherence,       float,  1
+default_vessel_spring_constant, float,  10
+#,#,#
+simulation_domain_is_2D,        bool,   false
+simulation_domain_is_polar,     bool,   false
+simulation_domain_is_bounded,   bool,   false
+simulation_domain_is_periodic,  bool,   false
+simulation_models_vessels,      bool,   true
+#,#,#
+#,#,#
+cell/phenotypes,                   string, a_cell
+cell/max_displacement,              float, 1.0
+diffusion_grid/biochemicals,       string, O2 VEGF
+diffusion_grid/spatial_resolution,    int, 50
+#,#,#
+### vessel , ### , #
+vessel/initial_configuration/from_file,       string, ./vessels.dat
+vessel/diameter/min,                           float, 5.00000
+vessel/diameter/max,                           float, 10.00000
+vessel/O2/secretion/sprout_not_tip_secretes,    bool, true
+vessel/O2/secretion/net_balance,               float, 0.0
+vessel/O2/secretion/saturation,                float, 1.000e-0
+vessel/VEGF/secretion/sprout_not_tip_secretes,  bool, false
+vessel/VEGF/secretion/net_balance,             float, 0.000e-0
+vessel/VEGF/secretion/saturation,              float, 0.000e-0
+### vessel , ### , growth / remodelling
+vessel/can_grow/probability,                   float, 0.000000
+### vessel , ### , branching
+vessel/can_branch/O2/threshold,                float, 0.000e-0
+vessel/can_branch/O2/probability,              float, 0.000
+vessel/can_branch/O2/elongation_length,        float, 0.000
+vessel/can_branch/VEGF/threshold,              float, 1.000e-7
+vessel/can_branch/VEGF/probability,            float, 0.100
+vessel/can_branch/VEGF/elongation_length,      float, 0.001
+vessel/can_branch/time_window,                   int, 20
+vessel/can_branch/distance/min,                float, 19.00000
+vessel/can_branch/distance/max,                float, 20.00000
+### vessel , ### , sprouting
+vessel/can_sprout/O2/threshold,                float, 0.000e-0
+vessel/can_sprout/O2/probability,              float, 0.000
+vessel/can_sprout/O2/elongation_length,        float, 0.000
+vessel/can_sprout/VEGF/threshold,              float, 1.000e-7
+vessel/can_sprout/VEGF/probability,            float, 0.999
+vessel/can_sprout/VEGF/elongation_length,      float, 1.0
+vessel/can_sprout/elongation_length_range,     float, 0.151
+vessel/can_sprout/diameter_scaleup,            float, 1.000000001
+#,#,#
+### O2 , ### , ###
+O2/initial_value/min,           float, 0.999e-0
+O2/initial_value/max,           float, 1.000e-0
+#,#,#
+### bFGF , ### , ###
+VEGF/initial_value/min,          float, 0.000e-0
+VEGF/initial_value/max,          float, 1.000e-0
+VEGF/initial_value/from_file,   string, ./VEGF.radial.dat
+#,#,#
+### a_cell , ### , ###
+a_cell/phenotype_ID,           int, 1
+a_cell/initial_population,     int, 0
+a_cell/initial_population/std, int, 0
+a_cell/mechanism_order, int, 10
+a_cell/diameter/min,           float, 1.000000
+a_cell/diameter/max,           float, 1.000001
+a_cell/principal/0,            float, 1.00
+a_cell/principal/1,            float, 1.00
+a_cell/principal/2,            float, 1.00
+a_cell/principal/min,          float, 0.9999
+a_cell/principal/max,          float, 1.0001
+#,#,#
+### END , ### , ###

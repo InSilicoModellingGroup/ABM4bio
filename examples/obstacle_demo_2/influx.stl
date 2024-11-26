@@ -1,0 +1,16 @@
+solid Created by Gmsh
+facet normal -1 0 0
+  outer loop
+    vertex 90 -50 -50
+    vertex 90 -50 +50
+    vertex 90 +50 +50
+  endloop
+endfacet
+facet normal -1 0 0
+  outer loop
+    vertex 90 -50 -50
+    vertex 90 +50 +50
+    vertex 90 +50 -50
+  endloop
+endfacet
+endsolid Created by Gmsh

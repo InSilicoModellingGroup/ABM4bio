@@ -1,0 +1,138 @@
+parameter_name, type, parameter_value
+### START , ### , ###
+output_directory,               string, results
+simulation_title,               string, ABM4bio
+#,#,#
+number_of_time_steps,           int,    1200
+time_step,                      float,  1.000000e-0
+visualization_interval,         int,    10
+#,#,#
+min_boundary,                   float, -500.0
+max_boundary,                   float, +500.0
+domain_tolerance,               float, 10.0
+migration_tolerance,            float, 0.00001
+safe_distance_ratio,            float, 0.999000
+simulation_domain_is_2D,         bool, false
+simulation_domain_is_polar,      bool, false
+simulation_domain_is_bounded,    bool, false
+simulation_domain_is_periodic,   bool, false
+simulation_models_vessels,       bool, false
+simulation_obstacles,             int, 0
+#,#,#
+#,#,#
+cell/phenotypes,                   string, necrotic_CC normoxic_CC hypoxic__CC
+cell/max_displacement,              float, 20.0
+diffusion_grid/biochemicals,       string, O2
+diffusion_grid/spatial_resolution,    int, 76
+#,#,#
+### O2 , ### , ###
+O2/diffusion_coefficient,       float, 0.000000e-0
+O2/dissipation_coefficient,     float, 0.000000e-0
+O2/initial_value/min,           float, 1.000000e-0
+O2/initial_value/max,           float, 1.000000e-0
+#,#,#
+### necrotic cancer cell , ### , ###
+necrotic_CC/phenotype_ID, int, 0
+necrotic_CC/initial_population, int, 0
+necrotic_CC/mechanism_order, int, 10
+necrotic_CC/can_apoptose, bool, true
+necrotic_CC/can_apoptose/probability,                    float, 0.0010
+necrotic_CC/can_apoptose/probability_increment_with_age, float, 0.0000
+necrotic_CC/can_apoptose/time_window,                      int, 1
+necrotic_CC/can_apoptose/O2/threshold,                   float,-0.100000e-0
+necrotic_CC/can_apoptose/O2/dependency,                   bool, false
+necrotic_CC/can_apoptose/O2/probability,                 float, 0.0100
+#,#,#
+### normoxic cancer cell , ### , ###
+normoxic_CC/phenotype_ID, int, 1
+normoxic_CC/initial_population, int, 5
+normoxic_CC/initial_population/pattern,              string, box/inside
+normoxic_CC/initial_population/pattern/box/point_A/0, float, -25.000
+normoxic_CC/initial_population/pattern/box/point_A/1, float, -25.000
+normoxic_CC/initial_population/pattern/box/point_A/2, float, -25.000
+normoxic_CC/initial_population/pattern/box/point_B/0, float, +25.000
+normoxic_CC/initial_population/pattern/box/point_B/1, float, +25.000
+normoxic_CC/initial_population/pattern/box/point_B/2, float, +25.000
+normoxic_CC/mechanism_order, int, 10
+normoxic_CC/can_apoptose, bool, true
+normoxic_CC/can_apoptose/probability,                    float, 0.0100
+normoxic_CC/can_apoptose/probability_increment_with_age, float, 0.0000
+normoxic_CC/can_apoptose/time_window,                      int, 240
+normoxic_CC/can_apoptose/O2/threshold,                   float,-0.200000e-0
+normoxic_CC/can_apoptose/O2/probability,                 float, 0.5000
+normoxic_CC/can_apoptose/O2/dependency,                   bool, false
+normoxic_CC/can_grow, bool, true
+normoxic_CC/can_grow/probability,        float, 0.2000
+normoxic_CC/can_grow/diameter_rate,      float, 0
+normoxic_CC/can_grow/O2/threshold,       float,+0.750000e-0
+normoxic_CC/can_grow/O2/dependency,       bool, false
+normoxic_CC/can_grow/O2/diameter_rate,   float, 1.000e-0
+normoxic_CC/can_divide, bool, true
+normoxic_CC/can_divide/probability,                    float, 0.1000
+normoxic_CC/can_divide/probability_increment_with_age, float, 0.0010
+normoxic_CC/can_divide/diameter_cutoff,                float, 29.000e-0
+normoxic_CC/can_divide/max,                            int,   2
+normoxic_CC/can_divide/time_window,                    int,  40
+normoxic_CC/can_divide/O2/threshold,                   float,+0.750000e-0
+normoxic_CC/can_transform_and_divide/O2/threshold,     float, 0
+normoxic_CC/can_divide_and_transform/O2/threshold,     float, 0
+normoxic_CC/can_migrate, bool, true
+normoxic_CC/can_migrate/probability,                 float, 0.6666
+normoxic_CC/can_migrate/half_range,                  float, 5.000e-0
+normoxic_CC/can_migrate/chemotaxis/O2,               float, 5.000e-0
+normoxic_CC/can_migrate/chemotaxis/O2/threshold,     float,-0.750000e-0
+normoxic_CC/can_migrate/chemotaxis/O2/probability,   float, 0.9999
+normoxic_CC/can_transform, bool, true
+normoxic_CC/can_transform/probability,          float, 0.9999
+normoxic_CC/can_transform/O2/threshold,         float,-0.650000e-0
+normoxic_CC/can_transform/O2/probability,       float, 0.3000
+normoxic_CC/can_transform/O2/time_window_open,  int, 1
+normoxic_CC/can_transform/O2/time_window_close, int, 11111111
+normoxic_CC/can_transform/O2/new_phenotype,     int, 2
+normoxic_CC/O2/secretion/dependency,       bool, false
+normoxic_CC/O2/secretion/net_balance,     float, -0.0003000
+normoxic_CC/O2/secretion/net_balance/std, float, 0
+normoxic_CC/O2/secretion/saturation,      float, 0
+normoxic_CC/diameter/min,  float, 20.000e-0
+normoxic_CC/diameter/max,  float, 30.000e-0
+normoxic_CC/principal/0,   float, 1.00
+normoxic_CC/principal/1,   float, 1.00
+normoxic_CC/principal/2,   float, 1.00
+normoxic_CC/principal/min, float, 0.999
+normoxic_CC/principal/max, float, 1.001
+#,#,#
+### hypoxic cancer cell , ### , ###
+hypoxic__CC/phenotype_ID, int, 2
+hypoxic__CC/initial_population, int, 0
+hypoxic__CC/mechanism_order, int, 10
+hypoxic__CC/can_apoptose, bool, true
+hypoxic__CC/can_apoptose/probability,                    float, 0.0050
+hypoxic__CC/can_apoptose/probability_increment_with_age, float, 0.0000
+hypoxic__CC/can_apoptose/time_window,                      int, 480
+hypoxic__CC/can_apoptose/O2/threshold,                   float,-0.200000e-0
+hypoxic__CC/can_apoptose/O2/probability,                 float, 0.5000
+hypoxic__CC/can_apoptose/O2/dependency,                   bool, false
+hypoxic__CC/can_migrate, bool, true
+hypoxic__CC/can_migrate/probability,                 float, 0.6666
+hypoxic__CC/can_migrate/half_range,                  float, 0.100e-0
+hypoxic__CC/can_migrate/chemotaxis/O2,               float, 0.000e-0
+hypoxic__CC/can_transform, bool, true
+hypoxic__CC/can_transform/probability,          float, 0.9999
+hypoxic__CC/can_transform/O2/threshold,         float,-0.350e-0
+hypoxic__CC/can_transform/O2/probability,       float, 0.5000
+hypoxic__CC/can_transform/O2/time_window_open,    int, 1
+hypoxic__CC/can_transform/O2/time_window_close,   int, 11111111
+hypoxic__CC/can_transform/O2/new_phenotype,       int, 0
+hypoxic__CC/O2/secretion/dependency,       bool, false
+hypoxic__CC/O2/secretion/net_balance,     float, -0.0001000
+hypoxic__CC/O2/secretion/net_balance/std, float, 0
+hypoxic__CC/O2/secretion/saturation,      float, 0
+hypoxic__CC/diameter/min,  float, 20.000e-0
+hypoxic__CC/diameter/max,  float, 30.000e-0
+hypoxic__CC/principal/0,   float, 1.00
+hypoxic__CC/principal/1,   float, 1.00
+hypoxic__CC/principal/2,   float, 1.00
+hypoxic__CC/principal/min, float, 0.999
+hypoxic__CC/principal/max, float, 1.001
+#,#,#
+### END , ### , ###

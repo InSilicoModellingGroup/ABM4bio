@@ -1,0 +1,193 @@
+parameter_name, type, parameter_value
+### START , ### , ###
+output_directory,               string, results
+simulation_title,               string, ABM4bio
+#,#,#
+number_of_time_steps,           int,    400
+time_step,                      float,  1.000000e-0
+visualization_interval,         int,    1
+#,#,#
+min_boundary,                  float, -100.0
+max_boundary,                  float, +100.0
+domain_tolerance,              float,  1.0
+migration_tolerance,           float,  0.001
+safe_distance_ratio,           float,  0.999000
+simulation_domain_is_2D,        bool, false
+simulation_domain_is_polar,     bool, false
+simulation_domain_is_bounded,   bool, false
+simulation_domain_is_periodic,  bool, false
+simulation_models_vessels,      bool, false
+simulation_obstacles,            int, 0
+convection/dynamic/from_file, string, ./field_Convection.dat
+#,#,#
+#,#,#
+cell/phenotypes,                   string, NTC HUVEC RBC CTC TCn TCh
+cell/max_displacement,             float, 10.0
+diffusion_grid/biochemicals,       string, O2 ECM
+diffusion_grid/spatial_resolution, int, 50
+#,#,#
+### O2 , ### , ###
+O2/initial_value/min,           float, 0.000000e-0
+O2/initial_value/max,           float, 1.000000e-0
+O2/initial_value/from_file,    string, ./field_O2.dat
+O2/diffusion_coefficient,       float, 0.
+O2/dissipation_coefficient,     float, 0.
+#,#,#
+### ECM , ### , ###
+ECM/initial_value/min,         float, 0.000000e-0
+ECM/initial_value/max,         float, 1.000000e-0
+ECM/initial_value/from_file,  string, ./field_ECM.dat
+#,#,#
+### NTC (necrotic tumour cell) , ### , ###
+NTC/phenotype_ID, int, 0
+NTC/initial_population, int, 0
+NTC/mechanism_order, int, 10
+#,#,#
+### HUVEC (human umbilical vein endothelial cell) , ### , ###
+HUVEC/phenotype_ID, int, 1
+HUVEC/mechanism_order, int, 10
+HUVEC/initial_population/from_file, string, ./initial_HUVEC.dat
+HUVEC/density, float, 100.0
+HUVEC/diameter/min, float, 1.000e-0
+HUVEC/diameter/max, float, 35.000e-0
+HUVEC/principal/0,   float, 1.00
+HUVEC/principal/1,   float, 1.00
+HUVEC/principal/2,   float, 0.25
+HUVEC/principal/min, float, 0.20
+HUVEC/principal/max, float, 1.20
+#,#,#
+### RBC (red blood cell) , ### , ###
+RBC/phenotype_ID, int, 2
+RBC/mechanism_order, int, 10
+RBC/initial_population/from_file, string, ./initial_RBC.dat
+RBC/io_flux,                     int, 1
+RBC/io_flux/1/time_function/0, float, 0
+RBC/io_flux/1/time_function/1, float, 20
+RBC/io_flux/1/time_step,         int, 1
+RBC/io_flux/1/STL,            string, ./vessel_inlet.stl
+RBC/density, float, 1.0
+RBC/diameter/min, float, 7.500e-0
+RBC/diameter/max, float, 8.500e-0
+RBC/principal/0,   float, 1.00
+RBC/principal/1,   float, 1.00
+RBC/principal/2,   float, 1.00
+RBC/principal/min, float, 0.99
+RBC/principal/max, float, 1.01
+RBC/can_migrate, bool, true
+RBC/can_migrate/probability, float, 0.9999
+RBC/can_migrate/half_range,  float, 0.50e-0
+RBC/can_migrate/chemotaxis/O2,             float,+2.00e-0
+RBC/can_migrate/chemotaxis/O2/threshold,   float,-0.99
+RBC/can_migrate/chemotaxis/O2/probability, float, 0.9999
+#,#,#
+### CTC (circulating tumour cell) , ### , ###
+CTC/phenotype_ID, int, 3
+CTC/mechanism_order, int, 10
+CTC/initial_population, int, 0
+# CTC/io_flux,                     int, 1
+# CTC/io_flux/1/time_function/0, float, 0
+# CTC/io_flux/1/time_function/1, float, 2
+# CTC/io_flux/1/time_step,         int, 10
+# CTC/io_flux/1/STL,            string, ./vessel_inlet.stl
+CTC/density, float, 1.0
+CTC/diameter/min, float, 15.00e-0
+CTC/diameter/max, float, 25.00e-0
+CTC/principal/0, float, 1.00
+CTC/principal/1, float, 1.00
+CTC/principal/2, float, 1.00
+CTC/principal/min, float, 0.99
+CTC/principal/max, float, 1.01
+CTC/can_migrate, bool, true
+CTC/can_migrate/probability, float, 0.9999
+CTC/can_migrate/half_range,  float, 0.02e-0
+CTC/can_migrate/chemotaxis/O2,             float,-3.00e-0
+CTC/can_migrate/chemotaxis/O2/threshold,   float,-0.990000e-0
+CTC/can_migrate/chemotaxis/O2/probability, float, 0.9999
+CTC/can_migrate/chemotaxis/ECM,             float,+0.10e-0
+CTC/can_migrate/chemotaxis/ECM/threshold,   float,-0.800000e-0
+CTC/can_migrate/chemotaxis/ECM/probability, float, 0.9999
+CTC/can_transform, bool, true
+CTC/can_transform/probability,          float, 0.4999
+CTC/can_transform/O2/threshold,         float,-0.900000e-0
+CTC/can_transform/O2/probability,       float, 0.4999
+CTC/can_transform/O2/time_window_open,    int, 1
+CTC/can_transform/O2/time_window_close,   int, 11111111
+CTC/can_transform/O2/new_phenotype,       int, 4
+CTC/can_transform/ECM/threshold,        float, 0
+CTC/can_transform/ECM/probability,      float, 0.0999
+CTC/can_transform/ECM/time_window_open,   int, 1
+CTC/can_transform/ECM/time_window_close,  int, 11111111
+CTC/can_transform/ECM/new_phenotype,      int, 4
+#,#,#
+### TCn (tumour cell - normoxic) , ### , ###
+TCn/phenotype_ID, int, 4
+TCn/mechanism_order, int, 10
+TCn/initial_population, int, 0
+TCn/density, float, 1000.0
+TCn/diameter/min, float, 15.00e-0
+TCn/diameter/max, float, 25.00e-0
+TCn/principal/0, float, 1.00
+TCn/principal/1, float, 1.00
+TCn/principal/2, float, 1.00
+TCn/principal/min, float, 0.99
+TCn/principal/max, float, 1.01
+# TCn/can_grow, bool, true
+# TCn/can_grow/probability,   float, 0.9999
+# TCn/can_grow/diameter_rate, float, 1.000e-0
+# TCn/can_grow/O2/threshold,  float, 0
+# TCn/can_grow/ECM/threshold, float, 0
+TCn/can_divide, bool, true
+TCn/can_divide/probability,                    float, 0.1999
+TCn/can_divide/probability_increment_with_age, float, 0.0000
+TCn/can_divide/diameter_cutoff,                float, 25.000e-0
+TCn/can_divide/max,                            int,   2
+TCn/can_divide/time_window,                    int,   20
+TCn/can_divide/O2/threshold,                   float,+0.800000e-0
+TCn/can_divide/ECM/threshold,                  float, 0
+TCn/can_divide_and_transform/O2/threshold,     float, 0
+TCn/can_divide_and_transform/ECM/threshold,    float, 0
+# TCn/can_transform, bool, true
+# TCn/can_transform/probability,          float, 0.4999
+# TCn/can_transform/O2/threshold,         float,-0.799999e-0
+# TCn/can_transform/O2/probability,       float, 0.4999
+# TCn/can_transform/O2/time_window_open,    int, 1
+# TCn/can_transform/O2/time_window_close,   int, 11111111
+# TCn/can_transform/O2/new_phenotype,       int, 5
+# TCn/can_transform/ECM/threshold,        float, 0
+TCn/can_migrate, bool, true
+TCn/can_migrate/probability, float, 0.9999
+TCn/can_migrate/half_range,  float, 0
+# TCn/O2/secretion/net_balance,     float,-0.0020
+# TCn/O2/secretion/net_balance/std, float, 0
+# TCn/O2/secretion/dependency,       bool, false
+# TCn/O2/secretion/saturation,      float, 0.999000e-0
+#,#,#
+### TCh (tumour cell - hypoxic) , ### , ###
+TCh/phenotype_ID, int, 5
+TCh/mechanism_order, int, 10
+TCh/initial_population, int, 0
+TCh/density, float, 1000.0
+TCh/diameter/min, float, 15.00e-0
+TCh/diameter/max, float, 25.00e-0
+TCh/principal/0, float, 1.00
+TCh/principal/1, float, 1.00
+TCh/principal/2, float, 1.00
+TCh/principal/min, float, 0.99
+TCh/principal/max, float, 1.01
+TCh/can_transform, bool, true
+TCh/can_transform/probability,          float, 0.9999
+TCh/can_transform/O2/threshold,         float,-0.599999e-0
+TCh/can_transform/O2/probability,       float, 0.9999
+TCh/can_transform/O2/time_window_open,    int, 1
+TCh/can_transform/O2/time_window_close,   int, 11111111
+TCh/can_transform/O2/new_phenotype,       int, 0
+TCh/can_transform/ECM/threshold,        float, 0
+TCh/can_migrate, bool, true
+TCh/can_migrate/probability, float, 0.9999
+TCh/can_migrate/half_range,  float, 0
+TCh/O2/secretion/net_balance,     float,-0.0010
+TCh/O2/secretion/net_balance/std, float, 0
+TCh/O2/secretion/dependency,       bool, false
+TCh/O2/secretion/saturation,      float, 0.999000e-0
+#,#,#
+### END , ### , ###

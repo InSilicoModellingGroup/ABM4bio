@@ -1,0 +1,87 @@
+parameter_name, type, parameter_value
+### START , ### , ###
+output_directory,               string, results
+simulation_title,               string, ABM4bio
+#,#,#
+number_of_time_steps,           int,   10
+time_step,                      float, 1.0
+visualization_interval,         int,   1
+#,#,#
+min_boundary,                   float, -300.0
+max_boundary,                   float, +300.0
+domain_tolerance,               float,    2.0
+safe_distance_ratio,            float, 0.50
+min_vessel_length,              float, 1.000
+max_vessel_length,              float, 7.000
+default_vessel_stiffness,       float, 1.0e+0
+default_vessel_adherence,       float, 1.0e+3
+simulation_domain_is_2D,        bool,  false
+simulation_domain_is_polar,     bool,  false
+simulation_domain_is_bounded,   bool,  false
+simulation_domain_is_periodic,  bool,  false
+simulation_models_vessels,      bool,  false
+#,#,#
+#,#,#
+cell/phenotypes,                   string, neuron
+cell/max_displacement,              float, 1.001
+diffusion_grid/biochemicals,       string, O2 NGF
+diffusion_grid/spatial_resolution,    int, 30
+#,#,#
+### O2 , ### , ###
+O2/initial_value/min,           float, 0.999000e-0
+O2/initial_value/max,           float, 1.000000e-0
+#,#,#
+### NGF , ### , ###
+NGF/diffusion_coefficient,      float, 0.10
+NGF/initial_value/min,          float, 0.000000e-0
+NGF/initial_value/max,          float, 1.000000e-5
+#,#,#
+### neuron , ### , ###
+neuron/phenotype_ID, int, 1
+neuron/initial_population,                           int, 4
+neuron/initial_population/std,                       int, 0
+neuron/initial_population/pattern,                string, sphere/inside
+neuron/initial_population/pattern/sphere/inside,    bool, true
+neuron/initial_population/pattern/sphere/center/0, float, 0.0
+neuron/initial_population/pattern/sphere/center/1, float, 0.0
+neuron/initial_population/pattern/sphere/center/2, float, 0.0
+neuron/initial_population/pattern/sphere/radius,   float, 100.0
+neuron/can_protrude, bool, true
+neuron/can_protrude/time_repeats,                        int, 44
+neuron/can_protrude/max_protrusions,                     int, 11
+neuron/can_protrude/relative_angle/degrees/min,        float,  50.
+neuron/can_protrude/relative_angle/degrees/max,        float, 180.
+neuron/can_protrude/probability,                       float, 0.999
+neuron/can_protrude/diameter_cutoff,                   float, 10.000000
+neuron/can_protrude/time_window_open,                    int, 1
+neuron/can_protrude/time_window_close,                   int, 111111
+neuron/can_protrude/pattern,                             int, +2
+neuron/can_protrude/O2/threshold,                      float,+0.90
+neuron/can_protrude/NGF/threshold,                     float, 0
+neuron/can_protrude/diameter/min,                      float, 0.100000
+neuron/can_protrude/diameter/max,                      float, 1.500000
+neuron/can_protrude/sprout/probability,                float, 0.900
+neuron/can_protrude/sprout/current_direction/weight,   float, 1.50000
+neuron/can_protrude/sprout/random_direction/weight,    float, 0.75000
+neuron/can_protrude/sprout/chemotaxis_direction/weight,float, 0.20000
+neuron/can_protrude/sprout/chemotaxis,                string, O2
+neuron/can_protrude/sprout/elongation_rate,            float, 0.05
+neuron/can_protrude/sprout/remodelling_ratio,          float, 0.999000
+neuron/can_protrude/branch/probability,                float, 0.
+neuron/can_protrude/dissect/probability,               float, 0.399
+neuron/can_protrude/dissect/length2branch/min,         float, 9.5
+neuron/can_protrude/afterwards/can_grow,                bool, false
+neuron/can_protrude/afterwards/can_divide,              bool, false
+neuron/can_protrude/afterwards/can_migrate,             bool, false
+neuron/can_protrude/afterwards/can_transform,           bool, false
+neuron/can_protrude/afterwards/can_polarize,            bool, false
+neuron/mechanism_order,   int, 10
+neuron/diameter/min,    float, 10.000000
+neuron/diameter/max,    float, 10.000001
+neuron/principal/0,     float, 1.00
+neuron/principal/1,     float, 1.00
+neuron/principal/2,     float, 1.00
+neuron/principal/min,   float, 0.9999
+neuron/principal/max,   float, 1.0001
+#,#,#
+### END , ### , ###

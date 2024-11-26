@@ -1,0 +1,97 @@
+parameter_name, type, parameter_value
+### START , ### , ###
+output_directory,               string, results
+simulation_title,               string, ABM4bio
+#,#,#
+number_of_time_steps,           int,    264
+time_step,                      float,  1.000000e-0
+visualization_interval,         int,    1
+statistics_interval,            int,    24
+#,#,#
+min_boundary,                   float, -50.0
+max_boundary,                   float, +50.0
+domain_tolerance,               float,   1.0
+safe_distance_ratio,            float,  1.999000
+simulation_domain_is_2D,        bool,   true
+simulation_domain_is_polar,     bool,   false
+simulation_domain_is_bounded,   bool,   false
+simulation_domain_is_periodic,  bool,   true
+simulation_models_vessels,      bool,   false
+#,#,#
+#,#,#
+cell/phenotypes,                   string, necrotic_cell cancer_cell
+cell/max_displacement,             float, 1.0
+diffusion_grid/biochemicals,       string, O2
+diffusion_grid/spatial_resolution, int, 100
+#,#,#
+### O2 , ### , ###
+O2/diffusion_coefficient,       float, 0.
+O2/dissipation_coefficient,     float, 0.
+O2/initial_value/min,           float, 0.999999e-0
+O2/initial_value/max,           float, 1.000000e-0
+O2/threshold/min,               float, 0.000001e-0
+O2/threshold/max,               float, 1.000000e-0
+#,#,#
+### necrotic_cell , ### , ###
+necrotic_cell/phenotype_ID, int, 0
+necrotic_cell/initial_population, int, 0
+necrotic_cell/mechanism_order, int, 10
+#,#,#
+### cancer_cell , ### , ###
+cancer_cell/phenotype_ID, int, 1
+cancer_cell/initial_population, int, 100
+cancer_cell/initial_population/phase_Ap/percentage, float, 10.0
+cancer_cell/initial_population/phase_G1/percentage, float, 50.0
+cancer_cell/initial_population/phase_Sy/percentage, float, 25.0
+cancer_cell/initial_population/phase_G2/percentage, float, 10.0
+cancer_cell/initial_population/phase_Di/percentage, float,  5.0
+cancer_cell/initial_population/phase_Tr/percentage, float,  0.0
+cancer_cell/mechanism_order, int, 11
+#,#,#
+cancer_cell/can_apoptose, bool, false
+cancer_cell/can_apoptose/probability,                    float, 0.0010
+cancer_cell/can_apoptose/probability_increment_with_age, float, 0.0000
+cancer_cell/can_apoptose/time_window,                      int, 24
+cancer_cell/can_apoptose/time_window/to_delete,            int, 24
+cancer_cell/can_apoptose/O2/threshold,                   float, 0
+cancer_cell/can_apoptose/O2/dependency,                   bool, false
+cancer_cell/can_apoptose/O2/probability,                 float, 0
+#,#,#
+cancer_cell/can_grow, bool, true
+cancer_cell/can_grow/probability,        float, 1.000
+cancer_cell/can_grow/diameter_rate,      float, 0.01
+cancer_cell/can_grow/O2/threshold,       float, 0.000000e-0
+cancer_cell/can_grow/O2/dependency,       bool, false
+cancer_cell/can_grow/O2/diameter_rate,   float, 0
+#,#,#
+cancer_cell/can_divide, bool, true
+cancer_cell/can_divide/probability,                    float, 0.0200
+cancer_cell/can_divide/probability_increment_with_age, float, 0.0000
+cancer_cell/can_divide/diameter_cutoff,                float, 0.9500e-0
+cancer_cell/can_divide/max,                            int,   4
+cancer_cell/can_divide/time_window,                    int,   24
+cancer_cell/can_divide/O2/threshold,                   float, 0.900000e-0
+cancer_cell/can_transform_and_divide/O2/threshold,     float, 0
+cancer_cell/can_divide_and_transform/O2/threshold,     float, 0
+cancer_cell/can_divide/quiescence/time_window,         int,   6
+#,#,#
+cancer_cell/can_migrate, bool, true
+cancer_cell/can_migrate/probability,                 float, 0.5555
+cancer_cell/can_migrate/half_range,                  float, 1.00
+cancer_cell/can_migrate/chemotaxis/O2,               float, 0
+#,#,#
+cancer_cell/can_transform, bool, false
+cancer_cell/can_polarize, bool, false
+cancer_cell/can_protrude, bool, false
+#,#,#
+cancer_cell/O2/secretion/net_balance, float, 0
+cancer_cell/O2/secretion/dependency,   bool, false
+cancer_cell/diameter/min,  float, 1.000e-0
+cancer_cell/diameter/max,  float, 1.100e-0
+cancer_cell/principal/0,   float, 1.00
+cancer_cell/principal/1,   float, 1.00
+cancer_cell/principal/2,   float, 1.00
+cancer_cell/principal/min, float, 0.999
+cancer_cell/principal/max, float, 1.001
+#,#,#
+### END , ### , ###

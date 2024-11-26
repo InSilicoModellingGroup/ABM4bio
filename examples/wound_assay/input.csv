@@ -1,0 +1,120 @@
+parameter_name, type, parameter_value
+### START , ### , ###
+output_directory,               string, results
+simulation_title,               string, ABM4bio
+#,#,#
+number_of_time_steps,           int,    480
+time_step,                      float,  0.1
+visualization_interval,         int,    10
+#,#,#
+min_boundary,                   float, -750.0
+max_boundary,                   float, +750.0
+domain_tolerance,               float,  10.0
+safe_distance_ratio,            float,  0.999000
+simulation_domain_is_2D,        bool,   true
+simulation_domain_is_polar,     bool,   false
+simulation_domain_is_bounded,   bool,   false
+simulation_domain_is_periodic,  bool,   true
+simulation_models_vessels,      bool,   false
+#,#,#
+#,#,#
+cell/phenotypes,                   string, cancer_cell
+cell/max_displacement,             float, 20.0
+diffusion_grid/biochemicals,       string, O2 TGFb TNF
+diffusion_grid/spatial_resolution, int, 150
+#,#,#
+### O2 , ### , ###
+O2/diffusion_coefficient,       float, 0.000000e-0
+O2/dissipation_coefficient,     float, 0.000000e-0
+O2/initial_value/min,           float, 1.000000e-0
+O2/initial_value/max,           float, 1.000000e-0
+#,#,#
+### TGF-beta , ### , ###
+TGFb/diffusion_coefficient,   float, 1.000e-1
+TGFb/dissipation_coefficient, float, 0.000e-0
+TGFb/initial_value/min,       float, 0.000000e-0
+TGFb/initial_value/max,       float, 0.000000e-0
+#,#,#
+### TNF , ### , ###
+TNF/diffusion_coefficient,   float, 1.000e-1
+TNF/dissipation_coefficient, float, 0.000e-0
+TNF/initial_value/min,       float, 0.000000e-0
+TNF/initial_value/max,       float, 0.000000e-0
+#,#,#
+### cancer_cell , ### , ###
+cancer_cell/phenotype_ID, int, 1
+cancer_cell/initial_population,     int, 565
+cancer_cell/initial_population/std, int,   0
+cancer_cell/initial_population/pattern, string, box/outside
+cancer_cell/initial_population/pattern/box/point_A/0, float, -490.0
+cancer_cell/initial_population/pattern/box/point_A/1, float, -750.1
+cancer_cell/initial_population/pattern/box/point_A/2, float, -750.1
+cancer_cell/initial_population/pattern/box/point_B/0, float, +490.0
+cancer_cell/initial_population/pattern/box/point_B/1, float, +750.1
+cancer_cell/initial_population/pattern/box/point_B/2, float, +750.1
+cancer_cell/mechanism_order, int, 10
+cancer_cell/can_apoptose, bool, true
+cancer_cell/can_apoptose/probability,                    float, 0.0005
+cancer_cell/can_apoptose/probability_increment_with_age, float, 0.0000
+cancer_cell/can_apoptose/time_window,                      int, 16
+cancer_cell/can_apoptose/O2/threshold,                   float, 0
+cancer_cell/can_apoptose/TGFb/threshold,                 float, 0
+cancer_cell/can_apoptose/TNF/threshold,                  float, 0
+cancer_cell/can_grow, bool, true
+cancer_cell/can_grow/probability,        float, 0.999
+cancer_cell/can_grow/diameter_rate,      float, 1.150e-0
+cancer_cell/can_grow/O2/threshold,       float, 0
+cancer_cell/can_grow/TGFb/threshold,     float, 0
+cancer_cell/can_grow/TNF/threshold,      float, 0
+cancer_cell/can_divide, bool, true
+cancer_cell/can_divide/probability,                    float, 0.050
+cancer_cell/can_divide/probability_increment_with_age, float, 0.002
+cancer_cell/can_divide/diameter_cutoff,                float, 20.000e-0
+cancer_cell/can_divide/max,                            int,   3
+cancer_cell/can_divide/time_window,                    int,  16
+cancer_cell/can_divide/O2/threshold,                   float, 0
+cancer_cell/can_divide/TGFb/threshold,                 float,-4.000e-6
+cancer_cell/can_divide/TNF/threshold,                  float, 0
+cancer_cell/can_transform_and_divide/O2/threshold,     float, 0
+cancer_cell/can_transform_and_divide/TGFb/threshold,   float, 0
+cancer_cell/can_transform_and_divide/TNF/threshold,    float, 0
+cancer_cell/can_divide_and_transform/O2/threshold,     float, 0
+cancer_cell/can_divide_and_transform/TGFb/threshold,   float, 0
+cancer_cell/can_divide_and_transform/TNF/threshold,    float, 0
+cancer_cell/can_migrate, bool, true
+cancer_cell/can_migrate/probability,                 float, 0.150
+cancer_cell/can_migrate/half_range,                  float, 0.25
+cancer_cell/can_migrate/chemotaxis/O2,               float, 0.000e-0
+cancer_cell/can_migrate/chemotaxis/O2/threshold,     float, 0
+cancer_cell/can_migrate/chemotaxis/O2/probability,   float, 0.999
+cancer_cell/can_migrate/chemotaxis/TGFb,             float, 0.000e-0
+cancer_cell/can_migrate/chemotaxis/TGFb/threshold,   float, 0
+cancer_cell/can_migrate/chemotaxis/TGFb/probability, float, 0.999
+cancer_cell/can_migrate/chemotaxis/TNF,              float,-15.0
+cancer_cell/can_migrate/chemotaxis/TNF/threshold,    float,+1.000e-5
+cancer_cell/can_migrate/chemotaxis/TNF/probability,  float, 0.999
+cancer_cell/can_polarize, bool, true
+cancer_cell/can_polarize/probability,         float, 0.499
+cancer_cell/can_polarize/migration/dependency, bool, true
+cancer_cell/can_polarize/O2/threshold,        float, 0
+cancer_cell/can_polarize/TGFb/threshold,      float,+1.000e-6
+cancer_cell/can_polarize/TNF/threshold,       float, 0
+cancer_cell/TGFb/secretion/net_balance,   float, 0.100e-6
+cancer_cell/TGFb/secretion/saturation,    float, 1.000e-4
+cancer_cell/TGFb/secretion/dependency,     bool, true
+cancer_cell/TGFb/secretion/O2/threshold,  float,+0.900e-0
+cancer_cell/TGFb/secretion/TNF/threshold, float, 0
+cancer_cell/TNF/secretion/net_balance,    float, 1.000e-2
+cancer_cell/TNF/secretion/saturation,     float, 1.000e-5
+cancer_cell/TNF/secretion/dependency,      bool, true
+cancer_cell/TNF/secretion/O2/threshold,   float,+0.900e-0
+cancer_cell/TNF/secretion/TGFb/threshold, float, 0
+cancer_cell/diameter/min,  float, 20.000e-0
+cancer_cell/diameter/max,  float, 35.000e-0
+cancer_cell/principal/0,   float, 1.00
+cancer_cell/principal/1,   float, 1.00
+cancer_cell/principal/2,   float, 0.25
+cancer_cell/principal/min, float, 0.25
+cancer_cell/principal/max, float, 1.80
+#,#,#
+### END , ### , ###
