@@ -1,6 +1,11 @@
 # Prerequisites
 *.d
 
+# Library/dependencies, compiled code, simulation results
+libs/*
+build/*
+examples/*/results/*
+
 # Compiled Object files
 *.slo
 *.lo
