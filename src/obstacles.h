@@ -215,9 +215,8 @@ public:
           const std::vector<std::string> parsed_s = extract_words_vector(s);
           // check if you have almost finished reading the file
           if ("endsolid"==parsed_s[0]) break;
-          //
           // ...otherwise read this triangle, first the normal vector
-          if ("facet"!=parsed_s[0] || "normal"!=parsed_s[1] || 5!=parsed_s.size())
+          else if ("facet"!=parsed_s[0] || "normal"!=parsed_s[1] || 5!=parsed_s.size())
             ABORT_("could not parse STL file here: "+s);
           n = { std::stod(parsed_s[2]), std::stod(parsed_s[3]), std::stod(parsed_s[4]) };
         }
@@ -274,15 +273,16 @@ public:
         // geometric center
         tri3.center = (v0+v1+v2)/3.0;
         // outward unit normal vector
-        tri3.normal = normalize(n);
-        // internal point
-        tri3.inside = tri3.center;
+        if (!normalize(n, tri3.normal))
+          ABORT_("could not process normal of a facet in STL file");
+        // internal point located right below the triangle
         {
-          std::vector<double> len = { L2norm(tri3.vertex_1-tri3.vertex_2) ,
-                                      L2norm(tri3.vertex_0-tri3.vertex_2) ,
-                                      L2norm(tri3.vertex_0-tri3.vertex_1) };
-          const double D = (-10.0)*(*std::max_element(len.begin(), len.end()));
-          tri3.inside += tri3.normal * D;
+          std::vector<double> len = { L2norm(tri3.vertex_0-tri3.center) ,
+                                      L2norm(tri3.vertex_1-tri3.center) ,
+                                      L2norm(tri3.vertex_2-tri3.center) };
+          const double W = (*std::min_element(len.begin(), len.end()))
+                         * 1.0e-3;
+          tri3.inside = tri3.center - tri3.normal * W;
         }
         // load this triangle into member container
         triangle.push_back(tri3);
