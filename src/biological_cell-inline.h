@@ -1018,6 +1018,12 @@ bool bdm::BiologicalCell::CheckMigration()
                         }
                       // average out the space vector
                       if (n_random_point) dvec /= n_random_point;
+                      //
+                      if (this->params()->get<bool>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/normalize_gradient"))
+                        {
+                          auto m = L2norm(dvec);
+                          if (m>1.0e-6) dvec /= m;
+                        }
                       // scale gradient vector accordingly
                       dvec *= chemotaxis;
                       //
