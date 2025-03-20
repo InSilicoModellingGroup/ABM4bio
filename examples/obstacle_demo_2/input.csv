@@ -60,11 +60,12 @@ a_cell/io_flux/1/time_step,         int, 1
 a_cell/io_flux/1/STL,            string, ./influx.stl
 a_cell/mechanism_order, int, 10
 a_cell/can_migrate, bool, true
-a_cell/can_migrate/probability,                 float, 0.9999
-a_cell/can_migrate/half_range,                  float, 3.00e-0
-a_cell/can_migrate/chemotaxis/O2,               float,+3.00e-0
-a_cell/can_migrate/chemotaxis/O2/threshold,     float,+1e-12
-a_cell/can_migrate/chemotaxis/O2/probability,   float, 0.9999
+a_cell/can_migrate/probability,                     float, 0.9999
+a_cell/can_migrate/half_range,                      float, 3.00e-0
+a_cell/can_migrate/chemotaxis/O2,                   float,+3.00e-0
+a_cell/can_migrate/chemotaxis/O2/threshold,         float,+1e-12
+a_cell/can_migrate/chemotaxis/O2/probability,       float, 0.9999
+a_cell/can_migrate/chemotaxis/O2/normalize_gradient, bool, false
 a_cell/can_polarize, bool, true
 a_cell/can_polarize/probability,         float, 0.9999
 a_cell/can_polarize/migration/dependency, bool, true

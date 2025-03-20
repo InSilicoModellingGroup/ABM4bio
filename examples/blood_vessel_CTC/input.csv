@@ -76,9 +76,10 @@ RBC/principal/max, float, 1.01
 RBC/can_migrate, bool, true
 RBC/can_migrate/probability, float, 0.9999
 RBC/can_migrate/half_range,  float, 0.50e-0
-RBC/can_migrate/chemotaxis/O2,             float,+2.00e-0
-RBC/can_migrate/chemotaxis/O2/threshold,   float,-0.99
-RBC/can_migrate/chemotaxis/O2/probability, float, 0.9999
+RBC/can_migrate/chemotaxis/O2,                   float,+2.00e-0
+RBC/can_migrate/chemotaxis/O2/threshold,         float,-0.99
+RBC/can_migrate/chemotaxis/O2/probability,       float, 0.9999
+RBC/can_migrate/chemotaxis/O2/normalize_gradient, bool, false
 #,#,#
 ### CTC (circulating tumour cell) , ### , ###
 CTC/phenotype_ID, int, 3
@@ -98,14 +99,16 @@ CTC/principal/2, float, 1.00
 CTC/principal/min, float, 0.99
 CTC/principal/max, float, 1.01
 CTC/can_migrate, bool, true
-CTC/can_migrate/probability, float, 0.9999
-CTC/can_migrate/half_range,  float, 0.02e-0
-CTC/can_migrate/chemotaxis/O2,             float,-3.00e-0
-CTC/can_migrate/chemotaxis/O2/threshold,   float,-0.990000e-0
-CTC/can_migrate/chemotaxis/O2/probability, float, 0.9999
-CTC/can_migrate/chemotaxis/ECM,             float,+0.10e-0
-CTC/can_migrate/chemotaxis/ECM/threshold,   float,-0.800000e-0
-CTC/can_migrate/chemotaxis/ECM/probability, float, 0.9999
+CTC/can_migrate/probability,                      float, 0.9999
+CTC/can_migrate/half_range,                       float, 0.02e-0
+CTC/can_migrate/chemotaxis/O2,                    float,-3.00e-0
+CTC/can_migrate/chemotaxis/O2/threshold,          float,-0.990000e-0
+CTC/can_migrate/chemotaxis/O2/probability,        float, 0.9999
+CTC/can_migrate/chemotaxis/O2/normalize_gradient,  bool, false
+CTC/can_migrate/chemotaxis/ECM,                   float,+0.10e-0
+CTC/can_migrate/chemotaxis/ECM/threshold,         float,-0.800000e-0
+CTC/can_migrate/chemotaxis/ECM/probability,       float, 0.9999
+CTC/can_migrate/chemotaxis/ECM/normalize_gradient, bool, false
 CTC/can_transform, bool, true
 CTC/can_transform/probability,          float, 0.4999
 CTC/can_transform/O2/threshold,         float,-0.900000e-0

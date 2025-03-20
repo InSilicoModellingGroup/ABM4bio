@@ -5,7 +5,7 @@ simulation_title,               string, ABM4bio
 #,#,#
 number_of_time_steps,           int,    1200
 time_step,                      float,  1.000000e-0
-visualization_interval,         int,    10
+visualization_interval,         int,    100
 #,#,#
 min_boundary,                   float, -500.0
 max_boundary,                   float, +500.0
@@ -77,11 +77,12 @@ normoxic_CC/can_divide/O2/threshold,                   float,+0.750000e-0
 normoxic_CC/can_transform_and_divide/O2/threshold,     float, 0
 normoxic_CC/can_divide_and_transform/O2/threshold,     float, 0
 normoxic_CC/can_migrate, bool, true
-normoxic_CC/can_migrate/probability,                 float, 0.6666
-normoxic_CC/can_migrate/half_range,                  float, 5.000e-0
-normoxic_CC/can_migrate/chemotaxis/O2,               float, 5.000e-0
-normoxic_CC/can_migrate/chemotaxis/O2/threshold,     float,-0.750000e-0
-normoxic_CC/can_migrate/chemotaxis/O2/probability,   float, 0.9999
+normoxic_CC/can_migrate/probability,                     float, 0.6666
+normoxic_CC/can_migrate/half_range,                      float, 5.000e-0
+normoxic_CC/can_migrate/chemotaxis/O2,                   float, 5.000e-0
+normoxic_CC/can_migrate/chemotaxis/O2/threshold,         float,-0.750000e-0
+normoxic_CC/can_migrate/chemotaxis/O2/probability,       float, 0.9999
+normoxic_CC/can_migrate/chemotaxis/O2/normalize_gradient, bool, false
 normoxic_CC/can_transform, bool, true
 normoxic_CC/can_transform/probability,          float, 0.9999
 normoxic_CC/can_transform/O2/threshold,         float,-0.650000e-0
@@ -113,9 +114,9 @@ hypoxic__CC/can_apoptose/O2/threshold,                   float,-0.200000e-0
 hypoxic__CC/can_apoptose/O2/probability,                 float, 0.5000
 hypoxic__CC/can_apoptose/O2/dependency,                   bool, false
 hypoxic__CC/can_migrate, bool, true
-hypoxic__CC/can_migrate/probability,                 float, 0.6666
-hypoxic__CC/can_migrate/half_range,                  float, 0.100e-0
-hypoxic__CC/can_migrate/chemotaxis/O2,               float, 0.000e-0
+hypoxic__CC/can_migrate/probability,   float, 0.6666
+hypoxic__CC/can_migrate/half_range,    float, 0.100e-0
+hypoxic__CC/can_migrate/chemotaxis/O2, float, 0.000e-0
 hypoxic__CC/can_transform, bool, true
 hypoxic__CC/can_transform/probability,          float, 0.9999
 hypoxic__CC/can_transform/O2/threshold,         float,-0.350e-0

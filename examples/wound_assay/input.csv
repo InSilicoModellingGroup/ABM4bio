@@ -82,17 +82,20 @@ cancer_cell/can_divide_and_transform/O2/threshold,     float, 0
 cancer_cell/can_divide_and_transform/TGFb/threshold,   float, 0
 cancer_cell/can_divide_and_transform/TNF/threshold,    float, 0
 cancer_cell/can_migrate, bool, true
-cancer_cell/can_migrate/probability,                 float, 0.150
-cancer_cell/can_migrate/half_range,                  float, 0.25
-cancer_cell/can_migrate/chemotaxis/O2,               float, 0.000e-0
-cancer_cell/can_migrate/chemotaxis/O2/threshold,     float, 0
-cancer_cell/can_migrate/chemotaxis/O2/probability,   float, 0.999
-cancer_cell/can_migrate/chemotaxis/TGFb,             float, 0.000e-0
-cancer_cell/can_migrate/chemotaxis/TGFb/threshold,   float, 0
-cancer_cell/can_migrate/chemotaxis/TGFb/probability, float, 0.999
-cancer_cell/can_migrate/chemotaxis/TNF,              float,-15.0
-cancer_cell/can_migrate/chemotaxis/TNF/threshold,    float,+1.000e-5
-cancer_cell/can_migrate/chemotaxis/TNF/probability,  float, 0.999
+cancer_cell/can_migrate/probability,                       float, 0.150
+cancer_cell/can_migrate/half_range,                        float, 0.25
+cancer_cell/can_migrate/chemotaxis/O2,                     float, 0.000e-0
+cancer_cell/can_migrate/chemotaxis/O2/threshold,           float, 0
+cancer_cell/can_migrate/chemotaxis/O2/probability,         float, 0.999
+cancer_cell/can_migrate/chemotaxis/O2/normalize_gradient,   bool, false
+cancer_cell/can_migrate/chemotaxis/TGFb,                   float, 0.000e-0
+cancer_cell/can_migrate/chemotaxis/TGFb/threshold,         float, 0
+cancer_cell/can_migrate/chemotaxis/TGFb/probability,       float, 0.999
+cancer_cell/can_migrate/chemotaxis/TGFb/normalize_gradient, bool, false
+cancer_cell/can_migrate/chemotaxis/TNF,                    float,-15.0
+cancer_cell/can_migrate/chemotaxis/TNF/threshold,          float,+1.000e-5
+cancer_cell/can_migrate/chemotaxis/TNF/probability,        float, 0.999
+cancer_cell/can_migrate/chemotaxis/TNF/normalize_gradient,  bool, false
 cancer_cell/can_polarize, bool, true
 cancer_cell/can_polarize/probability,         float, 0.499
 cancer_cell/can_polarize/migration/dependency, bool, true

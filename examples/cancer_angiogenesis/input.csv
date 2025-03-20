@@ -126,14 +126,11 @@ cancer_cell/mechanism_order, int, 10
 # cancer_cell/can_divide_and_transform/VEGF/threshold,   float, +0.000e-0
 # cancer_cell/can_divide_and_transform/TNF/threshold,    float, +0.000e-0
 cancer_cell/can_migrate, bool, true
-cancer_cell/can_migrate/probability,               float, 0.333
-cancer_cell/can_migrate/half_range,                float, 0.5
-cancer_cell/can_migrate/chemotaxis/O2/threshold,   float,+0.000e-0
-cancer_cell/can_migrate/chemotaxis/O2,             float, 0.0
-cancer_cell/can_migrate/chemotaxis/VEGF/threshold, float,+0.000e-0
-cancer_cell/can_migrate/chemotaxis/VEGF,           float, 0.0
-cancer_cell/can_migrate/chemotaxis/TNF/threshold,  float,+0.000e-0
-cancer_cell/can_migrate/chemotaxis/TNF,            float, 0.0
+cancer_cell/can_migrate/probability,     float, 0.333
+cancer_cell/can_migrate/half_range,      float, 0.5
+cancer_cell/can_migrate/chemotaxis/O2,   float, 0.0
+cancer_cell/can_migrate/chemotaxis/VEGF, float, 0.0
+cancer_cell/can_migrate/chemotaxis/TNF,  float, 0.0
 cancer_cell/O2/secretion/net_balance,      float, 0
 cancer_cell/VEGF/secretion/net_balance,    float, 0
 cancer_cell/TNF/secretion/net_balance,     float, 1.000e-3
