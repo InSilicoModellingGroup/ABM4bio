@@ -234,22 +234,22 @@ double L2norm(const bdm::Double3& v)
   return sqrt(pow2(v[0])+pow2(v[1])+pow2(v[2]));
 }
 inline
-bool normalize(const bdm::Double3& v, bdm::Double3& r)
+bool normalize(const bdm::Double3& v, bdm::Double3& r, double tol = 1.0e-6)
 {
   double v_mag = L2norm(v);
-  if (v_mag>0.0)
+  if (v_mag>tol)
     {
-      r = (v*(1.0/v_mag));
+      r = v * (1.0/v_mag);
       return true;
     }
   r = bdm::Double3();
   return false;
 }
 inline
-bdm::Double3 normalize(const bdm::Double3& v)
+bdm::Double3 normalize(const bdm::Double3& v, double tol = 1.0e-6)
 {
   bdm::Double3 r;
-  normalize(v, r);
+  normalize(v, r, tol);
   return r;
 }
 inline
@@ -265,56 +265,51 @@ bdm::Double3 cross(const bdm::Double3& u, const bdm::Double3& v)
            (u[0]*v[1]-u[1]*v[0]) };
 }
 inline
-bdm::Double3 project_to_plane(const bdm::Double3& normal, const bdm::Double3& v)
-{
-  const double e2 = pow2(L2norm(normal));
-  bdm::Double3 v_X_e = cross(v, normal),
-               e_X_v_X_e = cross(normal, v_X_e);
-  return e_X_v_X_e / e2;
-}
-inline
 bool line_intersects_plane(const bdm::Double3& l0, const bdm::Double3& l1,
                            const bdm::Double3& N, const bdm::Double3& c,
-                           bdm::Double3& i, double tol = 1.0e-5)
+                           bdm::Double3& i, double tol = 1.0e-6)
 {
-  bdm::Double3 u = l1 - l0;
-  u.Normalize();
+  const bdm::Double3 u = normalize(l1 - l0, tol);
+  const bdm::Double3 n = normalize(N, tol);
   //
-  const bdm::Double3 n = N * (1.0/L2norm(N));
-  //
-  if (fabs(n*u)<=tol) return false;
+  const double n_DOT_u = n * u;
   // see: https://en.wikipedia.org/wiki/Line%E2%80%93plane_intersection
-  const bdm::Double3 v = c - l0;
-  //
-  const double v_DOT_n = (v*n) / (u*n);
-  //
-  i = l0 + u * v_DOT_n;
-  //
-  return true;
+  if (fabs(n_DOT_u)>tol)
+    {
+      const bdm::Double3 v = c - l1;
+      double d = (v*n) / n_DOT_u;
+      i = l1 + u * d;
+      return true;
+    }
+  i = bdm::Double3();
+  return false;
 }
 inline
 bdm::Double3 project_to_line(const bdm::Double3& l0, const bdm::Double3& l1,
-                             const bdm::Double3& p)
+                             const bdm::Double3& p, double tol = 1.0e-6)
 {
-  bdm::Double3 u = l1 - l0;
-  u.Normalize();
+  const bdm::Double3 u = normalize(l1 - l0, tol);
+  const bdm::Double3 v = p - l0;
   //
-  const double u_DOT_p_l0 = u * (p - l0);
+  const double u_DOT_v = u * v;
   //
-  return (l0 + u * u_DOT_p_l0);
+  return (l0 + u * u_DOT_v);
 }
 inline
 bdm::Double3 project_to_plane(const bdm::Double3& N, const bdm::Double3& c,
-                              const bdm::Double3& p, double tol = 1.0e-5)
+                              const bdm::Double3& p, double tol = 1.0e-6)
 {
-  const bdm::Double3 n = N * (1.0/L2norm(N));
-  //
-  if (fabs(n*p)<=tol) return p;
-  // see: https://exceptionshub.com/how-to-project-a-point-onto-a-plane-in-3d.html
   const bdm::Double3 v = p - c;
-  const double d = n * v;
+  if (L2norm(v)<=tol) return c;
   //
-  return (p - n * d);
+  const bdm::Double3 n = normalize(N, tol);
+  const double n_DOT_v = n * v;
+  //
+  if (fabs(n_DOT_v)<=tol) return p;
+  else if (n_DOT_v>+tol) return (p - n * n_DOT_v);
+  else if (n_DOT_v<-tol) return (p + n * n_DOT_v);
+  else ABORT_("an exception is caught here");
+  return bdm::Double3();
 }
 inline
 double triangle_area(const bdm::Double3& A, const bdm::Double3& B, const bdm::Double3& C)
@@ -339,7 +334,7 @@ bool is_inside_segment (const bdm::Double3& s0, const bdm::Double3& s1,
 }
 inline
 bool is_inside_triangle(const bdm::Double3& A, const bdm::Double3& B, const bdm::Double3& C,
-                        const bdm::Double3& p, double tol = 1.0e-5)
+                        const bdm::Double3& p, double tol = 1.0e-6)
 {
   const double area1 = triangle_area(p, B, C),
                area2 = triangle_area(A, p, C),
