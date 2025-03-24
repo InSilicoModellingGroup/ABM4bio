@@ -590,57 +590,54 @@ bool bdm::BiologicalCell::CheckPositionValidity()
       //
       const double safe_distance = 0.75 * this->GetDiameter();
       //
-      std::map<double, std::pair<unsigned int,bdm::Double3>> tri3_proj;
+      std::pair<int, bdm::Double3> tri3__proj{-1, bdm::Double3()};
       //
       const unsigned int n_tri3 = obstacles->surface[l].triangle.size();
       for (unsigned int t=0; t<n_tri3; t++)
         {
           const ObstacleSTL::Triangle& tri3 = obstacles->surface[l].triangle[t];
-          // origin (center) point to triangle
-          const bdm::Double3& origin = tri3.center;
-          // outward unit normal vector to triangle
-          const bdm::Double3& normal = tri3.normal;
-          // internal point wrt the user-defined surface
-          const bdm::Double3& l0 = tri3.inside;
-          // cell position intersection to the user-defined surface
-          bdm::Double3 intx;
-          if (! line_intersects_plane(l0, xyz, normal, origin, intx))
+          // projection of the cell to the (triangular) surface
+          const bdm::Double3 proj = project_to_plane(tri3.normal, tri3.center, xyz);
+          // skip following computations if projection of the
+          // cell is outside the triangle (defining the surface)
+          if (!is_inside_triangle(tri3.vertex_0, tri3.vertex_1, tri3.vertex_2, proj))
             continue;
-          // skip following computations if projection point is outside triangle
-          if (! is_inside_triangle(tri3.vertex_0, tri3.vertex_1, tri3.vertex_2, intx))
-            continue;
-          // cell position projection to the user-defined surface
-          const bdm::Double3 proj = project_to_plane(normal, origin, xyz);
           //
           const bdm::Double3 xyz_proj = xyz - proj;
-          const double distance = L2norm(xyz_proj);
-          // skip following if cell is well outside the user-defined surface
-          if ((xyz_proj*normal)>0.0 && distance>this->GetDiameter())
+          // skip following computations if cell is positioned
+          // well outside the (triangular) surface
+          if (L2norm(xyz_proj)>this->GetDiameter())
             continue;
-          //
-          auto data = std::make_pair(t, proj);
-          tri3_proj.insert( std::make_pair(distance, data) );
+          // break following computations if cell is positioned
+          // slightly underneath the (triangular) surface
+          if (tri3.normal*xyz_proj<0.0)
+            {
+              xyz = proj + tri3.normal * safe_distance;
+              // enforce cell position with respect to the obstacle surface
+              this->SetPosition(xyz);
+              // cell has remained inside the simulation domain
+              return true;
+            }
+          // save data: index of the triangle (obstacle) and the
+          // projection of the cell
+          tri3__proj = std::make_pair(t, proj);
+          // now exit the loop
+          break;
           // ...end of triangles loop
         }
       //
-      if (!tri3_proj.empty())
+      if (-1 != tri3__proj.first)
         {
-          std::map<double, std::pair<unsigned int,bdm::Double3>>::const_iterator
-            ci = tri3_proj.begin();
           // access the triangle first...
-          const unsigned int t = ci->second.first;
+          const int t = tri3__proj.first;
           const ObstacleSTL::Triangle& tri3 = obstacles->surface[l].triangle[t];
-          // outward unit normal vector to triangle
-          bdm::Double3 normal = tri3.normal;
-          if (!normalize(normal, normal))
-            ABORT_("could not normalize the normal vector");
           // cell position projection to the user-defined surface
-          const bdm::Double3& proj = ci->second.second;
+          const bdm::Double3& proj = tri3__proj.second;
           //
-          xyz = proj + normal * safe_distance;
-          // enforce cell to lie on the (box) obstacle surface
+          xyz = proj + tri3.normal * safe_distance;
+          // enforce cell position with respect to the obstacle surface
           this->SetPosition(xyz);
-          //
+          // calculate the amount of displacement a cell achieves
           displace += xyz;
           this->UpdateTrail(L2norm(displace));
           // cell has remained inside the simulation domain
