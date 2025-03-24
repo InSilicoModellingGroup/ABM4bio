@@ -114,10 +114,10 @@ public:
   void UpdateTrail(double d) { trail_ += d; }
   double GetTrail() const { return trail_; }
   //
-  const bdm::Double3& GetActiveDisplacement () const { return active_displacement_; }
-  const bdm::Double3& GetPassiveDisplacement() const { return passive_displacement_; }
-  const bdm::Double3 GetDisplacement() const { return active_displacement_+passive_displacement_; }
-  const double GetDisplacement(size_t i) const { return active_displacement_[i]+passive_displacement_[i]; }
+  bdm::Double3 GetActiveDisplacement () const { return active_displacement_; }
+  bdm::Double3 GetPassiveDisplacement() const { return passive_displacement_; }
+  bdm::Double3 GetDisplacement() const { return active_displacement_+passive_displacement_; }
+  double GetDisplacement(size_t i) const { return active_displacement_[i]+passive_displacement_[i]; }
   //
   void IncrementNumberOfDivisions() { ++n_divisions_; }
   int GetNumberOfDivisions() const { return n_divisions_; }
