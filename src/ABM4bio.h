@@ -794,6 +794,7 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "NO_"  ) bc = Biochemical::NO_;
         else if ( BC_name == "NO2"  ) bc = Biochemical::NO2;
         else if ( BC_name == "NO3"  ) bc = Biochemical::NO3;
+        else if ( BC_name == "NO2_" ) bc = Biochemical::NO2_; // nitrite ion (NO2-)
         else if ( BC_name == "Gluc" ) bc = Biochemical::Gluc;
         // epidermal-/vessel-related biochemical cues
         else if ( BC_name == "VEGF" ) bc = Biochemical::VEGF;
@@ -807,6 +808,14 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "bFGF" ) bc = Biochemical::bFGF;
         // cancer-related biochemical cues
         else if ( BC_name == "TNF"  ) bc = Biochemical::TNF;
+        // CAP-specific ICD markers and inflammatory cytokines
+        else if ( BC_name == "CRT"  ) bc = Biochemical::CRT;   // calreticulin
+        else if ( BC_name == "HMGB1") bc = Biochemical::HMGB1; // high mobility group box 1
+        else if ( BC_name == "HSP70") bc = Biochemical::HSP70; // heat shock protein 70
+        else if ( BC_name == "IL1b" ) bc = Biochemical::IL1b;  // interleukin-1 beta
+        else if ( BC_name == "IL6"  ) bc = Biochemical::IL6;   // interleukin-6
+        else if ( BC_name == "IL12" ) bc = Biochemical::IL12;  // interleukin-12
+        else if ( BC_name == "CCL4" ) bc = Biochemical::CCL4;  // C-C motif chemokine ligand 4
         // neuron-related biochemical cues
         else if ( BC_name == "NGF"  ) bc = Biochemical::NGF;
         else if ( BC_name == "BDNF" ) bc = Biochemical::BDNF;
