@@ -81,6 +81,10 @@ void save_stats(bdm::Simulation& sim,
     }
   unsigned int n_protrusion = 0;
   //
+  // Variables for tumor volume calculation (length * width^2 / 2)
+  std::vector<bdm::Double3> cancer_positions;
+  double tumor_volume = 0.0;
+  //
   rm->ForEachAgent([&] (bdm::Agent* a) {
     if (auto* protrusion = dynamic_cast<bdm::CellProtrusion*>(a))
       {
@@ -97,6 +101,11 @@ void save_stats(bdm::Simulation& sim,
           static_cast<bdm::BiologicalCell::Phase>( cell->GetPhase() );
         // update this component on the map..
         n_cell_per_phenotype[CP_ID] += 1;
+        //
+        // Store cancer cell positions for volume calculation (exclude necrotic cells with ID=0)
+        if (CP_ID > 0) {
+          cancer_positions.push_back(cell->GetPosition());
+        }
         //
         if      ( bdm::BiologicalCell::Phase::Ap==CP_Ph )
           n_cell_per_phenotype__Ap[CP_ID] += 1;
@@ -121,12 +130,40 @@ void save_stats(bdm::Simulation& sim,
         ++n_soma;
       }
   });
+  
+  // Calculate tumor volume using formula: length * width^2 / 2
+  if (cancer_positions.size() > 1) {
+    // Find bounding box of cancer cells
+    double min_x = cancer_positions[0][0], max_x = cancer_positions[0][0];
+    double min_y = cancer_positions[0][1], max_y = cancer_positions[0][1];
+    double min_z = cancer_positions[0][2], max_z = cancer_positions[0][2];
+    
+    for (const auto& pos : cancer_positions) {
+      min_x = std::min(min_x, pos[0]);
+      max_x = std::max(max_x, pos[0]);
+      min_y = std::min(min_y, pos[1]);
+      max_y = std::max(max_y, pos[1]);
+      min_z = std::min(min_z, pos[2]);
+      max_z = std::max(max_z, pos[2]);
+    }
+    
+    // Calculate dimensions
+    double length = max_x - min_x;  // longest dimension
+    double width_y = max_y - min_y;
+    double width_z = max_z - min_z;
+    
+    // Use the largest width dimension
+    double width = std::max(width_y, width_z);
+    
+    // Calculate volume: length * width^2 / 2 (ellipsoidal approximation)
+    tumor_volume = length * width * width / 2.0;
+  }
   //
   // simulation statistics output data - write the CSV file header
   // only once (@zero time step)
   if ( 0.0 == params.get<double>("current time") )
     {
-      fout << "current_time, N_vessels, N_cells";
+      fout << "current_time, N_vessels, N_cells, tumor_volume_mm3";
       for ( std::map<int, std::string>::const_iterator
             ci=cells.begin(); ci!=cells.end(); ci++ )
         {
@@ -153,6 +190,7 @@ void save_stats(bdm::Simulation& sim,
   fout //<< ',' << n_soma
        << ',' << n_vessel;
   fout << ',' << n_cell;
+  fout << ',' << tumor_volume; // Add tumor volume output
   // iterate for all cell phenotypes
   for ( std::map<int, std::string>::const_iterator
         ci=cells.begin(); ci!=cells.end(); ci++ )
@@ -794,6 +832,7 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "NO_"  ) bc = Biochemical::NO_;
         else if ( BC_name == "NO2"  ) bc = Biochemical::NO2;
         else if ( BC_name == "NO3"  ) bc = Biochemical::NO3;
+        else if ( BC_name == "NO2_" ) bc = Biochemical::NO2_; // nitrite ion (NO2-)
         else if ( BC_name == "Gluc" ) bc = Biochemical::Gluc;
         // epidermal-/vessel-related biochemical cues
         else if ( BC_name == "VEGF" ) bc = Biochemical::VEGF;
@@ -807,6 +846,14 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "bFGF" ) bc = Biochemical::bFGF;
         // cancer-related biochemical cues
         else if ( BC_name == "TNF"  ) bc = Biochemical::TNF;
+        // CAP-specific ICD markers and inflammatory cytokines
+        else if ( BC_name == "CRT"  ) bc = Biochemical::CRT;   // calreticulin
+        else if ( BC_name == "HMGB1") bc = Biochemical::HMGB1; // high mobility group box 1
+        else if ( BC_name == "HSP70") bc = Biochemical::HSP70; // heat shock protein 70
+        else if ( BC_name == "IL1b" ) bc = Biochemical::IL1b;  // interleukin-1 beta
+        else if ( BC_name == "IL6"  ) bc = Biochemical::IL6;   // interleukin-6
+        else if ( BC_name == "IL12" ) bc = Biochemical::IL12;  // interleukin-12
+        else if ( BC_name == "CCL4" ) bc = Biochemical::CCL4;  // C-C motif chemokine ligand 4
         // neuron-related biochemical cues
         else if ( BC_name == "NGF"  ) bc = Biochemical::NGF;
         else if ( BC_name == "BDNF" ) bc = Biochemical::BDNF;
