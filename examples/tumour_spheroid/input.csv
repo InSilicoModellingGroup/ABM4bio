@@ -68,8 +68,8 @@ normoxic_CC/can_grow/O2/threshold,       float,+0.750000e-0
 normoxic_CC/can_grow/O2/dependency,       bool, false
 normoxic_CC/can_grow/O2/diameter_rate,   float, 1.000e-0
 normoxic_CC/can_divide, bool, true
-normoxic_CC/can_divide/probability,                    float, 0.1000
-normoxic_CC/can_divide/probability_increment_with_age, float, 0.0010
+normoxic_CC/can_divide/probability,                    float, 0.0500
+normoxic_CC/can_divide/probability_increment_with_age, float, 0.00001
 normoxic_CC/can_divide/diameter_cutoff,                float, 29.000e-0
 normoxic_CC/can_divide/max,                            int,   2
 normoxic_CC/can_divide/time_window,                    int,  40
