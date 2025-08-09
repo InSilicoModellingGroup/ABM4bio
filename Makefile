@@ -1,7 +1,9 @@
 
 ABM4bio = $(shell pwd)
-BIODYNAMO_VERSION = 25dc979062d7b4367537c821e80b95e5727f668a
-BIODYNAMO_FOLDER  = biodynamo-v1.05.120
+#BIODYNAMO_VERSION = 25dc979062d7b4367537c821e80b95e5727f668a
+#BIODYNAMO_FOLDER  = biodynamo-v1.05.120
+BIODYNAMO_VERSION = a9d3c90e97164660d0ce567a357eb1cfe38035aa
+BIODYNAMO_FOLDER  = biodynamo-v1.05.143
 CC  = /usr/bin/gcc
 CXX = /usr/bin/g++
 
@@ -39,18 +41,19 @@ fresh:
 	echo     " ***************** "; \
 	cd $(ABM4bio)/examples/$@; rm -rf results; make run
 tests:
-	make clean; make fresh; \
-	make blood_vessel_CTC; \
-	make cancer_angiogenesis; \
-	make cancer_radiation; \
-	make HeLa_cells; \
-	make neuron_astrocyte; \
-	make neuron_bipolar; \
-	make obstacle_demo_1; \
-	make obstacle_demo_2; \
-	make tumour_spheroid; \
-	make vasculogenesis; \
-	make wound_assay; \
+	make clean; \
+	make --silent fresh                2>errors; \
+	make --silent blood_vessel_CTC     2>errors; \
+	make --silent cancer_angiogenesis  2>errors; \
+	make --silent cancer_radiation     2>errors; \
+	make --silent HeLa_cells           2>errors; \
+	make --silent neuron_astrocyte     2>errors; \
+	make --silent neuron_bipolar       2>errors; \
+	make --silent obstacle_demo_1      2>errors; \
+	make --silent obstacle_demo_2      2>errors; \
+	make --silent tumour_spheroid      2>errors; \
+	make --silent vasculogenesis       2>errors; \
+	make --silent wound_assay          2>errors; \
 	echo "\n\n ***************************"; \
 	echo     " *** All tests completed ***"; \
 	echo     " ***************************\n"
