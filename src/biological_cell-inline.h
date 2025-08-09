@@ -1243,10 +1243,11 @@ bool bdm::BiologicalCell::CheckPolarization()
     {
       const int pattern = this->params()->have_parameter<int>(CP_name+"/can_polarize/migration/pattern")
                         ? this->params()->get<int>(CP_name+"/can_polarize/migration/pattern") : 0;
+      // retrieve the actie displacement (vector) of the cell
+      const bdm::Double3 v = this->GetActiveDisplacement();
       // check if cell displacement is considerable to allow the cell self-polarization
-      if (L2norm(this->GetDisplacement()) > this->params()->get<double>("migration_tolerance"))
+      if (L2norm(v) > this->params()->get<double>("migration_tolerance"))
         {
-          bdm::Double3 v = this->GetDisplacement(); // cell displacement (vector) field
           // eigenvectors
           bdm::Double3 n0 = this->params()->get<bool>("simulation_domain_is_2D")
                      ? bdm::Double3{v[0], v[1], 0.0}
@@ -1257,20 +1258,32 @@ bool bdm::BiologicalCell::CheckPolarization()
           bdm::Double3 n2 = cross(n0, n1);
           n1 = cross(n2, n0);
           // normalize all vectors
-          n0.Normalize();
-          n1.Normalize();
-          n2.Normalize();
+          {
+            auto m = L2norm(n0);
+            if (m>1.0e-6) n0 /= m;
+            else return false;
+          }
+          {
+            auto m = L2norm(n1);
+            if (m>1.0e-6) n1 /= m;
+            else return false;
+          }
+          {
+            auto m = L2norm(n2);
+            if (m>1.0e-6) n2 /= m;
+            else return false;
+          }
           // eigenvalues
           double p[3];
           if (0==pattern)
             {
-              p[0] = rg->Uniform(principal[0],  principal_max),
+              p[0] = rg->Uniform(principal[0], principal_max),
               p[1] = rg->Uniform(principal[1],  principal[0]),
               p[2] = rg->Uniform(principal_min, principal[2]);
             }
           else if (1==pattern)
             {
-              p[0] = rg->Uniform(principal[0],  principal_max),
+              p[0] = rg->Uniform(principal[0], principal_max),
               p[1] = rg->Uniform(principal[2],  principal[1]),
               p[2] = rg->Uniform(principal_min, principal[2]);
             }
@@ -1315,12 +1328,24 @@ bool bdm::BiologicalCell::CheckPolarization()
             bdm::Double3 n2 = cross(n0, n1);
             n1 = cross(n2, n0);
             // normalize all direction vectors
-            n0.Normalize();
-            n1.Normalize();
-            n2.Normalize();
+            {
+              auto m = L2norm(n0);
+              if (m>1.0e-6) n0 /= m;
+              else return false;
+            }
+            {
+              auto m = L2norm(n1);
+              if (m>1.0e-6) n1 /= m;
+              else return false;
+            }
+            {
+              auto m = L2norm(n2);
+              if (m>1.0e-6) n2 /= m;
+              else return false;
+            }
             // eigenvalues
-            const double p0 = rg->Uniform(principal[0],  principal_max),
-                         p1 = rg->Uniform(principal[1],  p0),
+            const double p0 = rg->Uniform(principal[0], principal_max),
+                         p1 = rg->Uniform(principal[1],  principal[0]),
                          p2 = rg->Uniform(principal_min, principal[2]);
             // tensor products of eigenvectors, scaled by respective eigenvalues
             const bdm::Double3x3 n0Xn0_p0 = tensor(n0, n0, p0),
