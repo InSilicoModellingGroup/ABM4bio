@@ -1,0 +1,102 @@
+parameter_name, type, parameter_value
+### In Vivo Tumor Model (200mm3) , ### , ###
+output_directory,               string, results_inVivo
+simulation_title,               string, InVivo_200mm3_tumor
+#,#,#
+number_of_time_steps,           int,    5000
+time_step,                      float,  0.2
+visualization_interval,         int,    50
+statistics_interval,            int,    10
+#,#,#
+min_boundary,                   float, -30.0
+max_boundary,                   float, +30.0
+domain_tolerance,               float,   1.0
+safe_distance_ratio,            float,   0.5
+simulation_domain_is_2D,        bool,   false
+simulation_domain_is_polar,     bool,   false
+simulation_domain_is_bounded,   bool,   true
+simulation_domain_is_periodic,  bool,   false
+simulation_models_vessels,      bool,   false
+#,#,#
+cell/phenotypes,                   string, cancer_cell
+cell/max_displacement,             float,  1.0
+diffusion_grid/biochemicals,       string, O2
+diffusion_grid/spatial_resolution, int,    10
+#,#,#
+### O2 (Oxygen) , ### , ###
+O2/diffusion_coefficient,      float, 1.8e-5
+O2/dissipation_coefficient,    float, 0.0001
+O2/initial_value/min,          float, 250.0
+O2/initial_value/max,          float, 250.0
+O2/threshold/min,              float, 0.0
+O2/threshold/max,              float, 1000.0
+#,#,#
+### cancer_cell (Compact tumor cells) , ### , ###
+cancer_cell/phenotype_ID, int, 1
+cancer_cell/initial_population, int, 200
+cancer_cell/initial_population/phase_Ap/percentage, float, 10.0
+cancer_cell/initial_population/phase_G1/percentage, float, 50.0
+cancer_cell/initial_population/phase_Sy/percentage, float, 25.0
+cancer_cell/initial_population/phase_G2/percentage, float, 10.0
+cancer_cell/initial_population/phase_Di/percentage, float, 5.0
+cancer_cell/initial_population/phase_Tr/percentage, float, 0.0
+cancer_cell/mechanism_order, int, 11
+cancer_cell/can_apoptose, bool, true
+cancer_cell/can_grow, bool, true
+cancer_cell/can_divide, bool, true
+cancer_cell/can_migrate, bool, true
+cancer_cell/can_transform, bool, false
+cancer_cell/can_polarize, bool, false
+cancer_cell/can_protrude, bool, false
+cancer_cell/diameter/min,  float, 10.0
+cancer_cell/diameter/max,  float, 15.0
+cancer_cell/principal/0,   float, 1.00
+cancer_cell/principal/1,   float, 1.00
+cancer_cell/principal/2,   float, 1.00
+cancer_cell/principal/min, float, 1.00
+cancer_cell/principal/max, float, 1.10
+#,#,#
+### Cancer cell cycle parameters , ### , ###
+cancer_cell/growth_rate, float, 0.002
+cancer_cell/division_rate, float, 0.001
+cancer_cell/apoptosis_rate, float, 0.000001
+cancer_cell/migration_rate, float, 0.0001
+#,#,#
+### Cancer cell O2 consumption , ### , ###
+cancer_cell/O2/consumption/net_balance, float, 0.05
+cancer_cell/O2/consumption/dependency, bool, true
+cancer_cell/O2/consumption/saturation, float, 150.0
+cancer_cell/O2/consumption/net_balance/std, float, 0.01
+#,#,#
+### Cancer cell placement (compact spherical tumor) , ### , ###
+cancer_cell/initial_position/spherical,       bool,  true
+cancer_cell/initial_position/x_coordinate,    float, 0.0
+cancer_cell/initial_position/y_coordinate,    float, 0.0
+cancer_cell/initial_position/z_coordinate,    float, 0.0
+cancer_cell/initial_position/radius/min,      float, 0.0
+cancer_cell/initial_position/radius/max,      float, 8.0
+#,#,#
+### Division conditions , ### , ###
+cancer_cell/division/O2/threshold/min, float, 40.0
+cancer_cell/division/O2/threshold/max, float, 1000.0
+#,#,#
+### Division parameters , ### , ###
+cancer_cell/can_divide/probability, float, 0.02
+cancer_cell/can_divide/probability_increment_with_age, float, 0.0
+cancer_cell/can_divide/diameter_cutoff, float, 0.95
+cancer_cell/can_divide/max, int, 4
+cancer_cell/can_divide/time_window, int, 48
+cancer_cell/can_divide/O2/threshold, float, 50.0
+cancer_cell/can_divide/O2/dependency, bool, true
+cancer_cell/can_divide_and_transform/O2/threshold, float, 0.0
+#,#,#
+### Apoptosis conditions , ### , ###
+cancer_cell/apoptosis/O2/threshold/min, float, 0.0
+cancer_cell/apoptosis/O2/threshold/max, float, 20.0
+#,#,#
+### Additional cancer cell parameters , ### , ###
+cancer_cell/can_apoptose/time_window, int, 120
+cancer_cell/can_apoptose/time_window/to_delete, int, 144
+cancer_cell/can_apoptose/O2/threshold, float, 25.0
+cancer_cell/can_apoptose/O2/dependency, bool, true
+#,#,#
