@@ -43,6 +43,8 @@ public:
     // now open the file to process
     std::ifstream fin(fname);
     ASSERT_(fin,"could not open file "+fname);
+    // enforce to clear memory
+    segment.clear();
     //
     unsigned int n_pnt, n_segm;
     std::vector<bdm::Double3> vertices;
@@ -196,6 +198,8 @@ public:
     // now open the STL file to process
     std::ifstream fin(fname);
     ASSERT_(fin.good(),"file \""+fname+"\" cannot be accessed");
+    // enforce to clear memory
+    triangle.clear();
     //
     std::string s;
     // read STL header and confirm it's valid
