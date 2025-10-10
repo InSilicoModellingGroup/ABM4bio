@@ -599,26 +599,28 @@ bool bdm::BiologicalCell::CheckPositionValidity()
           const ObstacleSTL::Triangle& tri3 = obstacles->surface[l].triangle[t];
           // projection of the cell to the (triangular) surface
           const bdm::Double3 proj = project_to_plane(tri3.normal, tri3.center, xyz);
-          // skip following computations if projection of the
-          // cell is outside the triangle (defining the surface)
+          // skip following computations if the projection of this
+          // cell is outside the (surface defining the) triangle
           if (!is_inside_triangle(tri3.vertex_0, tri3.vertex_1, tri3.vertex_2, proj))
             continue;
           //
           const bdm::Double3 xyz_proj = xyz - proj;
           // skip following computations if cell is positioned
-          // well outside the (triangular) surface
-          if (L2norm(xyz_proj)>this->GetDiameter())
-            continue;
+          // well outside of the (triangular) surface
+          if (tri3.normal*xyz_proj>0.0)
+            if (L2norm(xyz_proj)>this->GetDiameter())
+              continue;
           // break following computations if cell is positioned
           // slightly underneath the (triangular) surface
           if (tri3.normal*xyz_proj<0.0)
-            {
-              xyz = proj + tri3.normal * safe_distance;
-              // enforce cell position with respect to the obstacle surface
-              this->SetPosition(xyz);
-              // cell has remained inside the simulation domain
-              return true;
-            }
+            if (L2norm(xyz_proj)<=this->GetDiameter())
+              {
+                xyz = proj + tri3.normal * safe_distance;
+                // enforce cell position with respect to the obstacle surface
+                this->SetPosition(xyz);
+                // cell has remained inside the simulation domain, now exit
+                return true;
+              }
           // save data: index of the triangle (obstacle) and the
           // projection of the cell
           tri3__proj = std::make_pair(t, proj);
@@ -656,29 +658,31 @@ bool bdm::BiologicalCell::CheckPositionValidity()
       bdm::Double3 xyz = this->GetPosition();
       bdm::Double3 displace = xyz * (-1.0);
       //
+      const double safe_distance = 0.55 * this->GetDiameter();
+      //
       const unsigned int n_segm = obstacles->scaffold[l].segment.size();
       for (unsigned int s=0; s<n_segm; s++)
         {
           const ObstacleScaffold::Segment& segm = obstacles->scaffold[l].segment[s];
-          //
+          // the two vertices of the segment
           const bdm::Double3 n0 = segm.vertex_0,
                              n1 = segm.vertex_1;
-          // check if cell position is inside this obstacle
+          // skip following computations if the projection of this
+          // cell is outside of the segment
           if (! is_inside_segment(n0, n1, xyz))
             continue;
           // cell position projection to the user-defined segment
           const bdm::Double3 proj = project_to_line(n0, n1, xyz);
-          const double distance = L2norm(bdm::Double3(xyz-proj))
-                                - segm.radius;
           //
-          if (distance>rg->Uniform(0.5,1.0)*this->GetDiameter()) continue;
+          const bdm::Double3 xyz_proj = xyz - proj;
           //
-          bdm::Double3 normal = xyz - proj;
-          if (!normalize(normal, normal))
-            ABORT_("could not normalize the normal vector");
+          if (L2norm(xyz_proj)-segm.radius>safe_distance) continue;
           //
-          const double delta = (rg->Uniform(0.5,1.0)*this->GetDiameter());
-          xyz = proj + normal * delta;
+          bdm::Double3 uvec;
+          ASSERT_(normalize(xyz_proj, uvec),
+                  "could not normalize the space vector");
+          //
+          xyz = proj + uvec * (segm.radius+safe_distance);
           // enforce cell to lie on the (box) obstacle surface
           this->SetPosition(xyz);
           //
