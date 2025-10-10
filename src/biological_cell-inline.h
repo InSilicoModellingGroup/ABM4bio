@@ -70,7 +70,8 @@ void bdm::BiologicalCell::RunBiochemics()
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, xyz, tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, xyz, tol))
+    return;
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -228,8 +229,8 @@ bool bdm::BiologicalCell::CheckPositionValidity()
           if ( updated_xyz )
             this->SetPosition(xyz);
         }
-      else if ( this->params()->get<bool>("simulation_domain_is_polar") &&
-              ! this->params()->get<bool>("simulation_domain_is_2D")    )
+      else if (   this->params()->get<bool>("simulation_domain_is_polar") &&
+                ! this->params()->get<bool>("simulation_domain_is_2D")    )
         {
           const double radius = sqrt(pow2(xyz[0]-meanCOORD)
                                     +pow2(xyz[1]-meanCOORD)
@@ -707,8 +708,8 @@ bool bdm::BiologicalCell::CheckApoptosisAging()
   if (this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age")>0.0)
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_apoptose/probability")
-                                +this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age")
-                                *this->GetAge() )
+                               + this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age")
+                               * this->GetAge() )
         return false;
     }
   else
@@ -749,7 +750,8 @@ bool bdm::BiologicalCell::CheckApoptosis()
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -889,39 +891,40 @@ bool bdm::BiologicalCell::CheckMigration()
       bdm::Double3 dvec = {0.0, 0.0, 0.0};
       // ensure cell is well within the simulation domain!
       if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-      // iterate for all components of the convection (vector) field
-      for (int ispdm=0; ispdm<SpaceDimension; ispdm++)
-        {
-          const std::string name = "convection_" + std::to_string(ispdm);
-          // access the BioDynaMo diffusion grid
-          auto* dg = rm->GetDiffusionGrid(name);
-          // obtain the convection component
-          const double velocity_comp = dg->GetValue(this->GetPosition());
-          // calculate corresponding displacement component
-          const double displacement_comp = velocity_comp * time_step;
-          //
-          dvec[ispdm] += displacement_comp;
-        }
+        // iterate for all components of the convection (vector) field
+        for (int ispdm=0; ispdm<SpaceDimension; ispdm++)
+          {
+            const std::string name = "convection_" + std::to_string(ispdm);
+            // access the BioDynaMo diffusion grid
+            auto* dg = rm->GetDiffusionGrid(name);
+            // obtain the convection component
+            const double velocity_comp = dg->GetValue(this->GetPosition());
+            // calculate corresponding displacement component
+            const double displacement_comp = velocity_comp * time_step;
+            //
+            dvec[ispdm] += displacement_comp;
+          }
       //
       const double d_magn = L2norm(dvec);
       // check if distance covered is above a minimum, else ignore
       if (d_magn > this->params()->get<double>("migration_tolerance"))
-      // check if convection contribution is significant compared to the cell adhesion property
-      if (d_magn > max_adhesion)
-        {
-          // update the (cell) displacement vector
-          this->passive_displacement_ += dvec;
-          // scale the (cell) displacement vector wrt the adhesion effect
-          this->passive_displacement_ *= ((d_magn-max_adhesion)/d_magn);
-          // update this flag
-          has_migrated = true;
-        }
+        // check if convection contribution is significant compared to the cell adhesion property
+        if (d_magn > max_adhesion)
+          {
+            // update the (cell) displacement vector
+            this->passive_displacement_ += dvec;
+            // scale the (cell) displacement vector wrt the adhesion effect
+            this->passive_displacement_ *= ((d_magn-max_adhesion)/d_magn);
+            // update this flag
+            has_migrated = true;
+          }
     }
   //
   // check if cell migrates actively due to some inherent random-walk or
   // a biochemical stimulus, i.e. chemotaxis
   if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/probability"))
-    {/// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
+    /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
+    {
       //
       const int index_time = this->params()->get<int>("index time");
       const int strength_time = this->params()->have_parameter<int>(CP_name+"/can_migrate/strength_of_time")
@@ -1045,7 +1048,8 @@ bool bdm::BiologicalCell::CheckMigration()
           //
         } //   --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
       //
-    }/// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
+    }
+    /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
   //
   // check if cell has migrated, if so then revise its spatial coordinates and trail
   if ( has_migrated )
@@ -1109,93 +1113,94 @@ bool bdm::BiologicalCell::CheckTransformation()
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    // iterate for all substances
-    for ( std::vector<std::string>::const_iterator
-          ci=substances.begin(); ci!=substances.end(); ci++ )
-      {
-        // access the BioDynaMo diffusion grid
-        auto* dg = rm->GetDiffusionGrid(*ci);
-        const std::string BC_name = dg->GetContinuumName(); // biochemical name
-        //
-        if (! this->params()->have_parameter<int>(CP_name+"/can_transform/"+BC_name+"/new_phenotype"))
-          continue;
-        //
-        const double concentration = dg->GetValue(this->GetPosition()),
-                     threshold = this->params()->get<double>(CP_name+"/can_transform/"+BC_name+"/threshold");
-        //
-        if ( ( threshold > 0.0 && concentration > +threshold ) ||
-             ( threshold < 0.0 && concentration < -threshold ) )
-          {
-            if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_transform/"+BC_name+"/probability"))
-              // now check if cell age is within an appropriate time-window to allow its transformation
-              if ( this->GetAge() >= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_open" ) &&
-                   this->GetAge() <= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_close") )
-                  {
-                    const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/new_phenotype");
-                    // firstly, the cell transforms
-                    this->SetPhenotype(new_phenotype);
-                    // increment this index
-                    this->IncrementNumberOfTrasformations();
-                    // now reset the age of the cell
-                    this->SetAge();
-                    //
-                    const std::string CP_new_name = // cell phenotype name
-                      this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
-                    // principal directions of the cell polarization matrix
-                    double p0, p1, p2;
-                    if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
-                      {
-                        p0 = this->params()->get<double>(CP_new_name+"/principal/0");
-                        p1 = this->params()->get<double>(CP_new_name+"/principal/1");
-                        p2 = this->params()->get<double>(CP_new_name+"/principal/2");
-                      }
-                    //
-                    this->SetCanApoptose(this->params()->get<bool>(CP_new_name+"/can_apoptose"));
-                    this->SetCanGrow(this->params()->get<bool>(CP_new_name+"/can_grow"));
-                    this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
-                    this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
-                    this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
-                    this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
-                    this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
-                    // reset the cell polarization matrix
-                    if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
-                      this->SetPolarization(diag(p0, p1, p2));
-                    // reset the cell protrusion phenotype
-                    if ( this->GetNumberOfProtrusions() )
-                      {
-                        if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
-                          ABORT_("an internal error occurred");
-                        //
-                        // iterate for all (existing) protrusions of this cell
-                        for (int p=0; p<this->GetNumberOfProtrusions(); p++)
-                          {
-                            auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
-                            // assign this cell (that is associated with) to the protrusion created
-                            protrusion->SetCell(this);
-                          }
-                      }
-                    // reset the cell behavior (mechanisms order) from old to new one
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
+  // iterate for all substances
+  for ( std::vector<std::string>::const_iterator
+        ci=substances.begin(); ci!=substances.end(); ci++ )
+    {
+      // access the BioDynaMo diffusion grid
+      auto* dg = rm->GetDiffusionGrid(*ci);
+      const std::string BC_name = dg->GetContinuumName(); // biochemical name
+      //
+      if (! this->params()->have_parameter<int>(CP_name+"/can_transform/"+BC_name+"/new_phenotype"))
+        continue;
+      //
+      const double concentration = dg->GetValue(this->GetPosition()),
+                   threshold = this->params()->get<double>(CP_name+"/can_transform/"+BC_name+"/threshold");
+      //
+      if ( ( threshold > 0.0 && concentration > +threshold ) ||
+           ( threshold < 0.0 && concentration < -threshold ) )
+        {
+          if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_transform/"+BC_name+"/probability"))
+            // now check if cell age is within an appropriate time-window to allow its transformation
+            if ( this->GetAge() >= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_open" ) &&
+                 this->GetAge() <= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_close") )
+                {
+                  const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/new_phenotype");
+                  // firstly, the cell transforms
+                  this->SetPhenotype(new_phenotype);
+                  // increment this index
+                  this->IncrementNumberOfTrasformations();
+                  // now reset the age of the cell
+                  this->SetAge();
+                  //
+                  const std::string CP_new_name = // cell phenotype name
+                    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+                  // principal directions of the cell polarization matrix
+                  double p0, p1, p2;
+                  if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
                     {
-                      const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
-                      if (behavior.size()!=1)
+                      p0 = this->params()->get<double>(CP_new_name+"/principal/0");
+                      p1 = this->params()->get<double>(CP_new_name+"/principal/1");
+                      p2 = this->params()->get<double>(CP_new_name+"/principal/2");
+                    }
+                  //
+                  this->SetCanApoptose(this->params()->get<bool>(CP_new_name+"/can_apoptose"));
+                  this->SetCanGrow(this->params()->get<bool>(CP_new_name+"/can_grow"));
+                  this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
+                  this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
+                  this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
+                  this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+                  this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+                  // reset the cell polarization matrix
+                  if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
+                    this->SetPolarization(diag(p0, p1, p2));
+                  // reset the cell protrusion phenotype
+                  if ( this->GetNumberOfProtrusions() )
+                    {
+                      if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
                         ABORT_("an internal error occurred");
                       //
-                      this->RemoveBehavior(behavior[0]);
+                      // iterate for all (existing) protrusions of this cell
+                      for (int p=0; p<this->GetNumberOfProtrusions(); p++)
+                        {
+                          auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
+                          // assign this cell (that is associated with) to the protrusion created
+                          protrusion->SetCell(this);
+                        }
                     }
-                    const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-                    if (10==mo)
-                      this->AddBehavior(new Biology4BiologicalCell_10());
-                    else
-                      ABORT_("an exception is caught");
-                    // cell has transformed, then proceed to check if it can do other things
-                    return true;
+                  // reset the cell behavior (mechanisms order) from old to new one
+                  {
+                    const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
+                    if (behavior.size()!=1)
+                      ABORT_("an internal error occurred");
+                    //
+                    this->RemoveBehavior(behavior[0]);
                   }
-              //
+                  const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
+                  if (10==mo)
+                    this->AddBehavior(new Biology4BiologicalCell_10());
+                  else
+                    ABORT_("an exception is caught");
+                  // cell has transformed, then proceed to check if it can do other things
+                  return true;
+                }
             //
-          }
-        //...end of substances loop
-      }
+          //
+        }
+      //...end of substances loop
+    }
   // cell has not been through any transformation
   return false;
   //...end of cell transformation
@@ -1236,8 +1241,8 @@ bool bdm::BiologicalCell::CheckPolarization()
   const std::vector<int> perm =
     this->params()->get<std::vector<int>>(CP_name+"/principal/permutation");
   const bdm::Double3 principal = { this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[0])) ,
-                              this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[1])) ,
-                              this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[2])) };
+                                   this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[1])) ,
+                                   this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[2])) };
   //
   if ( this->params()->get<bool>(CP_name+"/can_polarize/migration/dependency") )
     {
@@ -1301,63 +1306,64 @@ bool bdm::BiologicalCell::CheckPolarization()
     }
   //
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    // iterate for all substances if cell can
-    // re-orient / polarize
-    for ( std::vector<std::string>::const_iterator
-          ci=substances.begin(); ci!=substances.end(); ci++ )
-      {
-        // access the BioDynaMo diffusion grid
-        auto* dg = rm->GetDiffusionGrid(*ci);
-        const std::string BC_name = dg->GetContinuumName(); // biochemical name
-        const double concentration = dg->GetValue(this->GetPosition()),
-                     threshold = this->params()->get<double>(CP_name+"/can_polarize/"+BC_name+"/threshold");
-        //
-        if ( ( threshold > 0.0 && concentration > +threshold ) ||
-             ( threshold < 0.0 && concentration < -threshold ) )
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
+  // iterate for all substances if cell can
+  // re-orient / polarize
+  for ( std::vector<std::string>::const_iterator
+        ci=substances.begin(); ci!=substances.end(); ci++ )
+    {
+      // access the BioDynaMo diffusion grid
+      auto* dg = rm->GetDiffusionGrid(*ci);
+      const std::string BC_name = dg->GetContinuumName(); // biochemical name
+      const double concentration = dg->GetValue(this->GetPosition()),
+                   threshold = this->params()->get<double>(CP_name+"/can_polarize/"+BC_name+"/threshold");
+      //
+      if ( ( threshold > 0.0 && concentration > +threshold ) ||
+           ( threshold < 0.0 && concentration < -threshold ) )
+        {
+          bdm::Double3 v; // substance gradient (vector) field
+          dg->GetGradient(this->GetPosition(), &v);
+          // eigenvectors
+          bdm::Double3 n0 = this->params()->get<bool>("simulation_domain_is_2D")
+                     ? bdm::Double3{v[0], v[1], 0.0}
+                     : bdm::Double3{v[0], v[1], v[2]};
+          bdm::Double3 n1 = this->params()->get<bool>("simulation_domain_is_2D")
+                     ? bdm::Double3{rg->Uniform(-1.,1.), rg->Uniform(-1.,1.), 0.0}
+                     : bdm::Double3{rg->Uniform(-1.,1.), rg->Uniform(-1.,1.), rg->Uniform(-1.,1.)};
+          bdm::Double3 n2 = cross(n0, n1);
+          n1 = cross(n2, n0);
+          // normalize all direction vectors
           {
-            bdm::Double3 v; // substance gradient (vector) field
-            dg->GetGradient(this->GetPosition(), &v);
-            // eigenvectors
-            bdm::Double3 n0 = this->params()->get<bool>("simulation_domain_is_2D")
-                       ? bdm::Double3{v[0], v[1], 0.0}
-                       : bdm::Double3{v[0], v[1], v[2]};
-            bdm::Double3 n1 = this->params()->get<bool>("simulation_domain_is_2D")
-                       ? bdm::Double3{rg->Uniform(-1.,1.), rg->Uniform(-1.,1.), 0.0}
-                       : bdm::Double3{rg->Uniform(-1.,1.), rg->Uniform(-1.,1.), rg->Uniform(-1.,1.)};
-            bdm::Double3 n2 = cross(n0, n1);
-            n1 = cross(n2, n0);
-            // normalize all direction vectors
-            {
-              auto m = L2norm(n0);
-              if (m>1.0e-6) n0 /= m;
-              else return false;
-            }
-            {
-              auto m = L2norm(n1);
-              if (m>1.0e-6) n1 /= m;
-              else return false;
-            }
-            {
-              auto m = L2norm(n2);
-              if (m>1.0e-6) n2 /= m;
-              else return false;
-            }
-            // eigenvalues
-            const double p0 = rg->Uniform(principal[0], principal_max),
-                         p1 = rg->Uniform(principal[1],  principal[0]),
-                         p2 = rg->Uniform(principal_min, principal[2]);
-            // tensor products of eigenvectors, scaled by respective eigenvalues
-            const bdm::Double3x3 n0Xn0_p0 = tensor(n0, n0, p0),
-                                 n1Xn1_p1 = tensor(n1, n1, p1),
-                                 n2Xn2_p2 = tensor(n2, n2, p2);
-            // update the cell polarization matrix
-            this->polarize_ = n0Xn0_p0 + n1Xn1_p1 + n2Xn2_p2;
-            // cell has polarized, then proceed to check if it can do other things
-            return true;
+            auto m = L2norm(n0);
+            if (m>1.0e-6) n0 /= m;
+            else return false;
           }
-        //...end of substances loop
-      }
+          {
+            auto m = L2norm(n1);
+            if (m>1.0e-6) n1 /= m;
+            else return false;
+          }
+          {
+            auto m = L2norm(n2);
+            if (m>1.0e-6) n2 /= m;
+            else return false;
+          }
+          // eigenvalues
+          const double p0 = rg->Uniform(principal[0], principal_max),
+                       p1 = rg->Uniform(principal[1],  principal[0]),
+                       p2 = rg->Uniform(principal_min, principal[2]);
+          // tensor products of eigenvectors, scaled by respective eigenvalues
+          const bdm::Double3x3 n0Xn0_p0 = tensor(n0, n0, p0),
+                               n1Xn1_p1 = tensor(n1, n1, p1),
+                               n2Xn2_p2 = tensor(n2, n2, p2);
+          // update the cell polarization matrix
+          this->polarize_ = n0Xn0_p0 + n1Xn1_p1 + n2Xn2_p2;
+          // cell has polarized, then proceed to check if it can do other things
+          return true;
+        }
+      //...end of substances loop
+    }
   // cell has not been through any polarization
   return false;
   //...end of cell polarization
@@ -1434,7 +1440,8 @@ bool bdm::BiologicalCell::CheckProtrusion()
   const double protrusion_tol =
     ! this->params()->have_parameter<double>(CP_name+"/can_protrude/tolerance")
     ? tol :      this->params()->get<double>(CP_name+"/can_protrude/tolerance");
-  if (!check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), protrusion_tol))
+  //
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), protrusion_tol))
     return false;
   //
   CellProtrusion c_p;
@@ -1891,8 +1898,8 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
   if (this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")>0.0)
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
-                                +this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                                *this->GetAge() )
+                               + this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
+                               * this->GetAge() )
         return false;
     }
   else
@@ -1920,7 +1927,8 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
     this->params()->get<std::vector<std::string>>("substances");
   //
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances if cell can
   // transform and then divide (symmetrically)
   for ( std::vector<std::string>::const_iterator
@@ -2044,8 +2052,8 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
   if (this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")>0.0)
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
-                                +this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                                *this->GetAge() )
+                               + this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
+                               * this->GetAge() )
         return false;
     }
   else
@@ -2073,7 +2081,8 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
     this->params()->get<std::vector<std::string>>("substances");
   //
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances if cell can
   // divide and then transform
   for ( std::vector<std::string>::const_iterator
@@ -2192,8 +2201,8 @@ bool bdm::BiologicalCell::CheckDivision() {
   if (this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")>0.0)
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
-                                +this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                                *this->GetAge() )
+                               + this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
+                               * this->GetAge() )
         return false;
     }
   else
@@ -2221,7 +2230,8 @@ bool bdm::BiologicalCell::CheckDivision() {
     this->params()->get<std::vector<std::string>>("substances");
   //
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances if cell can
   // divide (symmetrically)
   for ( std::vector<std::string>::const_iterator
@@ -2283,16 +2293,14 @@ bool bdm::BiologicalCell::CheckProtrusionAxis(bdm::Double3 axis)
   ASSERT_(normalize(axis, axis),"could not normalize the axis vector");
   //
   if (!this->protrusions_.empty())
-    {
-      for (unsigned int l=0; l<this->protrusions_.size(); l++)
-        {
-          const bdm::Double3& current_axis = this->protrusions_[l];
-          const double angle = radians_to_degrees( acos(axis*current_axis) );
-          // check if relative angle is within user-defined range
-          if (angle<rel_angle_min || angle>rel_angle_max)
-            return false;
-        }
-    }
+    for (unsigned int l=0; l<this->protrusions_.size(); l++)
+      {
+        const bdm::Double3& current_axis = this->protrusions_[l];
+        const double angle = radians_to_degrees( acos(axis*current_axis) );
+        // check if relative angle is within user-defined range
+        if (angle<rel_angle_min || angle>rel_angle_max)
+          return false;
+      }
   //
   this->protrusions_.push_back(axis);
   return true;
