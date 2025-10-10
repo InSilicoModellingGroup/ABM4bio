@@ -46,30 +46,42 @@ public:
     // enforce to clear memory
     segment.clear();
     //
-    unsigned int n_pnt, n_segm;
     std::vector<bdm::Double3> vertices;
     std::vector<double> radii;
-    //
+    // version of the data file
+    double v;
+    fin >> v;
+    // number of points
+    unsigned int n_pnt;
     fin >> n_pnt;
+    vertices.resize(n_pnt);
+    radii.resize(n_pnt);
     for (unsigned int i=0; i<n_pnt; i++)
       {
-        double x, y, z, r;
-        fin >> x >> y >> z >> r;
-        vertices.push_back({x,y,z});
-        radii.push_back(r);
+        double x, y, z, r(0.0);
+        fin >> x >> y >> z;
+        if      (1.0==v) fin >> r;
+        else if (1.1==v) r = 0.0;
+        else ABORT_("data version of file "+fname+" is wrong");
+        vertices[i] = {x,y,z};
+        radii[i] = r;
       }
-    //
+    // number of segments
+    unsigned int n_segm;
     fin >> n_segm;
     segment.resize(n_segm);
     for (unsigned int i=0; i<n_segm; i++)
       {
         int n0, n1;
+        double r(0.0);
         fin >> n0 >> n1;
+        if      (1.0==v) r = 0.5*(radii[n0]+radii[n1]);
+        else if (1.1==v) fin >> r;
+        else ABORT_("data version of file "+fname+" is wrong");
         segment[i].vertex_0 = vertices[n0];
         segment[i].vertex_1 = vertices[n1];
         segment[i].length = L2norm(vertices[n1]-vertices[n0]);
-        double rm = 0.5*(radii[n0]+radii[n1]);
-        segment[i].radius = rm;
+        segment[i].radius = r;
       }
     // now close the file stream
     fin.close();
