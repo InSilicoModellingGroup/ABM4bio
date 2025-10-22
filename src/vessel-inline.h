@@ -258,7 +258,7 @@ bool bdm::Vessel::CheckPositionValidity()
     }
   // access the pointer to parameter of the simulation obstacles object
   const SimulationObstacles* obstacles =
-    this->params()->get<SimulationObstacles*>("simulation_obstacles");
+    this->params()->get<SimulationObstacles*>("simulation_obstacles_data");
   // check if vessel has reached any of the 'box' simulation obstacles
   for (size_t l=0; l<obstacles->box.size(); l++)
     {

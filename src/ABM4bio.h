@@ -327,6 +327,10 @@ void read_csv_file(const std::string& fn,
       params.set<int>("simulation_obstacles") = 0;
     if (params.get<int>("simulation_obstacles")<0)
       ABORT_("model parameter \"simulation_obstacles\" is initialized wrong");
+    if (!params.have_parameter<bool>("simulation_obstacles/update"))
+      params.set<bool>("simulation_obstacles/update") = false;
+    // produce a pointer to parameter of the simulation obstacles object
+    params.set<SimulationObstacles*>("simulation_obstacles_data") = &obstacles;
     //
     if (!params.have_parameter<double>("safe_distance_ratio"))
       params.set<double>("safe_distance_ratio") = 0.5;
@@ -365,114 +369,6 @@ void read_csv_file(const std::string& fn,
       if (!params.have_parameter<double>("max_vessel_length"))
         params.set<double>("max_vessel_length") = 100.0;
     }
-  // initialize any obstacles the simulation might have
-  if ( params.get<int>("simulation_obstacles") )
-    {
-      const unsigned int n_obstacles = params.get<int>("simulation_obstacles");
-      // iterate for all simulation obstacles
-      for (unsigned int l=0; l<n_obstacles; l++)
-        {
-          const std::string oid = std::to_string(l+1);
-          // define the pattern of the simulation obstacle (use template, or load from STL file)
-          const std::string pattern = params.get<std::string>("simulation_obstacle/"+oid+"/pattern");
-          //
-          if ("scaffold"==pattern)
-            {
-              //
-              std::string scaff;
-              scaff = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold");
-              //
-              ObstacleScaffold obs;
-              obs.init(pattern, scaff);
-              //
-              obstacles.scaffold.push_back(obs);
-              //
-              // create a copy of the file just processed
-              const std::string cmd = "cp " + scaff + "  "
-                                    + params.get<std::string>("output_directory")
-                                    + "/in/simulation_obstacle." + oid + ".scaffold";
-              ASSERT_(0==std::system(cmd.c_str()),
-                      "could not save a copy of a data file");
-              //
-            }
-          else if ("box/inside"==pattern || "box/outside"==pattern)
-            {
-              //
-              std::vector<bdm::Double3> vertex(8);
-              vertex[0] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/2") };
-              vertex[1] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/2") };
-              vertex[2] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/2") };
-              vertex[3] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/2") };
-              vertex[4] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/2") };
-              vertex[5] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/2") };
-              vertex[6] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/2") };
-              vertex[7] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/2") };
-              //
-              ObstacleBox obs;
-              obs.init(pattern, vertex);
-              //
-              obstacles.box.push_back(obs);
-              //
-            }
-          else if ("sphere/inside"==pattern || "sphere/outside"==pattern)
-            {
-              //
-              bdm::Double3 center;
-              center = { params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/0") ,
-                         params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/1") ,
-                         params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/2") };
-              //
-              double radius;
-              radius = params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/radius");
-              //
-              ObstacleSphere obs;
-              obs.init(pattern, center, radius);
-              //
-              obstacles.sphere.push_back(obs);
-              //
-            }
-          else if ("STL"==pattern)
-            {
-              //
-              std::string stl;
-              stl = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/STL");
-              //
-              ObstacleSTL obs;
-              obs.init(pattern, stl);
-              //
-              obstacles.surface.push_back(obs);
-              //
-              // create a copy of the file just processed
-              const std::string cmd = "cp " + stl + "  "
-                                    + params.get<std::string>("output_directory")
-                                    + "/in/simulation_obstacle." + oid + ".stl";
-              ASSERT_(0==std::system(cmd.c_str()),
-                      "could not save a copy of the data file");
-              //
-            }
-          else
-            ABORT_("model parameter \""+pattern+"\" is initialized wrong");
-          // ...end of simulation obstacles loop
-        }
-    }
-  // produce a pointer to parameter of the simulation obstacles object
-  params.set<SimulationObstacles*>("simulation_obstacles") = &obstacles;
   // biochemical (cues) and cell phenotypes identifiction
   if ( true )
     {
@@ -570,6 +466,189 @@ void read_csv_file(const std::string& fn,
     }
   // produce a pointer to parameter of the simulation io-flux surfaces object
   params.set<SimulationIOFlux*>("simulation_io_flux") = &io_flux;
+}
+// =============================================================================
+inline
+void init_obstacles()
+{
+  const unsigned int n_obstacles = params.get<int>("simulation_obstacles");
+  // if there are no obstacles in the simulation, then exit normally
+  if (0==n_obstacles) return;
+  // iterate for all simulation obstacles
+  for (unsigned int l=0; l<n_obstacles; l++)
+    {
+      const std::string oid = std::to_string(l+1);
+      // define the pattern of the simulation obstacle (use template, or load from STL file)
+      const std::string pattern = params.get<std::string>("simulation_obstacle/"+oid+"/pattern");
+      //
+      if ("scaffold"==pattern)
+        {
+          //
+          std::string fn;
+          fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold");
+          //
+          ObstacleScaffold obs;
+          obs.init(pattern, fn);
+          //
+          obstacles.scaffold.push_back(obs);
+          //
+          // create a copy of the file just processed
+          const std::string cmd = "cp " + fn + "  "
+                                + params.get<std::string>("output_directory")
+                                + "/in/simulation_obstacle." + oid + ".scaffold";
+          ASSERT_(0==std::system(cmd.c_str()),
+                  "could not save a copy of a data file");
+          //
+        }
+      else if ("box/inside"==pattern || "box/outside"==pattern)
+        {
+          //
+          std::vector<bdm::Double3> vertex(8);
+          vertex[0] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/2") };
+          vertex[1] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/2") };
+          vertex[2] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/2") };
+          vertex[3] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/2") };
+          vertex[4] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/2") };
+          vertex[5] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/2") };
+          vertex[6] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/2") };
+          vertex[7] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/2") };
+          //
+          ObstacleBox obs;
+          obs.init(pattern, vertex);
+          //
+          obstacles.box.push_back(obs);
+          //
+        }
+      else if ("sphere/inside"==pattern || "sphere/outside"==pattern)
+        {
+          //
+          bdm::Double3 center;
+          center = { params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/0") ,
+                     params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/1") ,
+                     params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/2") };
+          //
+          double radius;
+          radius = params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/radius");
+          //
+          ObstacleSphere obs;
+          obs.init(pattern, center, radius);
+          //
+          obstacles.sphere.push_back(obs);
+          //
+        }
+      else if ("STL"==pattern)
+        {
+          //
+          std::string fn;
+          fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/STL");
+          //
+          ObstacleSTL obs;
+          obs.init(pattern, fn);
+          //
+          obstacles.surface.push_back(obs);
+          //
+          // create a copy of the file just processed
+          const std::string cmd = "cp " + fn + "  "
+                                + params.get<std::string>("output_directory")
+                                + "/in/simulation_obstacle." + oid + ".stl";
+          ASSERT_(0==std::system(cmd.c_str()),
+                  "could not save a copy of the data file");
+          //
+        }
+      else
+        ABORT_("model parameter \""+pattern+"\" is initialized wrong");
+      // ...end of simulation obstacles loop
+    }
+}
+// =============================================================================
+inline
+void reinit_obstacles(const int time)
+{
+  const unsigned int n_obstacles = params.get<int>("simulation_obstacles");
+  // if there are no obstacles in the simulation, then exit normally
+  if (0==n_obstacles) return;
+  // if there is no need to update the obstacles in the simulation, then again
+  // exit normally
+  if (!params.get<bool>("simulation_obstacles/update")) return;
+  // iterate for all simulation obstacles
+  for (unsigned int l=0; l<n_obstacles; l++)
+    {
+      const std::string oid = std::to_string(l+1);
+      const std::string T = std::to_string(time);
+      // define the pattern of the simulation obstacle (use template, or load from STL file)
+      const std::string pattern = params.get<std::string>("simulation_obstacle/"+oid+"/pattern");
+      //
+      if ("scaffold"==pattern)
+        {
+          if (params.have_parameter<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold/"+T))
+            {
+              //
+              std::string fn;
+              fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold/"+T);
+              //
+              ObstacleScaffold obs;
+              obs.init(pattern, fn);
+              //
+              obstacles.scaffold.push_back(obs);
+              //
+              // create a copy of the file just processed
+              const std::string cmd = "cp " + fn + "  "
+                                    + params.get<std::string>("output_directory")
+                                    + "/in/simulation_obstacle." + oid + ".scaffold." + T;
+              ASSERT_(0==std::system(cmd.c_str()),
+                      "could not save a copy of a data file");
+              //
+            }
+        }
+      else if ("box/inside"==pattern || "box/outside"==pattern)
+        {
+          ;
+        }
+      else if ("sphere/inside"==pattern || "sphere/outside"==pattern)
+        {
+          ;
+        }
+      else if ("STL"==pattern)
+        {
+          if (params.have_parameter<std::string>("simulation_obstacle/"+oid+"/pattern/STL/"+T))
+            {
+              //
+              std::string fn;
+              fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/STL/"+T);
+              //
+              ObstacleSTL obs;
+              obs.init(pattern, fn);
+              //
+              obstacles.surface.push_back(obs);
+              //
+              // create a copy of the file just processed
+              const std::string cmd = "cp " + fn + "  "
+                                    + params.get<std::string>("output_directory")
+                                    + "/in/simulation_obstacle." + oid + ".stl." + T;
+              ASSERT_(0==std::system(cmd.c_str()),
+                      "could not save a copy of the data file");
+              //
+            }
+        }
+      else
+        ABORT_("model parameter \""+pattern+"\" is initialized wrong");
+    }
 }
 // =============================================================================
 inline
@@ -3102,6 +3181,8 @@ int simulate(const std::string& fname, const int seed)
   ASSERT_(0==std::system(cmd.c_str()), "could not save a copy of \"input.csv\"");
   // now let's start with the simulation initializations
   std::cout << "Simulation initializes..." << std::endl;
+  // load the data for the obstacles in the simulation
+  init_obstacles();
   // load all biochemicals in the simulation
   init_biochemicals(sim, biochem);
   // load all vessels in the simulation
@@ -3136,6 +3217,8 @@ int simulate(const std::string& fname, const int seed)
       if (0==time%stat_step) save_stats(sim, cells, fstat);
       // output data for Paraview visualization
       if (0==time%viz_step) save_snapshot(sim, time);
+      // reset the data for the obstacles in the simulation
+      reinit_obstacles(time);
       // reset some data for all cells in the simulation
       reinit_cells(sim, cells);
       // reset some data for biochemical species (if dynamic)

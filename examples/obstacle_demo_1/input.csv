@@ -22,14 +22,14 @@ simulation_obstacles,            int, 3
 #,#,#
 #,#,#
 simulation_obstacle/1/pattern,     string, STL
-simulation_obstacle/1/pattern/STL, string, ./wall-1.stl
+simulation_obstacle/1/pattern/STL, string, obstacles/wall-1.stl
 #,#,#
 simulation_obstacle/2/pattern,     string, STL
-simulation_obstacle/2/pattern/STL, string, ./wall-2.stl
+simulation_obstacle/2/pattern/STL, string, obstacles/wall-2.stl
 #,#,#
 simulation_obstacle/3/pattern,          string, scaffold
-# simulation_obstacle/3/pattern/scaffold, string, ./RVE.1d
-simulation_obstacle/3/pattern/scaffold, string, ./D14-10.0-20.0-45-5-5-4.1d
+simulation_obstacle/3/pattern/scaffold, string, obstacles/RVE/D14-10.0-20.0-45-5-5-4.1d
+#simulation_obstacle/3/pattern/scaffold, string, obstacles/RVE/RVE.1d
 #,#,#
 #,#,#
 cell/phenotypes,                   string, a_cell

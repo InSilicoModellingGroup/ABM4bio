@@ -20,22 +20,22 @@ simulation_obstacles,            int, 6
 #,#,#
 #,#,#
 simulation_obstacle/1/pattern,     string, STL
-simulation_obstacle/1/pattern/STL, string, ./wall-1.stl
+simulation_obstacle/1/pattern/STL, string, obstacles/wall-1.stl
 #,#,#
 simulation_obstacle/2/pattern,     string, STL
-simulation_obstacle/2/pattern/STL, string, ./wall-2.stl
+simulation_obstacle/2/pattern/STL, string, obstacles/wall-2.stl
 #,#,#
 simulation_obstacle/3/pattern,     string, STL
-simulation_obstacle/3/pattern/STL, string, ./wall-3.stl
+simulation_obstacle/3/pattern/STL, string, obstacles/wall-3.stl
 #,#,#
 simulation_obstacle/4/pattern,     string, STL
-simulation_obstacle/4/pattern/STL, string, ./wall-4.stl
+simulation_obstacle/4/pattern/STL, string, obstacles/wall-4.stl
 #,#,#
 simulation_obstacle/5/pattern,     string, STL
-simulation_obstacle/5/pattern/STL, string, ./wall-5.stl
+simulation_obstacle/5/pattern/STL, string, obstacles/wall-5.stl
 #,#,#
 simulation_obstacle/6/pattern,     string, STL
-simulation_obstacle/6/pattern/STL, string, ./wall-6.stl
+simulation_obstacle/6/pattern/STL, string, obstacles/wall-6.stl
 #,#,#
 #,#,#
 cell/phenotypes,                   string, a_cell
