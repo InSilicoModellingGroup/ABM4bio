@@ -670,6 +670,7 @@ void set_bdm_params(bdm::Param* p)
   p->simulation_max_displacement = params.get<double>("cell/max_displacement");
   p->detect_static_agents = params.get<double>("cell/max_displacement") ? true : false;
   p->calculate_gradients = params.get<bool>("diffusion_grid/save_gradients");
+  p->environment = "uniform_grid";
   p->diffusion_method = "euler";
   p->diffusion_boundary_condition = "open";
   p->show_simulation_step = false;
