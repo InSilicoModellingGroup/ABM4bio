@@ -229,9 +229,19 @@ bdm::Double3x3 add(const bdm::Double3x3& a, const bdm::Double3x3& b)
 }
 // =============================================================================
 inline
+double magnitude_2(const bdm::Double3& v)
+{
+  return pow2(v[0])+pow2(v[1])+pow2(v[2]);
+}
+inline
+double magnitude(const bdm::Double3& v)
+{
+  return sqrt(magnitude_2(v));
+}
+inline
 double L2norm(const bdm::Double3& v)
 {
-  return sqrt(pow2(v[0])+pow2(v[1])+pow2(v[2]));
+  return magnitude(v);
 }
 inline
 bool normalize(const bdm::Double3& v, bdm::Double3& r, double tol = 1.0e-6)
