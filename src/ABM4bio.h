@@ -334,10 +334,19 @@ void read_csv_file(const std::string& fn,
     //
     if (!params.have_parameter<double>("safe_distance_ratio"))
       params.set<double>("safe_distance_ratio") = 0.5;
-    if (params.get<double>("safe_distance_ratio")<1.0e-2)
-      ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong");
-    if (params.get<double>("safe_distance_ratio")>2.0e+0)
-      ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong");
+    else
+      {
+        if (params.get<double>("safe_distance_ratio")==0.0e+0)
+          { ; }
+        else if (params.get<double>("safe_distance_ratio")<1.0e-2)
+          { ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong"); }
+        else if (params.get<double>("safe_distance_ratio")>2.0e+0)
+          { ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong"); }
+        else if (params.get<double>("safe_distance_ratio")<0.0e+0)
+          { ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong"); }
+        else
+          { ; }
+      }
     //
     if (params.get<bool>("simulation_domain_is_periodic"))
       {
