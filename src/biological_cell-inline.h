@@ -713,7 +713,7 @@ bool bdm::BiologicalCell::CheckApoptosisAging()
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_apoptose/probability")
                                + this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age")
-                               * this->GetAge() )
+                               * (this->GetAge()-1.0) )
         return false;
     }
   else
@@ -1903,7 +1903,7 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
                                + this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                               * this->GetAge() )
+                               * (this->GetAge()-1.0) )
         return false;
     }
   else
@@ -2057,7 +2057,7 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
                                + this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                               * this->GetAge() )
+                               * (this->GetAge()-1.0) )
         return false;
     }
   else
@@ -2206,7 +2206,7 @@ bool bdm::BiologicalCell::CheckDivision() {
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
                                + this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                               * this->GetAge() )
+                               * (this->GetAge()-1.0) )
         return false;
     }
   else
