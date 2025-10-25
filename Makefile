@@ -4,6 +4,8 @@ ABM4bio = $(shell pwd)
 #BIODYNAMO_FOLDER  = biodynamo-v1.05.120
 BIODYNAMO_VERSION = a9d3c90e97164660d0ce567a357eb1cfe38035aa
 BIODYNAMO_FOLDER  = biodynamo-v1.05.143
+BIODYNAMO_VERSION = dba3eeee65b1d801a196f57a18bef6515da59b11
+BIODYNAMO_FOLDER  = biodynamo-v1.05.146
 CC  = /usr/bin/gcc
 CXX = /usr/bin/g++
 
@@ -21,8 +23,8 @@ install_biodynamo:
 	./prerequisites.sh all && \
 	rm -rf build; mkdir build; cd build; \
 	cmake -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) \
-        -Dparaview=on -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(ABM4bio)/libs .. && \
-	make -j 4 && make install
+        -Dparaview=off -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(ABM4bio)/libs .. && \
+	make -j 10 && make install
 biodynamo:
 	make setup_biodynamo && make install_biodynamo
 source_biodynamo:
