@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstddef>
+#include <ctime>
 #include <typeinfo>
 #include <sys/stat.h>
 // =============================================================================
@@ -123,6 +124,7 @@ inline double pow9(const double& v) { return v*pow8(v); }
 // =============================================================================
 inline int sign(const double r) { return ( r>=0.0 ? +1 : -1 ); }
 inline double Macaulay(double (*f)(double), const double x) { return (f(x)<0.0 ? 0.0 : f(x)); }
+inline int coin_flip() { int result = rand() % 2; return result; }
 // =============================================================================
 inline double degrees_to_radians(const double& d) { return (bdm::Math::kPi*d/180.0); }
 inline double radians_to_degrees(const double& r) { return (180.0*r/bdm::Math::kPi); }
