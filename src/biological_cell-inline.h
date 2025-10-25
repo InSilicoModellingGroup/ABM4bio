@@ -2222,13 +2222,67 @@ bool bdm::BiologicalCell::CheckDivision() {
   if ( diameter < diameter_cutoff || this->GetAge() < cell_maturity )
     return false;
   //
+  if (this->params()->get<double>(CP_name+"/can_divide/radius_of_influence"))
+    {
+      // the "domain of influence" of a cell to check overlapping...
+      const real_t R = this->params()->get<double>(CP_name+"/can_divide/radius_of_influence");
+      //
+      if (this->params()->get<bool>("simulation_domain_is_2D"))
+        {
+          const real_t A = bdm::Math::kPi * pow2(R);
+          real_t area(0.0);
+          //
+          rm->ForEachAgent([&] (bdm::Agent* a) {
+            if (auto* other = dynamic_cast<const BiologicalCell*>(a))
+              if (other != this)
+                {
+                  const real_t r = 0.5 * other->GetDiameter();
+                  //
+                  real_t d = L2norm(this->GetPosition()-other->GetPosition());
+                  // https://mathworld.wolfram.com/Circle-CircleIntersection.html
+                  if (d < abs(R-r))
+                    area += pow2(r)*acos((pow2(d)+pow2(r)-pow2(R))/(2*d*r))
+                          + pow2(R)*acos((pow2(d)-pow2(r)+pow2(R))/(2*d*R))
+                          - 0.5*sqrt((-d+r+R)*(d+r-R)*(d-r+R)*(d+r+R));
+                }
+          });
+          //
+          if (area>=A)
+            return false;
+        }
+      else
+        {
+          const real_t V = bdm::Math::kPi * pow3(R) * (4.0/3.0);
+          real_t volume(0.0);
+          //
+          rm->ForEachAgent([&] (bdm::Agent* a) {
+            if (auto* other = dynamic_cast<const BiologicalCell*>(a))
+              if (other != this)
+                {
+                  const real_t r = 0.5 * other->GetDiameter();
+                  //
+                  real_t d = L2norm(this->GetPosition()-other->GetPosition());
+                  // https://mathworld.wolfram.com/Sphere-SphereIntersection.html
+                  if (d < abs(R-r))
+                    volume += bdm::Math::kPi*pow2(R+r-d)/(12.0*d)
+                            * (d*d+2*d*r-3*r*r+2*d*R-3*R*R+6*r*R);
+                }
+          });
+          //
+          if (volume>=V)
+            return false;
+        }
+      // finished all the check whether there is "vacant" room
+      // so that the cell can further divide
+    }
+  //
   // produce the separation vector
   bdm::Double3 axis =
     { coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) ,
       coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) ,
       coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) };
   if (this->params()->get<bool>("simulation_domain_is_2D"))
-    axis[0] = 0.0;
+    axis[2] = 0.0;
   normalize(axis, axis);
   //
   const double volume_ratio = rg->Uniform(0.9,1.1);

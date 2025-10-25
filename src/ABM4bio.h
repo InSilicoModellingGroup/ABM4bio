@@ -1206,6 +1206,9 @@ void init_cells(bdm::Simulation& sim,
             params.set<double>(CP_name+"/can_divide/probability_increment_with_age") = 0.0;
           if (! params.have_parameter<double>(CP_name+"/can_divide/radius_of_influence"))
             params.set<double>(CP_name+"/can_divide/radius_of_influence") = 0.0;
+          // sanity check...
+          if (params.get<double>(CP_name+"/can_divide/radius_of_influence")<0.0)
+            ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"can_divide/radius_of_influence\"");
         }
       // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_transform"))
