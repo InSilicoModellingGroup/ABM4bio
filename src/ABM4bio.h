@@ -1182,32 +1182,68 @@ void init_cells(bdm::Simulation& sim,
       if (! params.have_parameter<bool>(CP_name+"/can_protrude"))
         params.set<bool>(CP_name+"/can_protrude") = false;
       // default parameter(s) value
-      if (! params.have_parameter<double>(CP_name+"/can_apoptose/probability"))
-        params.set<double>(CP_name+"/can_apoptose/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_apoptose/probability_increment_with_age"))
-        params.set<double>(CP_name+"/can_apoptose/probability_increment_with_age") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_grow/probability"))
-        params.set<double>(CP_name+"/can_grow/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_divide/probability"))
-        params.set<double>(CP_name+"/can_divide/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_divide/probability_increment_with_age"))
-        params.set<double>(CP_name+"/can_divide/probability_increment_with_age") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_migrate/probability"))
-        params.set<double>(CP_name+"/can_migrate/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_transform/probability"))
-        params.set<double>(CP_name+"/can_transform/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_polarize/probability"))
-        params.set<double>(CP_name+"/can_polarize/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_protrude/probability"))
-        params.set<double>(CP_name+"/can_protrude/probability") = 0.0;
+      if (params.get<bool>(CP_name+"/can_apoptose"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_apoptose/probability"))
+            params.set<double>(CP_name+"/can_apoptose/probability") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_apoptose/probability_increment_with_age"))
+            params.set<double>(CP_name+"/can_apoptose/probability_increment_with_age") = 0.0;
+        }
+      // default parameter(s) value
+      if (params.get<bool>(CP_name+"/can_grow"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_grow/probability"))
+            params.set<double>(CP_name+"/can_grow/probability") = 0.0;
+        }
+      // default parameter(s) value
+      if (params.get<bool>(CP_name+"/can_divide"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_divide/probability"))
+            params.set<double>(CP_name+"/can_divide/probability") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_divide/probability_increment_with_age"))
+            params.set<double>(CP_name+"/can_divide/probability_increment_with_age") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_divide/radius_of_influence"))
+            params.set<double>(CP_name+"/can_divide/radius_of_influence") = 0.0;
+        }
+      // default parameter(s) value
+      if (params.get<bool>(CP_name+"/can_transform"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_transform/probability"))
+            params.set<double>(CP_name+"/can_transform/probability") = 0.0;
+        }
+      // default parameter(s) value
+      if (params.get<bool>(CP_name+"/can_polarize"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_polarize/probability"))
+            params.set<double>(CP_name+"/can_polarize/probability") = 0.0;
+        }
       // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_migrate"))
         {
+          if (! params.have_parameter<double>(CP_name+"/can_migrate/probability"))
+            params.set<double>(CP_name+"/can_migrate/probability") = 0.0;
           if (! params.have_parameter<bool>(CP_name+"/can_migrate/accumulate_path"))
             params.set<bool>(CP_name+"/can_migrate/accumulate_path") = true;
+          // encompass the effect of adhesion for the migratory cell to the ECM
+          // by modulating the convection field respectively
+          // ...default value for non-migratory cells
+          params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
+          //
+          if (! params.have_parameter<std::string>("convection/dynamic/from_file"))
+            params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
+          // sanity check...
+          if (params.get<double>(CP_name+"/can_migrate/max_adhesion/convection")<0.0)
+            ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"max_adhesion/convection\"");
+          //
+          params.set<double>(CP_name+"/can_migrate/max_adhesion/displacement") =
+              params.get<double>("time_step") *
+              params.get<double>(CP_name+"/can_migrate/max_adhesion/convection");
         }
+      // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_protrude"))
         {
+          if (! params.have_parameter<double>(CP_name+"/can_protrude/probability"))
+            params.set<double>(CP_name+"/can_protrude/probability") = 0.0;
           if (! params.have_parameter<int>(CP_name+"/can_protrude/time_repeats"))
             params.set<int>(CP_name+"/can_protrude/time_repeats") = 1;
           if (! params.have_parameter<double>(CP_name+"/can_protrude/sprout/probability"))
@@ -1267,23 +1303,6 @@ void init_cells(bdm::Simulation& sim,
             }
           // ...end of biochemicals (substances) loop
         }
-      //
-      // encompass the effect of adhesion for the migratory cell to the ECM
-      // by modulating the convection field respectively
-      // ...default value for non-migratory cells
-      params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
-      // ...now check if cell can migrate or not
-      if (params.get<bool>(CP_name+"/can_migrate"))
-        {
-          if (! params.have_parameter<std::string>("convection/dynamic/from_file"))
-            params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
-          // sanity check...
-          if (params.get<double>(CP_name+"/can_migrate/max_adhesion/convection")<0.0)
-            ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"max_adhesion/convection\"");
-        }
-      params.set<double>(CP_name+"/can_migrate/max_adhesion/displacement") =
-        params.get<double>("time_step") *
-        params.get<double>(CP_name+"/can_migrate/max_adhesion/convection");
       //
       // check if to adapt the cell initial population based on some pattern,
       // based on some random distribution, or based on some used-defined pattern
