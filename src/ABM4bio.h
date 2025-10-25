@@ -1084,6 +1084,8 @@ void init_cells(bdm::Simulation& sim,
   auto* rm = sim.GetResourceManager();
   // access BioDynaMo's random number generator
   auto* rg = sim.GetRandom();
+  // initialize the random number generator
+  srand(static_cast<int>(time(0)));
   // min and max boundaries of the BioDynaMo simulation 3D/2D domain
   const double minCOORD = params.get<double>("min_boundary"),
                maxCOORD = params.get<double>("max_boundary"),
@@ -1342,7 +1344,7 @@ void init_cells(bdm::Simulation& sim,
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized pattern");
             }
           bdm::Double3 pntA, pntB;
-          bdm::Double3 cntr; double rad = 0.0;
+          bdm::Double3 cntr; bdm::real_t rad = 0.0;
           if ( params.get<bool>(CP_name+"/initial_population/pattern/box/inside")  ||
                params.get<bool>(CP_name+"/initial_population/pattern/box/outside") )
             {
@@ -1367,27 +1369,76 @@ void init_cells(bdm::Simulation& sim,
           for (int i=0; i<number_of_cells; i++)
             {
               // cell coordinates (must fall within simulation domain)
-              bdm::Double3 xyz = { rg->Uniform(minCOORD+tol, maxCOORD-tol) ,
-                                   rg->Uniform(minCOORD+tol, maxCOORD-tol) ,
-                                   rg->Uniform(minCOORD+tol, maxCOORD-tol) };
-              if ( params.get<bool>("simulation_domain_is_2D") ) xyz[2] = meanCOORD;
-              // in case of polar domain, check if initial cell position
-              // is within a 3D sphere or 2D circle
+              bdm::Double3 xyz{0.0, 0.0, 0.0};
+              // check if a cell should follow any user-defined (spatial)
+              // restrictions (wrt primitive shapes: box, sphere, cylinder)
+              if      ( params.get<bool>(CP_name+"/initial_population/pattern/box/inside") )
+                {
+                  xyz = { rg->Uniform(pntA[0], pntB[0]) ,
+                          rg->Uniform(pntA[1], pntB[1]) ,
+                          rg->Uniform(pntA[2], pntB[2]) };
+                }
+              else if ( params.get<bool>(CP_name+"/initial_population/pattern/box/outside") )
+                {
+                  xyz = { coin_flip() ? rg->Uniform(minCOORD+tol, pntA[0]) : rg->Uniform(pntB[0], maxCOORD-tol) ,
+                          coin_flip() ? rg->Uniform(minCOORD+tol, pntA[1]) : rg->Uniform(pntB[1], maxCOORD-tol) ,
+                          coin_flip() ? rg->Uniform(minCOORD+tol, pntA[2]) : rg->Uniform(pntB[2], maxCOORD-tol) };
+                }
+              else if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/inside") )
+                {
+                  bdm::real_t r = rg->Uniform(0.0, rad);
+                  bdm::real_t theta = rg->Uniform(0.0, 2.0*bdm::Math::kPi);
+                  bdm::real_t u = rg->Uniform(-1.0, 1.0);
+                  // https://mathworld.wolfram.com/SpherePointPicking.html
+                  xyz = { cntr[0]+r*sqrt(1-u*u)*cos(theta) ,
+                          cntr[1]+r*sqrt(1-u*u)*sin(theta) ,
+                          cntr[2]+r*u                      };
+                }
+              else if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/outside") )
+                {
+                  bdm::real_t r = rg->Uniform(rad, maxCOORD-tol);
+                  bdm::real_t theta = rg->Uniform(0.0, 2.0*bdm::Math::kPi);
+                  bdm::real_t u = rg->Uniform(-1.0, 1.0);
+                  // https://mathworld.wolfram.com/SpherePointPicking.html
+                  xyz = { cntr[0]+r*sqrt(1-u*u)*cos(theta) ,
+                          cntr[1]+r*sqrt(1-u*u)*sin(theta) ,
+                          cntr[2]+r*u                      };
+                }
+              else
+                {
+                  xyz = { rg->Uniform(minCOORD+tol, maxCOORD-tol) ,
+                          rg->Uniform(minCOORD+tol, maxCOORD-tol) ,
+                          rg->Uniform(minCOORD+tol, maxCOORD-tol) };
+                }
+              // in case the simulation is in 2D then ensure that all
+              // cells are positioned on a X-Y plane
+              if ( params.get<bool>("simulation_domain_is_2D") )
+                xyz[2] = meanCOORD;
+              // in case of polar domain simulation, then check if
+              // cell position is within a 3D sphere or a 2D circle
               if ( params.get<bool>("simulation_domain_is_polar") )
                 {
                   const bdm::Double3 vec = { xyz[0]-meanCOORD ,
                                              xyz[1]-meanCOORD ,
                                              xyz[2]-meanCOORD };
                   // check radial distance (from the domain center)
-                  if ( L2norm(vec) > deltaCOORD )
+                  if ( magnitude(vec) > deltaCOORD )
                     {
                       i -= 1;
                       continue;
                     }
                 }
+              // check if cell is positioned withing simulations bounds
+              if ( xyz[0]<(minCOORD+tol) || xyz[0]>(maxCOORD-tol) ||
+                   xyz[1]<(minCOORD+tol) || xyz[1]>(maxCOORD-tol) ||
+                   xyz[2]<(minCOORD+tol) || xyz[2]>(maxCOORD-tol) )
+                {
+                  i -= 1;
+                  continue;
+                }
               // check also if cell position is suffiently apart to the rest
               // (recently created) of the cells
-              bool too_close = false;
+              bool is_valid = true;
               for (unsigned int c=0; c<all_agents.size(); c++)
                 {
                   const bdm::Double3 vec = { xyz[0]-all_agents[c][0] ,
@@ -1396,46 +1447,11 @@ void init_cells(bdm::Simulation& sim,
                   // check distance with respect to other cells
                   if ( L2norm(vec) < safe_distance )
                     {
-                      too_close = true;
+                      is_valid = false;
                       break;
                     }
                 }
-              //
-              if ( too_close )
-                {
-                  i -= 1;
-                  continue;
-                }
-              // check if a cell should follow any user-defined (spatial)
-              // restrictions (wrt primitive shapes: box, sphere, cylinder)
-              bool is_valid = true;
-              if      ( params.get<bool>(CP_name+"/initial_population/pattern/box/inside") )
-                {
-                  is_valid = true;
-                  if ( xyz[0]<pntA[0] || xyz[0]>pntB[0] ) is_valid = false;
-                  if ( xyz[1]<pntA[1] || xyz[1]>pntB[1] ) is_valid = false;
-                  if ( xyz[2]<pntA[2] || xyz[2]>pntB[2] ) is_valid = false;
-                }
-              else if ( params.get<bool>(CP_name+"/initial_population/pattern/box/outside") )
-                {
-                  is_valid = false;
-                  if ( xyz[0]<pntA[0] || xyz[0]>pntB[0] ) is_valid = true;
-                  if ( xyz[1]<pntA[1] || xyz[1]>pntB[1] ) is_valid = true;
-                  if ( xyz[2]<pntA[2] || xyz[2]>pntB[2] ) is_valid = true;
-                }
-              else if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/inside") )
-                {
-                  const bdm::Double3 diff = xyz - cntr;
-                  is_valid = true;
-                  if ( L2norm(diff)>rad ) is_valid = false;
-                }
-              else if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/outside") )
-                {
-                  const bdm::Double3 diff = xyz - cntr;
-                  is_valid = false;
-                  if ( L2norm(diff)>rad ) is_valid = true;
-                }
-              //
+              // now do what you must
               if ( ! is_valid )
                 {
                   i -= 1;
