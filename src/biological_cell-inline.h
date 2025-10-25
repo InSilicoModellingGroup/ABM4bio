@@ -2223,10 +2223,13 @@ bool bdm::BiologicalCell::CheckDivision() {
     return false;
   //
   // produce the separation vector
-  const bdm::Double3 axis =
-    { rg->Uniform(-1.0,+1.0) ,
-      rg->Uniform(-1.0,+1.0) ,
-      (this->params()->get<bool>("simulation_domain_is_2D") ? 0.0 : rg->Uniform(-1.0,+1.0)) };
+  bdm::Double3 axis =
+    { coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) ,
+      coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) ,
+      coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) };
+  if (this->params()->get<bool>("simulation_domain_is_2D"))
+    axis[0] = 0.0;
+  normalize(axis, axis);
   //
   const double volume_ratio = rg->Uniform(0.9,1.1);
   //
