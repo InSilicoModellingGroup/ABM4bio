@@ -21,7 +21,7 @@ simulation_obstacles,             int, 0
 #,#,#
 #,#,#
 cell/phenotypes,                   string, necrotic_CC normoxic_CC hypoxic__CC
-cell/max_displacement,              float, 20.0
+cell/max_displacement,              float, 5.0
 diffusion_grid/biochemicals,       string, O2
 diffusion_grid/spatial_resolution,    int, 76
 #,#,#
@@ -44,7 +44,7 @@ necrotic_CC/can_apoptose/O2/dependency,                   bool, false
 necrotic_CC/can_apoptose/O2/probability,                 float, 0.0100
 #,#,#
 ### normoxic cancer cell , ### , ###
-normoxic_CC/phenotype_ID, int, 1
+normoxic_CC/phenotype_ID, int, 2
 normoxic_CC/initial_population, int, 5
 normoxic_CC/initial_population/pattern,              string, box/inside
 normoxic_CC/initial_population/pattern/box/point_A/0, float, -25.000
@@ -71,6 +71,7 @@ normoxic_CC/can_divide, bool, true
 normoxic_CC/can_divide/probability,                    float, 0.0500
 normoxic_CC/can_divide/probability_increment_with_age, float, 0.00001
 normoxic_CC/can_divide/diameter_cutoff,                float, 29.000e-0
+normoxic_CC/can_divide/radius_of_influence,            float,  0.000e-0
 normoxic_CC/can_divide/max,                            int,   2
 normoxic_CC/can_divide/time_window,                    int,  40
 normoxic_CC/can_divide/O2/threshold,                   float,+0.750000e-0
@@ -89,7 +90,7 @@ normoxic_CC/can_transform/O2/threshold,         float,-0.650000e-0
 normoxic_CC/can_transform/O2/probability,       float, 0.3000
 normoxic_CC/can_transform/O2/time_window_open,  int, 1
 normoxic_CC/can_transform/O2/time_window_close, int, 11111111
-normoxic_CC/can_transform/O2/new_phenotype,     int, 2
+normoxic_CC/can_transform/O2/new_phenotype,     int, 1
 normoxic_CC/O2/secretion/dependency,       bool, false
 normoxic_CC/O2/secretion/net_balance,     float, -0.0003000
 normoxic_CC/O2/secretion/net_balance/std, float, 0
@@ -103,7 +104,7 @@ normoxic_CC/principal/min, float, 0.999
 normoxic_CC/principal/max, float, 1.001
 #,#,#
 ### hypoxic cancer cell , ### , ###
-hypoxic__CC/phenotype_ID, int, 2
+hypoxic__CC/phenotype_ID, int, 1
 hypoxic__CC/initial_population, int, 0
 hypoxic__CC/mechanism_order, int, 10
 hypoxic__CC/can_apoptose, bool, true
