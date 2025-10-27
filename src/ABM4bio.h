@@ -2048,7 +2048,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       fout << "<?xml version=\"1.0\"?>" << std::endl;
       fout << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << std::endl;
       fout << "<Collection>" << std::endl;
-      for (int t=1; t<=n_time; t++)
+      for (int t=0; t<=n_time; t++)
         {
           if (0!=t%viz_step) continue;
           const double timestep = t * time_step;
@@ -2062,7 +2062,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
     }
   // create a VTU file for this time-step
   // for the cells
-  if ( 0 != time )
+  ////if ( 0 != time )
     {
       unsigned int n_VTK_points = 0;
       unsigned int n_VTK_cells = 1;
@@ -2325,7 +2325,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       fout << "<?xml version=\"1.0\"?>" << std::endl;
       fout << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << std::endl;
       fout << "<Collection>" << std::endl;
-      for (int t=1; t<=n_time; t++)
+      for (int t=0; t<=n_time; t++)
         {
           if (0!=t%viz_step) continue;
           const double timestep = t * time_step;
@@ -2339,7 +2339,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
     }
   // create a VTU file for this time-step
   // for the cell protrusions
-  if ( 0 != time )
+  ////if ( 0 != time )
     {
       unsigned int n_VTK_points = 0;
       unsigned int n_VTK_cells = 0;
@@ -2560,7 +2560,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       fout << "<?xml version=\"1.0\"?>" << std::endl;
       fout << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << std::endl;
       fout << "<Collection>" << std::endl;
-      for (int t=1; t<=n_time; t++)
+      for (int t=0; t<=n_time; t++)
         {
           if (0!=t%viz_step) continue;
           const double timestep = t * time_step;
@@ -2574,7 +2574,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
     }
   // create a VTU file for this time-step
   // for the reaction-diffusion simulator
-  if ( 0 != time )
+  ////if ( 0 != time )
     {
       const int N = params.get<int>("diffusion_grid/spatial_resolution");
       const double S_min = params.get<double>("min_boundary"),
@@ -2749,7 +2749,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       fout << "<?xml version=\"1.0\"?>" << std::endl;
       fout << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << std::endl;
       fout << "<Collection>" << std::endl;
-      for (int t=1; t<=n_time; t++)
+      for (int t=0; t<=n_time; t++)
         {
           if (0!=t%viz_step) continue;
           const double timestep = t * time_step;
@@ -2765,7 +2765,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
   if ( params.get<bool>("simulation_models_vessels") )
   // create a VTU file for this time-step
   // for the vessels
-  if ( 0 != time )
+  ////if ( 0 != time )
     {
       unsigned int n_VTK_points = 0;
       unsigned int n_VTK_cells = 0;
