@@ -4,6 +4,9 @@ build:
 run:
 	../../build/./ABM4bio input.csv 1234
 
+tumor:
+	../../build/./ABM4bio input_copy.csv 1234
+
 invivo:
 	../../build/./ABM4bio input_inVivo.csv 1234
 

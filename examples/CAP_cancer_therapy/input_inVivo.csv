@@ -1,11 +1,11 @@
 parameter_name, type, parameter_value
-### In Vivo Tumor Model (200mm3) , ### , ###
+### In Vivo Tumor Model, ### , ###
 output_directory,               string, results_inVivo
 simulation_title,               string, InVivo_200mm3_tumor
 #,#,#
-number_of_time_steps,           int,    5000
-time_step,                      float,  0.2
-visualization_interval,         int,    50
+number_of_time_steps,           int,    250
+time_step,                      float,  0.1
+visualization_interval,         int,    1
 statistics_interval,            int,    10
 #,#,#
 min_boundary,                   float, -30.0
@@ -13,15 +13,15 @@ max_boundary,                   float, +30.0
 domain_tolerance,               float,   1.0
 safe_distance_ratio,            float,   0.5
 simulation_domain_is_2D,        bool,   false
-simulation_domain_is_polar,     bool,   false
+simulation_domain_is_polar,     bool,   true
 simulation_domain_is_bounded,   bool,   true
 simulation_domain_is_periodic,  bool,   false
 simulation_models_vessels,      bool,   false
 #,#,#
 cell/phenotypes,                   string, cancer_cell
-cell/max_displacement,             float,  1.0
+cell/max_displacement,             float,  0.2
 diffusion_grid/biochemicals,       string, O2
-diffusion_grid/spatial_resolution, int,    10
+diffusion_grid/spatial_resolution, int,    20
 #,#,#
 ### O2 (Oxygen) , ### , ###
 O2/diffusion_coefficient,      float, 1.8e-5
