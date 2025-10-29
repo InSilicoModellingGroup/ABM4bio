@@ -19,7 +19,7 @@ install_biodynamo:
 	./prerequisites.sh all && \
 	rm -rf build; mkdir build; cd build; \
 	cmake -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) \
-        -Dparaview=off -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(ABM4bio)/libs .. && \
+        -Dparaview=on -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(ABM4bio)/libs .. && \
 	make -j 4 && make install
 biodynamo:
 	make setup_biodynamo && make install_biodynamo
