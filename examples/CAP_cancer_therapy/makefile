@@ -10,6 +10,9 @@ tumor:
 invivo:
 	../../build/./ABM4bio input_inVivo.csv 1234
 
+invitro:
+	../../build/./ABM4bio input_inVitro.csv 1234
+
 analyze_invivo:
 	python3 analyze_invivo_tumor.py
 

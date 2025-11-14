@@ -182,6 +182,80 @@ void bdm::BiologicalCell::RunBiochemics()
 }
 // -----------------------------------------------------------------------------
 inline
+void bdm::BiologicalCell::RunIntracellular()
+{
+  // only viable cells maintain intracellular dynamics
+  if (!this->GetPhenotype()) return;
+  // access BioDynaMo's resource manager
+  auto* rm = bdm::Simulation::GetActive()->GetResourceManager();
+  // timestep
+  const double dt = this->params()->get<double>("time_step");
+  // phenotype-specific namespace
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  // spatial location
+  const bdm::Double3 xyz = this->GetPosition();
+  // parameters (use safe defaults if not provided)
+  const double k_uptake_H2O2 = this->params()->have_parameter<double>(CP_name+"/intracellular/uptake/H2O2")
+                             ? this->params()->get<double>(CP_name+"/intracellular/uptake/H2O2") : 0.0;
+  const double k_uptake_NO2  = this->params()->have_parameter<double>(CP_name+"/intracellular/uptake/NO2_")
+                             ? this->params()->get<double>(CP_name+"/intracellular/uptake/NO2_")  : 0.0;
+  antioxidant_capacity_ = this->params()->have_parameter<double>(CP_name+"/intracellular/antioxidant/capacity")
+                        ? this->params()->get<double>(CP_name+"/intracellular/antioxidant/capacity") : 1.0;
+  const double k_scavenge = this->params()->have_parameter<double>(CP_name+"/intracellular/antioxidant/k_scavenge")
+                          ? this->params()->get<double>(CP_name+"/intracellular/antioxidant/k_scavenge") : 0.0;
+  const double alpha_h2o2 = this->params()->have_parameter<double>(CP_name+"/intracellular/alpha/H2O2")
+                          ? this->params()->get<double>(CP_name+"/intracellular/alpha/H2O2") : 1.0;
+  const double alpha_no2  = this->params()->have_parameter<double>(CP_name+"/intracellular/alpha/NO2_")
+                          ? this->params()->get<double>(CP_name+"/intracellular/alpha/NO2_")  : 0.0;
+  const double k_induce   = this->params()->have_parameter<double>(CP_name+"/intracellular/damage/k_induction")
+                          ? this->params()->get<double>(CP_name+"/intracellular/damage/k_induction") : 0.0;
+  const double k_repair   = this->params()->have_parameter<double>(CP_name+"/intracellular/damage/k_repair")
+                          ? this->params()->get<double>(CP_name+"/intracellular/damage/k_repair") : 0.0;
+  // uptake from extracellular fields (reduce grid accordingly)
+  double uptake_h2o2 = 0.0, uptake_no2 = 0.0;
+  if (auto* dg = rm->GetDiffusionGrid("H2O2")) {
+    const double c = dg->GetValue(xyz);
+    uptake_h2o2 = k_uptake_H2O2 * c;
+    if (uptake_h2o2>0.0) dg->ChangeConcentrationBy(xyz, -dt*uptake_h2o2);
+  }
+  if (auto* dg = rm->GetDiffusionGrid("NO2_")) {
+    const double c = dg->GetValue(xyz);
+    uptake_no2 = k_uptake_NO2 * c;
+    if (uptake_no2>0.0) dg->ChangeConcentrationBy(xyz, -dt*uptake_no2);
+  }
+  // intracellular ROS balance
+  const double prod = alpha_h2o2*uptake_h2o2 + alpha_no2*uptake_no2;
+  const double loss = k_scavenge * antioxidant_capacity_ * ros_internal_;
+  ros_internal_ += dt * (prod - loss);
+  if (ros_internal_ < 0.0) ros_internal_ = 0.0;
+  // DNA damage accumulation with repair
+  dna_damage_ += dt * (k_induce*ros_internal_ - k_repair*dna_damage_);
+  if (dna_damage_ < 0.0) dna_damage_ = 0.0;
+}
+// -----------------------------------------------------------------------------
+inline
+bool bdm::BiologicalCell::CheckApoptosisByDamage()
+{
+  if (!this->GetCanApoptose()) return false;
+  if (!this->GetPhenotype()) return false;
+  // access BioDynaMo's random number generator
+  auto* rg = bdm::Simulation::GetActive()->GetRandom();
+  // phenotype-specific namespace
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const double thr = this->params()->have_parameter<double>(CP_name+"/intracellular/damage/threshold")
+                   ? this->params()->get<double>(CP_name+"/intracellular/damage/threshold") : 1.0e+99;
+  if (dna_damage_ <= thr) return false;
+  if (this->params()->have_parameter<double>(CP_name+"/intracellular/damage/probability"))
+    {
+      const double p = this->params()->get<double>(CP_name+"/intracellular/damage/probability");
+      if (rg->Uniform(0.0,1.0) > p) return false;
+    }
+  return true;
+}
+// -----------------------------------------------------------------------------
+inline
 bool bdm::BiologicalCell::CheckPositionValidity()
 {
   // access BioDynaMo's random number generator
@@ -1739,6 +1813,12 @@ bool bdm::BiologicalCell::CheckGrowth()
   const std::string& CP_name = // cell phenotype name
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
   //
+  if ( this->params()->have_parameter<double>(CP_name+"/intracellular/damage/growth_block") )
+    {
+      const double block_g = this->params()->get<double>(CP_name+"/intracellular/damage/growth_block");
+      if (dna_damage_ > block_g) return false;
+    }
+  //
   const double diameter = this->GetDiameter(),
                diameter_min = this->params()->get<double>(CP_name+"/diameter/min"),
                diameter_max = this->params()->get<double>(CP_name+"/diameter/max");
@@ -1853,6 +1933,12 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
   //
   const std::string& CP_name = // cell phenotype name
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  if ( this->params()->have_parameter<double>(CP_name+"/intracellular/damage/division_block") )
+    {
+      const double block = this->params()->get<double>(CP_name+"/intracellular/damage/division_block");
+      if (dna_damage_ > block) return false;
+    }
   //
   // cell cannot divide (not at least with current BioDynaMo implementation)
   // if it has developed protrusions (filopodia or/and neurites)

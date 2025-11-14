@@ -2927,6 +2927,44 @@ void reinit_biochemicals(bdm::Simulation& sim,
               "could not save a copy of the convection field data file");
       // ...end of biochemical (cue) loop
     }
+  // ---------------------------------------------------------------------------
+  // CAP scheduler: optional uniform pulses raising H2O2/NO2_ grids
+  if ( params.have_parameter<bool>("CAP/enabled") && params.get<bool>("CAP/enabled") )
+    {
+      int applied = params.have_parameter<int>("CAP/pulses_applied")
+                  ? params.get<int>("CAP/pulses_applied") : 0;
+      const int n_pulses = params.have_parameter<int>("CAP/pulse_count")
+                         ? params.get<int>("CAP/pulse_count") : 0;
+      const int start    = params.have_parameter<int>("CAP/pulse_start_step")
+                         ? params.get<int>("CAP/pulse_start_step") : 1;
+      const int interval = params.have_parameter<int>("CAP/pulse_interval_steps")
+                         ? params.get<int>("CAP/pulse_interval_steps") : 0;
+      if (n_pulses>0 && interval>0 && time>=start && applied<n_pulses)
+        {
+          if ( ((time - start) % interval) == 0 )
+            {
+              const double dose_h2o2 = params.have_parameter<double>("CAP/H2O2/dose")
+                                      ? params.get<double>("CAP/H2O2/dose") : 0.0;
+              const double dose_no2  = params.have_parameter<double>("CAP/NO2_/dose")
+                                      ? params.get<double>("CAP/NO2_/dose")  : 0.0;
+              if (dose_h2o2!=0.0)
+                {
+                  auto* dgH = rm->GetDiffusionGrid("H2O2");
+                  if (dgH)
+                    for (size_t b=0; b<dgH->GetNumBoxes(); b++)
+                      dgH->ChangeConcentrationBy(b, dose_h2o2);
+                }
+              if (dose_no2!=0.0)
+                {
+                  auto* dgN = rm->GetDiffusionGrid("NO2_");
+                  if (dgN)
+                    for (size_t b=0; b<dgN->GetNumBoxes(); b++)
+                      dgN->ChangeConcentrationBy(b, dose_no2);
+                }
+              params.set<int>("CAP/pulses_applied") = applied + 1;
+            }
+        }
+    }
 }
 // =============================================================================
 inline
