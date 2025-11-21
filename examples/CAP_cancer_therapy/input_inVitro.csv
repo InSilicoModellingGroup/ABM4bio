@@ -1,292 +1,308 @@
-parameter_name, type, parameter_value
-### CAP In Vitro, ### , ###
-output_directory,               string, results_inVitro
-simulation_title,               string, CAP_inVitro
+parameter_name,type,parameter_value
+### CAP In Vitro,###,###
+output_directory,string,results_inVitro
+simulation_title,string,CAP_inVitro
 #,#,#
-number_of_time_steps,           int,    3000
-time_step,                      float,  0.1
-visualization_interval,         int,    100
-statistics_interval,            int,    100
+number_of_time_steps,int,500
+time_step,float,0.1
+visualization_interval,int,10
+statistics_interval,int,100
 #,#,#
-min_boundary,                   float, -200.0
-max_boundary,                   float, +200.0
-domain_tolerance,               float,   1.0
-safe_distance_ratio,            float,   0.5
-simulation_domain_is_2D,        bool,   false
-simulation_domain_is_polar,     bool,   false
-simulation_domain_is_bounded,   bool,   true
-simulation_domain_is_periodic,  bool,   false
-simulation_models_vessels,      bool,   false
+min_boundary,float,-75.0
+max_boundary,float,+75.0
+domain_tolerance,float,1.0
+safe_distance_ratio,float,0.5
+simulation_domain_is_2D,bool,false
+simulation_domain_is_polar,bool,true
+simulation_domain_is_bounded,bool,true
+simulation_domain_is_periodic,bool,false
+simulation_models_vessels,bool,false
 #,#,#
-cell/phenotypes,                   string, necrotic_cell cancer_cell hepatocyte
-cell/max_displacement,             float,  1.0
-diffusion_grid/biochemicals,       string, H2O2 NO2_ O2
-diffusion_grid/spatial_resolution, int,    10
+cell/phenotypes,string,necrotic_cell cancer_cell hepatocyte
+cell/max_displacement,float,0.2
+diffusion_grid/biochemicals,string,H2O2 NO2_ O2
+diffusion_grid/spatial_resolution,int,20
 #,#,#
-### O2 (Oxygen) , ### , ###
-O2/diffusion_coefficient,      float, 1.8e-5
-O2/dissipation_coefficient,    float, 0.0
-O2/initial_value/min,          float, 210.0
-O2/initial_value/max,          float, 210.0
-O2/threshold/min,              float, 0.0
-O2/threshold/max,              float, 1000.0
+### O2 (Oxygen),###,###
+O2/diffusion_coefficient,float,1.8e-5
+O2/dissipation_coefficient,float,0.0
+O2/initial_value/min,float,210.0
+O2/initial_value/max,float,210.0
+O2/threshold/min,float,0.0
+O2/threshold/max,float,1000.0
 #,#,#
-### H2O2 (Primary CAP species) , ### , ###
-H2O2/diffusion_coefficient,    float, 2.5e-6
-H2O2/dissipation_coefficient,  float, 0.01
-H2O2/initial_value/min,        float, 0.0
-H2O2/initial_value/max,        float, 0.0
-H2O2/threshold/min,            float, 0.0
-H2O2/threshold/max,            float, 1000.0
+### H2O2 (Primary CAP species),###,###
+H2O2/diffusion_coefficient,float,2.5e-6
+H2O2/dissipation_coefficient,float,0.01
+H2O2/initial_value/min,float,0.0
+H2O2/initial_value/max,float,0.0
+H2O2/threshold/min,float,0.0
+H2O2/threshold/max,float,1000.0
 #,#,#
-### NO2_ (Secondary CAP species) , ### , ###
-NO2_/diffusion_coefficient,    float, 1.9e-5
-NO2_/dissipation_coefficient,  float, 0.001
-NO2_/initial_value/min,        float, 0.0
-NO2_/initial_value/max,        float, 0.0
-NO2_/threshold/min,            float, 0.0
-NO2_/threshold/max,            float, 500.0
+### NO2_ (Secondary CAP species),###,###
+NO2_/diffusion_coefficient,float,1.9e-5
+NO2_/dissipation_coefficient,float,0.001
+NO2_/initial_value/min,float,0.0
+NO2_/initial_value/max,float,0.0
+NO2_/threshold/min,float,0.0
+NO2_/threshold/max,float,500.0
 #,#,#
-### CAP uniform pulses , ### , ###
-CAP/enabled,                  bool,  true
-CAP/pulse_count,              int,   10
-CAP/pulse_start_step,         int,   10
-CAP/pulse_interval_steps,     int,   100
-CAP/H2O2/dose,                float, 1.0
-CAP/NO2_/dose,                float, 0.3
+### CAP uniform pulses,###,###
+CAP/enabled,bool,true
+CAP/pulse_count,int,3
+CAP/pulse_start_step,int,3
+CAP/pulse_interval_steps,int,100
+CAP/H2O2/dose,float,0.8
+CAP/NO2_/dose,float,0.2
 #,#,#
-### necrotic_cell (Post-necrotic/calcified) , ### , ###
-necrotic_cell/phenotype_ID, int, 0
-necrotic_cell/initial_population, int, 0
-necrotic_cell/mechanism_order, int, 10
-necrotic_cell/can_apoptose, bool, false
-necrotic_cell/can_grow, bool, false
-necrotic_cell/can_divide, bool, false
-necrotic_cell/can_migrate, bool, false
-necrotic_cell/can_transform, bool, false
-necrotic_cell/can_polarize, bool, false
-necrotic_cell/can_protrude, bool, false
-necrotic_cell/diameter/min,  float, 15.0
-necrotic_cell/diameter/max,  float, 25.0
-necrotic_cell/principal/0,   float, 1.20
-necrotic_cell/principal/1,   float, 1.20
-necrotic_cell/principal/2,   float, 1.20
-necrotic_cell/principal/min, float, 1.10
-necrotic_cell/principal/max, float, 1.30
+### necrotic_cell (Post-necrotic/calcified),###,###
+necrotic_cell/phenotype_ID,int,0
+necrotic_cell/initial_population,int,0
+necrotic_cell/mechanism_order,int,10
+necrotic_cell/can_apoptose,bool,false
+necrotic_cell/can_grow,bool,false
+necrotic_cell/can_divide,bool,false
+necrotic_cell/can_migrate,bool,false
+necrotic_cell/can_transform,bool,false
+necrotic_cell/can_polarize,bool,false
+necrotic_cell/can_protrude,bool,false
+necrotic_cell/diameter/min,float,15.0
+necrotic_cell/diameter/max,float,25.0
+necrotic_cell/principal/0,float,1.20
+necrotic_cell/principal/1,float,1.20
+necrotic_cell/principal/2,float,1.20
+necrotic_cell/principal/min,float,1.10
+necrotic_cell/principal/max,float,1.30
 #,#,#
-### hepatocyte (Normal cell control) , ### , ###
-hepatocyte/phenotype_ID, int, 2
-hepatocyte/initial_population, int, 20
-hepatocyte/mechanism_order, int, 11
-hepatocyte/can_apoptose, bool, true
-hepatocyte/can_apoptose/probability, float, 0.05
-hepatocyte/can_apoptose/probability_increment_with_age, float, 0.0
-hepatocyte/can_apoptose/time_window, int, 120
-hepatocyte/can_apoptose/time_window/to_delete, int, 144
-hepatocyte/can_apoptose/H2O2/threshold, float, 100.0
-hepatocyte/can_apoptose/H2O2/dependency, bool, false
-hepatocyte/can_apoptose/H2O2/probability, float, 0.3
-hepatocyte/can_apoptose/NO2_/threshold, float, 80.0
-hepatocyte/can_apoptose/NO2_/dependency, bool, false
-hepatocyte/can_apoptose/NO2_/probability, float, 0.2
-hepatocyte/can_apoptose/O2/threshold, float, 0.0
-hepatocyte/can_apoptose/O2/dependency, bool, false
-hepatocyte/can_apoptose/O2/probability, float, 0.0
-hepatocyte/can_apoptose/CRT/threshold, float, 100.0
-hepatocyte/can_apoptose/CRT/dependency, bool, false
-hepatocyte/can_apoptose/CRT/probability, float, 0.0
-hepatocyte/can_apoptose/HMGB1/threshold, float, 100.0
-hepatocyte/can_apoptose/HMGB1/dependency, bool, false
-hepatocyte/can_apoptose/HMGB1/probability, float, 0.0
-hepatocyte/can_apoptose/TNF/threshold, float, 100.0
-hepatocyte/can_apoptose/TNF/dependency, bool, false
-hepatocyte/can_apoptose/TNF/probability, float, 0.0
-hepatocyte/can_grow, bool, true
-hepatocyte/can_grow/probability, float, 0.6
-hepatocyte/can_grow/diameter_rate, float, 0.03
-hepatocyte/can_grow/H2O2/threshold, float, 50.0
-hepatocyte/can_grow/H2O2/dependency, bool, true
-hepatocyte/can_grow/H2O2/diameter_rate, float, 0.0
-hepatocyte/can_grow/NO2_/threshold, float, 40.0
-hepatocyte/can_grow/NO2_/dependency, bool, true
-hepatocyte/can_grow/NO2_/diameter_rate, float, 0.0
-hepatocyte/can_grow/O2/threshold, float, 30.0
-hepatocyte/can_grow/O2/dependency, bool, false
-hepatocyte/can_grow/O2/diameter_rate, float, 0.03
-hepatocyte/can_grow/CRT/threshold, float, 100.0
-hepatocyte/can_grow/CRT/dependency, bool, false
-hepatocyte/can_grow/CRT/diameter_rate, float, 0.0
-hepatocyte/can_grow/HMGB1/threshold, float, 100.0
-hepatocyte/can_grow/HMGB1/dependency, bool, false
-hepatocyte/can_grow/HMGB1/diameter_rate, float, 0.0
-hepatocyte/can_grow/TNF/threshold, float, 100.0
-hepatocyte/can_grow/TNF/dependency, bool, false
-hepatocyte/can_grow/TNF/diameter_rate, float, 0.0
-hepatocyte/can_divide, bool, true
-hepatocyte/can_divide/probability, float, 0.01
-hepatocyte/can_divide/probability_increment_with_age, float, 0.0
-hepatocyte/can_divide/diameter_cutoff, float, 0.90
-hepatocyte/can_divide/max, int, 2
-hepatocyte/can_divide/time_window, int, 48
-hepatocyte/can_divide/H2O2/threshold, float, 40.0
-hepatocyte/can_divide/H2O2/dependency, bool, true
-hepatocyte/can_divide/NO2_/threshold, float, 30.0
-hepatocyte/can_divide/NO2_/dependency, bool, true
-hepatocyte/can_divide/O2/threshold, float, 30.0
-hepatocyte/can_divide/O2/dependency, bool, false
-hepatocyte/can_divide/CRT/threshold, float, 100.0
-hepatocyte/can_divide/CRT/dependency, bool, false
-hepatocyte/can_divide/HMGB1/threshold, float, 100.0
-hepatocyte/can_divide/HMGB1/dependency, bool, false
-hepatocyte/can_divide/TNF/threshold, float, 100.0
-hepatocyte/can_divide/TNF/dependency, bool, false
-### Divide and Transform mechanism (disabled) , ### , ###
-hepatocyte/can_divide_and_transform/H2O2/threshold, float, 0
-hepatocyte/can_divide_and_transform/NO2_/threshold, float, 0
-hepatocyte/can_divide_and_transform/O2/threshold, float, 0
-hepatocyte/can_divide_and_transform/CRT/threshold, float, 0
-hepatocyte/can_divide_and_transform/HMGB1/threshold, float, 0
-hepatocyte/can_divide_and_transform/TNF/threshold, float, 0
-hepatocyte/can_migrate, bool, false
-hepatocyte/can_transform, bool, false
-hepatocyte/can_polarize, bool, false
-hepatocyte/can_protrude, bool, false
-hepatocyte/H2O2/secretion/net_balance, float, -0.05
-hepatocyte/H2O2/secretion/dependency, bool, false
-hepatocyte/H2O2/secretion/saturation, float, 0.0
-hepatocyte/H2O2/secretion/net_balance/std, float, 0.0
-hepatocyte/O2/secretion/net_balance, float, 0.2
-hepatocyte/O2/secretion/dependency, bool, false
-hepatocyte/O2/secretion/saturation, float, 0.0
-hepatocyte/O2/secretion/net_balance/std, float, 0.0
-hepatocyte/diameter/min,  float, 15.0
-hepatocyte/diameter/max,  float, 20.0
-hepatocyte/principal/0,   float, 1.00
-hepatocyte/principal/1,   float, 1.00
-hepatocyte/principal/2,   float, 1.00
-hepatocyte/principal/min, float, 0.95
-hepatocyte/principal/max, float, 1.05
-### Hepatocyte intracellular parameters , ### , ###
-hepatocyte/intracellular/uptake/H2O2, float, 0.005
-hepatocyte/intracellular/uptake/NO2_, float, 0.002
-hepatocyte/intracellular/antioxidant/capacity, float, 2.0
-hepatocyte/intracellular/antioxidant/k_scavenge, float, 0.05
-hepatocyte/intracellular/alpha/H2O2, float, 1.0
-hepatocyte/intracellular/alpha/NO2_, float, 0.2
-hepatocyte/intracellular/damage/k_induction, float, 0.01
-hepatocyte/intracellular/damage/k_repair, float, 0.02
-hepatocyte/intracellular/damage/threshold, float, 1.5
-hepatocyte/intracellular/damage/division_block, float, 0.7
-hepatocyte/intracellular/damage/growth_block, float, 1.0
-hepatocyte/intracellular/damage/probability, float, 0.5
+### hepatocyte (Normal cell control),###,###
+hepatocyte/phenotype_ID,int,2
+hepatocyte/initial_population,int,20
+hepatocyte/mechanism_order,int,11
+hepatocyte/can_apoptose,bool,true
+hepatocyte/can_apoptose/probability,float,0.02
+hepatocyte/can_apoptose/probability_increment_with_age,float,0.0
+hepatocyte/can_apoptose/time_window,int,120
+hepatocyte/can_apoptose/time_window/to_delete,int,144
+hepatocyte/can_apoptose/H2O2/threshold,float,100.0
+hepatocyte/can_apoptose/H2O2/dependency,bool,false
+hepatocyte/can_apoptose/H2O2/probability,float,0.3
+hepatocyte/can_apoptose/NO2_/threshold,float,80.0
+hepatocyte/can_apoptose/NO2_/dependency,bool,false
+hepatocyte/can_apoptose/NO2_/probability,float,0.2
+hepatocyte/can_apoptose/O2/threshold,float,0.0
+hepatocyte/can_apoptose/O2/dependency,bool,false
+hepatocyte/can_apoptose/O2/probability,float,0.0
+hepatocyte/can_apoptose/CRT/threshold,float,100.0
+hepatocyte/can_apoptose/CRT/dependency,bool,false
+hepatocyte/can_apoptose/CRT/probability,float,0.0
+hepatocyte/can_apoptose/HMGB1/threshold,float,100.0
+hepatocyte/can_apoptose/HMGB1/dependency,bool,false
+hepatocyte/can_apoptose/HMGB1/probability,float,0.0
+hepatocyte/can_apoptose/TNF/threshold,float,100.0
+hepatocyte/can_apoptose/TNF/dependency,bool,false
+hepatocyte/can_apoptose/TNF/probability,float,0.0
+hepatocyte/can_grow,bool,true
+hepatocyte/can_grow/probability,float,0.6
+hepatocyte/can_grow/diameter_rate,float,0.03
+hepatocyte/can_grow/H2O2/threshold,float,50.0
+hepatocyte/can_grow/H2O2/dependency,bool,true
+hepatocyte/can_grow/H2O2/diameter_rate,float,0.0
+hepatocyte/can_grow/NO2_/threshold,float,40.0
+hepatocyte/can_grow/NO2_/dependency,bool,true
+hepatocyte/can_grow/NO2_/diameter_rate,float,0.0
+hepatocyte/can_grow/O2/threshold,float,30.0
+hepatocyte/can_grow/O2/dependency,bool,false
+hepatocyte/can_grow/O2/diameter_rate,float,0.03
+hepatocyte/can_grow/CRT/threshold,float,100.0
+hepatocyte/can_grow/CRT/dependency,bool,false
+hepatocyte/can_grow/CRT/diameter_rate,float,0.0
+hepatocyte/can_grow/HMGB1/threshold,float,100.0
+hepatocyte/can_grow/HMGB1/dependency,bool,false
+hepatocyte/can_grow/HMGB1/diameter_rate,float,0.0
+hepatocyte/can_grow/TNF/threshold,float,100.0
+hepatocyte/can_grow/TNF/dependency,bool,false
+hepatocyte/can_grow/TNF/diameter_rate,float,0.0
+hepatocyte/can_divide,bool,true
+hepatocyte/can_divide/probability,float,0.01
+hepatocyte/can_divide/probability_increment_with_age,float,0.0
+hepatocyte/can_divide/diameter_cutoff,float,0.90
+hepatocyte/can_divide/max,int,2
+hepatocyte/can_divide/time_window,int,48
+hepatocyte/can_divide/H2O2/threshold,float,40.0
+hepatocyte/can_divide/H2O2/dependency,bool,true
+hepatocyte/can_divide/NO2_/threshold,float,30.0
+hepatocyte/can_divide/NO2_/dependency,bool,true
+hepatocyte/can_divide/O2/threshold,float,30.0
+hepatocyte/can_divide/O2/dependency,bool,false
+hepatocyte/can_divide/CRT/threshold,float,100.0
+hepatocyte/can_divide/CRT/dependency,bool,false
+hepatocyte/can_divide/HMGB1/threshold,float,100.0
+hepatocyte/can_divide/HMGB1/dependency,bool,false
+hepatocyte/can_divide/TNF/threshold,float,100.0
+hepatocyte/can_divide/TNF/dependency,bool,false
 #,#,#
-### cancer_cell (Main target) , ### , ###
-cancer_cell/phenotype_ID, int, 1
-cancer_cell/initial_population, int, 200
-cancer_cell/initial_population/phase_Ap/percentage, float, 10.0
-cancer_cell/initial_population/phase_G1/percentage, float, 50.0
-cancer_cell/initial_population/phase_Sy/percentage, float, 25.0
-cancer_cell/initial_population/phase_G2/percentage, float, 10.0
-cancer_cell/initial_population/phase_Di/percentage, float, 5.0
-cancer_cell/initial_population/phase_Tr/percentage, float, 0.0
-cancer_cell/mechanism_order, int, 11
-cancer_cell/can_apoptose, bool, true
-cancer_cell/can_apoptose/probability, float, 0.9
-cancer_cell/can_apoptose/probability_increment_with_age, float, 0.0
-cancer_cell/can_apoptose/time_window, int, 48
-cancer_cell/can_apoptose/time_window/to_delete, int, 72
-cancer_cell/can_apoptose/H2O2/threshold, float, 40.0
-cancer_cell/can_apoptose/H2O2/dependency, bool, false
-cancer_cell/can_apoptose/H2O2/probability, float, 0.8
-cancer_cell/can_apoptose/NO2_/threshold, float, 30.0
-cancer_cell/can_apoptose/NO2_/dependency, bool, false
-cancer_cell/can_apoptose/NO2_/probability, float, 0.6
-cancer_cell/can_apoptose/O2/threshold, float, 50.0
-cancer_cell/can_apoptose/O2/dependency, bool, false
-cancer_cell/can_apoptose/O2/probability, float, 0.0
-cancer_cell/can_apoptose/CRT/threshold, float, 2.0
-cancer_cell/can_apoptose/CRT/dependency, bool, false
-cancer_cell/can_apoptose/CRT/probability, float, 0.0
-cancer_cell/can_apoptose/HMGB1/threshold, float, 1.0
-cancer_cell/can_apoptose/HMGB1/dependency, bool, false
-cancer_cell/can_apoptose/HMGB1/probability, float, 0.0
-cancer_cell/can_apoptose/TNF/threshold, float, 5.0
-cancer_cell/can_apoptose/TNF/dependency, bool, false
-cancer_cell/can_apoptose/TNF/probability, float, 0.3
-cancer_cell/can_grow, bool, true
-cancer_cell/can_grow/probability, float, 0.8
-cancer_cell/can_grow/diameter_rate, float, 0.05
-cancer_cell/can_grow/H2O2/threshold, float, 35.0
-cancer_cell/can_grow/H2O2/dependency, bool, true
-cancer_cell/can_grow/H2O2/diameter_rate, float, 0.0
-cancer_cell/can_grow/NO2_/threshold, float, 25.0
-cancer_cell/can_grow/NO2_/dependency, bool, true
-cancer_cell/can_grow/NO2_/diameter_rate, float, 0.0
-cancer_cell/can_grow/O2/threshold, float, 50.0
-cancer_cell/can_grow/O2/dependency, bool, false
-cancer_cell/can_grow/O2/diameter_rate, float, 0.05
-cancer_cell/can_grow/CRT/threshold, float, 100.0
-cancer_cell/can_grow/CRT/dependency, bool, false
-cancer_cell/can_grow/CRT/diameter_rate, float, 0.0
-cancer_cell/can_grow/HMGB1/threshold, float, 100.0
-cancer_cell/can_grow/HMGB1/dependency, bool, false
-cancer_cell/can_grow/HMGB1/diameter_rate, float, 0.0
-cancer_cell/can_grow/TNF/threshold, float, 100.0
-cancer_cell/can_grow/TNF/dependency, bool, false
-cancer_cell/can_grow/TNF/diameter_rate, float, 0.0
-cancer_cell/can_divide, bool, true
-cancer_cell/can_divide/probability, float, 0.02
-cancer_cell/can_divide/probability_increment_with_age, float, 0.0
-cancer_cell/can_divide/diameter_cutoff, float, 0.95
-cancer_cell/can_divide/max, int, 3
-cancer_cell/can_divide/time_window, int, 24
-cancer_cell/can_divide/H2O2/threshold, float, 30.0
-cancer_cell/can_divide/H2O2/dependency, bool, true
-cancer_cell/can_divide/NO2_/threshold, float, 20.0
-cancer_cell/can_divide/NO2_/dependency, bool, true
-cancer_cell/can_divide/O2/threshold, float, 50.0
-cancer_cell/can_divide/O2/dependency, bool, false
-cancer_cell/can_divide/CRT/threshold, float, 100.0
-cancer_cell/can_divide/CRT/dependency, bool, false
-cancer_cell/can_divide/HMGB1/threshold, float, 100.0
-cancer_cell/can_divide/HMGB1/dependency, bool, false
-cancer_cell/can_divide/TNF/threshold, float, 100.0
-cancer_cell/can_divide/TNF/dependency, bool, false
-### Divide and Transform mechanism (disabled) , ### , ###
-cancer_cell/can_divide_and_transform/H2O2/threshold, float, 0
-cancer_cell/can_divide_and_transform/NO2_/threshold, float, 0
-cancer_cell/can_divide_and_transform/O2/threshold, float, 0
-cancer_cell/can_divide_and_transform/CRT/threshold, float, 0
-cancer_cell/can_divide_and_transform/HMGB1/threshold, float, 0
-cancer_cell/can_divide_and_transform/TNF/threshold, float, 0
-cancer_cell/can_migrate, bool, false
-cancer_cell/can_transform, bool, false
-cancer_cell/can_polarize, bool, false
-cancer_cell/can_protrude, bool, false
-cancer_cell/H2O2/secretion/net_balance, float, -0.1
-cancer_cell/H2O2/secretion/dependency, bool, false
-cancer_cell/H2O2/secretion/saturation, float, 0.0
-cancer_cell/H2O2/secretion/saturation,  float, 0.0
-cancer_cell/H2O2/secretion/net_balance/std, float, 0.0
-cancer_cell/diameter/min,  float, 12.0
-cancer_cell/diameter/max,  float, 18.0
-cancer_cell/principal/0,   float, 1.00
-cancer_cell/principal/1,   float, 1.00
-cancer_cell/principal/2,   float, 1.00
-cancer_cell/principal/min, float, 0.95
-cancer_cell/principal/max, float, 1.05
-### Cancer intracellular parameters , ### , ###
-cancer_cell/intracellular/uptake/H2O2, float, 0.02
-cancer_cell/intracellular/uptake/NO2_, float, 0.01
-cancer_cell/intracellular/antioxidant/capacity, float, 0.8
-cancer_cell/intracellular/antioxidant/k_scavenge, float, 0.02
-cancer_cell/intracellular/alpha/H2O2, float, 1.0
-cancer_cell/intracellular/alpha/NO2_, float, 0.5
-cancer_cell/intracellular/damage/k_induction, float, 0.03
-cancer_cell/intracellular/damage/k_repair, float, 0.005
-cancer_cell/intracellular/damage/threshold, float, 0.8
-cancer_cell/intracellular/damage/division_block, float, 0.3
-cancer_cell/intracellular/damage/growth_block, float, 0.5
-cancer_cell/intracellular/damage/probability, float, 0.7
+### Divide and Transform mechanism (disabled),###,###
+hepatocyte/can_divide_and_transform/H2O2/threshold,float,0
+hepatocyte/can_divide_and_transform/NO2_/threshold,float,0
+hepatocyte/can_divide_and_transform/O2/threshold,float,0
+hepatocyte/can_divide_and_transform/CRT/threshold,float,0
+hepatocyte/can_divide_and_transform/HMGB1/threshold,float,0
+hepatocyte/can_divide_and_transform/TNF/threshold,float,0
+hepatocyte/can_migrate,bool,false
+hepatocyte/can_transform,bool,false
+hepatocyte/can_polarize,bool,false
+hepatocyte/can_protrude,bool,false
+hepatocyte/H2O2/secretion/net_balance,float,-0.05
+hepatocyte/H2O2/secretion/dependency,bool,false
+hepatocyte/H2O2/secretion/saturation,float,0.0
+hepatocyte/H2O2/secretion/net_balance/std,float,0.0
+hepatocyte/O2/secretion/net_balance,float,0.2
+hepatocyte/O2/secretion/dependency,bool,false
+hepatocyte/O2/secretion/saturation,float,0.0
+hepatocyte/O2/secretion/net_balance/std,float,0.0
+hepatocyte/diameter/min,float,15.0
+hepatocyte/diameter/max,float,20.0
+hepatocyte/principal/0,float,1.00
+hepatocyte/principal/1,float,1.00
+hepatocyte/principal/2,float,1.00
+hepatocyte/principal/min,float,0.95
+hepatocyte/principal/max,float,1.05
 #,#,#
-### END , ### , ###
+### Hepatocyte intracellular parameters,###,###
+hepatocyte/intracellular/uptake/H2O2,float,0.003
+hepatocyte/intracellular/uptake/NO2_,float,0.001
+hepatocyte/intracellular/antioxidant/capacity,float,3.0
+hepatocyte/intracellular/antioxidant/k_scavenge,float,0.08
+hepatocyte/intracellular/alpha/H2O2,float,1.0
+hepatocyte/intracellular/alpha/NO2_,float,0.2
+hepatocyte/intracellular/damage/k_induction,float,0.008
+hepatocyte/intracellular/damage/k_repair,float,0.04
+hepatocyte/intracellular/damage/threshold,float,2.2
+hepatocyte/intracellular/damage/division_block,float,1.1
+hepatocyte/intracellular/damage/growth_block,float,1.5
+hepatocyte/intracellular/damage/probability,float,0.3
+#,#,#
+### cancer_cell (Main target),###,###
+cancer_cell/phenotype_ID,int,1
+cancer_cell/initial_population,int,1
+cancer_cell/initial_population/phase_Ap/percentage,float,10.0
+cancer_cell/initial_population/phase_G1/percentage,float,50.0
+cancer_cell/initial_population/phase_Sy/percentage,float,25.0
+cancer_cell/initial_population/phase_G2/percentage,float,10.0
+cancer_cell/initial_population/phase_Di/percentage,float,5.0
+cancer_cell/initial_population/phase_Tr/percentage,float,0.0
+cancer_cell/mechanism_order,int,11
+cancer_cell/can_apoptose,bool,true
+cancer_cell/can_apoptose/probability,float,0.8
+cancer_cell/can_apoptose/probability_increment_with_age,float,0.0
+cancer_cell/can_apoptose/time_window,int,48
+cancer_cell/can_apoptose/time_window/to_delete,int,72
+cancer_cell/can_apoptose/H2O2/threshold,float,20.0
+cancer_cell/can_apoptose/H2O2/dependency,bool,true
+cancer_cell/can_apoptose/H2O2/probability,float,0.85
+cancer_cell/can_apoptose/H2O2/dependency/NO2_/threshold,float,15.0
+cancer_cell/can_apoptose/H2O2/dependency/NO2_/probability,float,0.9
+cancer_cell/can_apoptose/H2O2/dependency/O2/threshold,float,50.0
+cancer_cell/can_apoptose/H2O2/dependency/O2/probability,float,0.0
+cancer_cell/can_apoptose/NO2_/threshold,float,15.0
+cancer_cell/can_apoptose/NO2_/dependency,bool,true
+cancer_cell/can_apoptose/NO2_/probability,float,0.7
+cancer_cell/can_apoptose/NO2_/dependency/H2O2/threshold,float,20.0
+cancer_cell/can_apoptose/NO2_/dependency/H2O2/probability,float,0.95
+cancer_cell/can_apoptose/NO2_/dependency/O2/threshold,float,50.0
+cancer_cell/can_apoptose/NO2_/dependency/O2/probability,float,0.0
+cancer_cell/can_apoptose/O2/threshold,float,50.0
+cancer_cell/can_apoptose/O2/dependency,bool,true
+cancer_cell/can_apoptose/O2/probability,float,0.0
+cancer_cell/can_apoptose/O2/dependency/H2O2/threshold,float,20.0
+cancer_cell/can_apoptose/O2/dependency/H2O2/probability,float,0.0
+cancer_cell/can_apoptose/O2/dependency/NO2_/threshold,float,15.0
+cancer_cell/can_apoptose/O2/dependency/NO2_/probability,float,0.0
+cancer_cell/can_apoptose/CRT/threshold,float,2.0
+cancer_cell/can_apoptose/CRT/dependency,bool,false
+cancer_cell/can_apoptose/CRT/probability,float,0.0
+cancer_cell/can_apoptose/HMGB1/threshold,float,1.0
+cancer_cell/can_apoptose/HMGB1/dependency,bool,false
+cancer_cell/can_apoptose/HMGB1/probability,float,0.0
+cancer_cell/can_apoptose/TNF/threshold,float,5.0
+cancer_cell/can_apoptose/TNF/dependency,bool,false
+cancer_cell/can_apoptose/TNF/probability,float,0.4
+cancer_cell/can_grow,bool,true
+cancer_cell/can_grow/probability,float,0.3
+cancer_cell/can_grow/diameter_rate,float,0.02
+cancer_cell/can_grow/H2O2/threshold,float,35.0
+cancer_cell/can_grow/H2O2/dependency,bool,true
+cancer_cell/can_grow/H2O2/diameter_rate,float,0.0
+cancer_cell/can_grow/NO2_/threshold,float,25.0
+cancer_cell/can_grow/NO2_/dependency,bool,true
+cancer_cell/can_grow/NO2_/diameter_rate,float,0.0
+cancer_cell/can_grow/O2/threshold,float,50.0
+cancer_cell/can_grow/O2/dependency,bool,false
+cancer_cell/can_grow/O2/diameter_rate,float,0.05
+cancer_cell/can_grow/CRT/threshold,float,100.0
+cancer_cell/can_grow/CRT/dependency,bool,false
+cancer_cell/can_grow/CRT/diameter_rate,float,0.0
+cancer_cell/can_grow/HMGB1/threshold,float,100.0
+cancer_cell/can_grow/HMGB1/dependency,bool,false
+cancer_cell/can_grow/HMGB1/diameter_rate,float,0.0
+cancer_cell/can_grow/TNF/threshold,float,100.0
+cancer_cell/can_grow/TNF/dependency,bool,false
+cancer_cell/can_grow/TNF/diameter_rate,float,0.0
+cancer_cell/can_divide,bool,true
+cancer_cell/can_divide/probability,float,0.005
+cancer_cell/can_divide/probability_increment_with_age,float,0.0
+cancer_cell/can_divide/diameter_cutoff,float,0.95
+cancer_cell/can_divide/max,int,2
+cancer_cell/can_divide/time_window,int,48
+cancer_cell/can_divide/H2O2/threshold,float,30.0
+cancer_cell/can_divide/H2O2/dependency,bool,true
+cancer_cell/can_divide/NO2_/threshold,float,20.0
+cancer_cell/can_divide/NO2_/dependency,bool,true
+cancer_cell/can_divide/O2/threshold,float,50.0
+cancer_cell/can_divide/O2/dependency,bool,false
+cancer_cell/can_divide/CRT/threshold,float,100.0
+cancer_cell/can_divide/CRT/dependency,bool,false
+cancer_cell/can_divide/HMGB1/threshold,float,100.0
+cancer_cell/can_divide/HMGB1/dependency,bool,false
+cancer_cell/can_divide/TNF/threshold,float,100.0
+cancer_cell/can_divide/TNF/dependency,bool,false
+#,#,#
+### Divide and Transform mechanism,###,###
+cancer_cell/can_divide_and_transform/H2O2/threshold,float,0
+cancer_cell/can_divide_and_transform/NO2_/threshold,float,0
+cancer_cell/can_divide_and_transform/O2/threshold,float,0
+cancer_cell/can_divide_and_transform/CRT/threshold,float,0
+cancer_cell/can_divide_and_transform/HMGB1/threshold,float,0
+cancer_cell/can_divide_and_transform/TNF/threshold,float,0
+cancer_cell/can_migrate,bool,false
+cancer_cell/can_transform,bool,false
+cancer_cell/can_polarize,bool,false
+cancer_cell/can_protrude,bool,false
+cancer_cell/H2O2/secretion/net_balance,float,-0.05
+cancer_cell/H2O2/secretion/dependency,bool,false
+cancer_cell/H2O2/secretion/saturation,float,0.0
+cancer_cell/H2O2/secretion/saturation,float,0.0
+cancer_cell/H2O2/secretion/net_balance/std,float,0.0
+cancer_cell/diameter/min,float,12.0
+cancer_cell/diameter/max,float,18.0
+cancer_cell/principal/0,float,1.00
+cancer_cell/principal/1,float,1.00
+cancer_cell/principal/2,float,1.00
+cancer_cell/principal/min,float,0.95
+cancer_cell/principal/max,float,1.05
+#,#,#
+### Cancer intracellular parameters,###,###
+cancer_cell/intracellular/uptake/H2O2,float,0.03
+cancer_cell/intracellular/uptake/NO2_,float,0.02
+cancer_cell/intracellular/antioxidant/capacity,float,1.0
+cancer_cell/intracellular/antioxidant/k_scavenge,float,0.03
+cancer_cell/intracellular/alpha/H2O2,float,1.0
+cancer_cell/intracellular/alpha/NO2_,float,0.5
+cancer_cell/intracellular/damage/k_induction,float,0.03
+cancer_cell/intracellular/damage/k_repair,float,0.015
+cancer_cell/intracellular/damage/threshold,float,1.0
+cancer_cell/intracellular/damage/division_block,float,0.5
+cancer_cell/intracellular/damage/growth_block,float,0.8
+cancer_cell/intracellular/damage/probability,float,0.6
+#,#,#
+### END,###,###

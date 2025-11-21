@@ -853,6 +853,7 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "IL1b" ) bc = Biochemical::IL1b;  // interleukin-1 beta
         else if ( BC_name == "IL6"  ) bc = Biochemical::IL6;   // interleukin-6
         else if ( BC_name == "IL12" ) bc = Biochemical::IL12;  // interleukin-12
+        else if ( BC_name == "CCL2" ) bc = Biochemical::CCL2;  // C-C motif chemokine ligand 2
         else if ( BC_name == "CCL4" ) bc = Biochemical::CCL4;  // C-C motif chemokine ligand 4
         // neuron-related biochemical cues
         else if ( BC_name == "NGF"  ) bc = Biochemical::NGF;

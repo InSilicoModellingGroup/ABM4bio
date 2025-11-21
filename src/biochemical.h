@@ -25,7 +25,7 @@ enum Biochemical {
   TNF  = 41,
   // CAP-specific ICD markers and inflammatory cytokines
   CRT = 42, HMGB1 = 43, HSP70 = 44, // ICD markers
-  IL1b = 45, IL6 = 46, IL12 = 47, CCL4 = 48, // inflammatory cytokines
+  IL1b = 45, IL6 = 46, IL12 = 47, CCL4 = 48, CCL2 = 49, // inflammatory cytokines
   NGF  = 61, BDNF = 62,
   Drug_1 = 101, Drug_2 = 102, Drug_3 = 103,
   ECM = 999

@@ -17,4 +17,4 @@ analyze_invivo:
 	python3 analyze_invivo_tumor.py
 
 clean:
-	rm -rf results results_inVivo
+	rm -rf results results_inVitro /home/aiwsif/Desktop/ABM4bio/build
