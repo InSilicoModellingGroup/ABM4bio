@@ -1264,32 +1264,33 @@ void init_cells(bdm::Simulation& sim,
         }
       //
       if (CP_ID>0) // ignore necrotic cell whose default phenotype ID = 0
-        // identify the principal directions' order
-        if (! params.have_parameter<double>(CP_name+"/principal/0") &&
-            ! params.have_parameter<double>(CP_name+"/principal/1") &&
-            ! params.have_parameter<double>(CP_name+"/principal/2") )
-          params.set<double>(CP_name+"/principal/0") =
-          params.set<double>(CP_name+"/principal/1") =
-          params.set<double>(CP_name+"/principal/2") = 1.0;
-          {
-            // principal directions of the cell polarization matrix
-            const double pd0 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/0")),
-                         pd1 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/1")),
-                         pd2 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/2"));
-            //
-            std::vector<int> permutation(3);
-            if      ( pd0 >= pd1 && pd1 >= pd2 ) permutation = { 0, 1, 2 };
-            else if ( pd0 >= pd2 && pd2 >= pd1 ) permutation = { 0, 2, 1 };
-            else if ( pd1 >= pd2 && pd2 >= pd0 ) permutation = { 1, 2, 0 };
-            else if ( pd1 >= pd0 && pd0 >= pd2 ) permutation = { 1, 0, 2 };
-            else if ( pd2 >= pd0 && pd0 >= pd1 ) permutation = { 2, 0, 1 };
-            else if ( pd2 >= pd1 && pd1 >= pd0 ) permutation = { 2, 1, 0 };
-            // ...and exception is caught
-            else
-              ABORT_("unrecognized order to put cell principal directions in order");
-            //
-            params.set<std::vector<int>>(CP_name+"/principal/permutation") = permutation;
-          }
+        {
+          // identify the principal directions' order
+          if (! params.have_parameter<double>(CP_name+"/principal/0") &&
+              ! params.have_parameter<double>(CP_name+"/principal/1") &&
+              ! params.have_parameter<double>(CP_name+"/principal/2") )
+            params.set<double>(CP_name+"/principal/0") =
+            params.set<double>(CP_name+"/principal/1") =
+            params.set<double>(CP_name+"/principal/2") = 1.0;
+          //
+          // principal directions of the cell polarization matrix
+          const double pd0 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/0")),
+                       pd1 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/1")),
+                       pd2 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/2"));
+          //
+          std::vector<int> permutation(3);
+          if      ( pd0 >= pd1 && pd1 >= pd2 ) permutation = { 0, 1, 2 };
+          else if ( pd0 >= pd2 && pd2 >= pd1 ) permutation = { 0, 2, 1 };
+          else if ( pd1 >= pd2 && pd2 >= pd0 ) permutation = { 1, 2, 0 };
+          else if ( pd1 >= pd0 && pd0 >= pd2 ) permutation = { 1, 0, 2 };
+          else if ( pd2 >= pd0 && pd0 >= pd1 ) permutation = { 2, 0, 1 };
+          else if ( pd2 >= pd1 && pd1 >= pd0 ) permutation = { 2, 1, 0 };
+          // ...and exception is caught
+          else
+            ABORT_("unrecognized order to put cell principal directions in order");
+          //
+          params.set<std::vector<int>>(CP_name+"/principal/permutation") = permutation;
+        }
       // iterate for all biochemicals (substances)
       for (unsigned int icue=0; icue<biochem.size(); icue++)
         {
@@ -1458,8 +1459,7 @@ void init_cells(bdm::Simulation& sim,
                       break;
                     }
                 }
-              // now do what you must
-              if ( ! is_valid )
+              if ( ! is_valid ) // now do what you must
                 {
                   i -= 1;
                   continue;
