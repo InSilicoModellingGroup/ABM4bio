@@ -630,7 +630,15 @@ void set_bdm_params(bdm::Param* p)
   p->detect_static_agents = params.get<double>("cell/max_displacement") ? true : false;
   p->calculate_gradients = params.get<bool>("diffusion_grid/save_gradients");
   p->diffusion_method = "euler";
-  p->diffusion_boundary_condition = "open";
+  // Selection of boundaries:
+  // Dirichlet - Fixed concentration at boundaries (continuous O2 supply)
+  // Neumann - Fixed gradient at boundaries
+  // open - Substances can leak out (default)
+  // closed - No flux through boundaries
+  // Periodic - Wrap-around boundaries
+  p->diffusion_boundary_condition = params.have_parameter<std::string>("diffusion_boundary_condition")
+                                   ? params.get<std::string>("diffusion_boundary_condition")
+                                   : "open";
   p->show_simulation_step = false;
   p->export_visualization = false;
   p->output_dir = params.get<std::string>("output_directory");
@@ -893,6 +901,20 @@ void init_biochemicals(bdm::Simulation& sim,
       // access the BioDynaMo diffusion grid
       auto* dg = rm->GetDiffusionGrid(BC_name);
       dg->Initialize();
+      //
+      // set boundary condition type: closed for CAP species, Dirichlet for others
+      if (BC_name == "H2O2" || BC_name == "NO2_")
+        {
+          // Use closed boundaries for CAP species (no flux at boundaries)
+          dg->SetBoundaryConditionType(bdm::BoundaryConditionType::kClosedBoundaries);
+        }
+      else
+        {
+          // set Dirichlet boundary condition value to match initial concentration
+          const double boundary_value = params.get<double>(BC_name+"/initial_value/min");
+          dg->SetBoundaryCondition(
+            std::make_unique<bdm::ConstantBoundaryCondition>(boundary_value));
+        }
       //
       // set the lower and upper threshold for the diffusion grid value range
       if (params.have_parameter<double>(BC_name+"/threshold/min"))
@@ -2929,40 +2951,110 @@ void reinit_biochemicals(bdm::Simulation& sim,
       // ...end of biochemical (cue) loop
     }
   // ---------------------------------------------------------------------------
-  // CAP scheduler: optional uniform pulses raising H2O2/NO2_ grids
+  // CAP scheduler: apply Dirichlet BC at top boundary, closed elsewhere
   if ( params.have_parameter<bool>("CAP/enabled") && params.get<bool>("CAP/enabled") )
     {
-      int applied = params.have_parameter<int>("CAP/pulses_applied")
-                  ? params.get<int>("CAP/pulses_applied") : 0;
-      const int n_pulses = params.have_parameter<int>("CAP/pulse_count")
-                         ? params.get<int>("CAP/pulse_count") : 0;
-      const int start    = params.have_parameter<int>("CAP/pulse_start_step")
-                         ? params.get<int>("CAP/pulse_start_step") : 1;
-      const int interval = params.have_parameter<int>("CAP/pulse_interval_steps")
-                         ? params.get<int>("CAP/pulse_interval_steps") : 0;
-      if (n_pulses>0 && interval>0 && time>=start && applied<n_pulses)
+      const int start_step    = params.have_parameter<int>("CAP/start_step")
+                              ? params.get<int>("CAP/start_step") : 0;
+      const int duration_steps = params.have_parameter<int>("CAP/duration_steps")
+                               ? params.get<int>("CAP/duration_steps") : 0;
+      
+      // Apply CAP continuously during the treatment window: [start, start+duration)
+      bool apply_now = false;
+      if (duration_steps > 0)
+        apply_now = (time >= start_step && time < start_step + duration_steps);
+      else
+        apply_now = (time >= start_step);  // If duration=0, apply indefinitely from start
+      
+      if (apply_now)
         {
-          if ( ((time - start) % interval) == 0 )
+          auto enforce_side_reflecting = [] (bdm::DiffusionGrid* dg) {
+            if (!dg) { return; }
+            const int res = static_cast<int>(dg->GetResolution());
+            if (res <= 1) { return; }
+            const int inner_low = (res > 1) ? 1 : 0;
+            const int inner_high = (res > 2) ? res - 2 : 0;
+            auto copy_from = [&] (int dx, int dy, int dz,
+                                  int sx, int sy, int sz) {
+              dx = std::clamp(dx, 0, res - 1);
+              dy = std::clamp(dy, 0, res - 1);
+              dz = std::clamp(dz, 0, res - 1);
+              sx = std::clamp(sx, 0, res - 1);
+              sy = std::clamp(sy, 0, res - 1);
+              sz = std::clamp(sz, 0, res - 1);
+              std::array<uint32_t, 3> dest = {static_cast<uint32_t>(dx),
+                                              static_cast<uint32_t>(dy),
+                                              static_cast<uint32_t>(dz)};
+              std::array<uint32_t, 3> src  = {static_cast<uint32_t>(sx),
+                                              static_cast<uint32_t>(sy),
+                                              static_cast<uint32_t>(sz)};
+              size_t dest_idx = dg->GetBoxIndex(dest);
+              size_t src_idx  = dg->GetBoxIndex(src);
+              double value = dg->GetConcentration(src_idx);
+              double current = dg->GetConcentration(dest_idx);
+              dg->ChangeConcentrationBy(dest_idx, value - current);
+            };
+            for (int y = 0; y < res; ++y)
+              for (int z = 0; z < res; ++z)
+                {
+                  copy_from(0, y, z, inner_low, y, z);
+                  copy_from(res - 1, y, z, inner_high, y, z);
+                }
+            for (int x = 0; x < res; ++x)
+              for (int z = 0; z < res; ++z)
+                {
+                  copy_from(x, 0, z, x, inner_low, z);
+                  copy_from(x, res - 1, z, x, inner_high, z);
+                }
+          };
+
+          const double dose_h2o2 = params.have_parameter<double>("CAP/H2O2/dose")
+                                  ? params.get<double>("CAP/H2O2/dose") : 0.0;
+          const double dose_no2  = params.have_parameter<double>("CAP/NO2_/dose")
+                                  ? params.get<double>("CAP/NO2_/dose")  : 0.0;
+          
+          // Enforce Dirichlet BC at top boundary (z_max face) only
+          if (dose_h2o2!=0.0)
             {
-              const double dose_h2o2 = params.have_parameter<double>("CAP/H2O2/dose")
-                                      ? params.get<double>("CAP/H2O2/dose") : 0.0;
-              const double dose_no2  = params.have_parameter<double>("CAP/NO2_/dose")
-                                      ? params.get<double>("CAP/NO2_/dose")  : 0.0;
-              if (dose_h2o2!=0.0)
+              auto* dgH = rm->GetDiffusionGrid("H2O2");
+              if (dgH)
                 {
-                  auto* dgH = rm->GetDiffusionGrid("H2O2");
-                  if (dgH)
-                    for (size_t b=0; b<dgH->GetNumBoxes(); b++)
-                      dgH->ChangeConcentrationBy(b, dose_h2o2);
+                  const int res = static_cast<int>(dgH->GetResolution());
+                  const int z_top = res - 1;  // Top boundary layer
+                  for (int x = 0; x < res; x++)
+                    for (int y = 0; y < res; y++)
+                      {
+                        std::array<uint32_t, 3> box_coord = {static_cast<uint32_t>(x), 
+                                                              static_cast<uint32_t>(y), 
+                                                              static_cast<uint32_t>(z_top)};
+                        size_t b = dgH->GetBoxIndex(box_coord);
+                        // Reset to constant value (Dirichlet BC)
+                        double current = dgH->GetConcentration(b);
+                        dgH->ChangeConcentrationBy(b, dose_h2o2 - current);
+                      }
+                  enforce_side_reflecting(dgH);
                 }
-              if (dose_no2!=0.0)
+            }
+          if (dose_no2!=0.0)
+            {
+              auto* dgN = rm->GetDiffusionGrid("NO2_");
+              if (dgN)
                 {
-                  auto* dgN = rm->GetDiffusionGrid("NO2_");
-                  if (dgN)
-                    for (size_t b=0; b<dgN->GetNumBoxes(); b++)
-                      dgN->ChangeConcentrationBy(b, dose_no2);
+                  const int res = static_cast<int>(dgN->GetResolution());
+                  const int z_top = res - 1;  // Top boundary layer
+                  for (int x = 0; x < res; x++)
+                    for (int y = 0; y < res; y++)
+                      {
+                        std::array<uint32_t, 3> box_coord = {static_cast<uint32_t>(x), 
+                                                              static_cast<uint32_t>(y), 
+                                                              static_cast<uint32_t>(z_top)};
+                        size_t b = dgN->GetBoxIndex(box_coord);
+                        // Reset to constant value (Dirichlet BC)
+                        double current = dgN->GetConcentration(b);
+                        dgN->ChangeConcentrationBy(b, dose_no2 - current);
+                      }
+                  enforce_side_reflecting(dgN);
                 }
-              params.set<int>("CAP/pulses_applied") = applied + 1;
             }
         }
     }
