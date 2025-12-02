@@ -702,6 +702,8 @@ inline
 bool bdm::BiologicalCell::CheckApoptosisAging()
 {
   if (!this->GetCanApoptose()) return false;
+  // by design only viable (non-necrotic) cells could apoptose
+  if (!this->GetPhenotype()) return false;
   //
   // access BioDynaMo's random number generator
   auto* rg = bdm::Simulation::GetActive()->GetRandom();
