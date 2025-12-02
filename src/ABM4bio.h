@@ -284,7 +284,7 @@ void read_csv_file(const std::string& fn,
     if (params.get<int>("visualization_interval")<1)
       ABORT_("model parameter \"visualization_interval\" is initialized wrong");
     //
-    if (params.get<double>("max_boundary")+params.get<double>("min_boundary")!=0.0)
+    if (params.get<double>("max_boundary")<=params.get<double>("min_boundary"))
       ABORT_("model parameters \"min_boundary\", \"max_boundary\" are initialized wrong");
     //
     if (!params.have_parameter<int>("diffusion_grid/spatial_resolution"))
