@@ -56,10 +56,10 @@ a_cell/mechanism_order, int, 10
 a_cell/can_migrate, bool, true
 a_cell/can_migrate/probability,                     float, 0.9999
 a_cell/can_migrate/half_range,                      float, 1.00
-a_cell/can_migrate/chemotaxis/O2,                   float,-2.00e-14
+a_cell/can_migrate/chemotaxis/O2,                   float,+0.50
 a_cell/can_migrate/chemotaxis/O2/threshold,         float,+1e-12
 a_cell/can_migrate/chemotaxis/O2/probability,       float, 0.9999
-a_cell/can_migrate/chemotaxis/O2/normalize_gradient, bool, false
+a_cell/can_migrate/chemotaxis/O2/normalize_gradient, bool, true
 a_cell/can_polarize, bool, true
 a_cell/can_polarize/probability,         float, 0.9999
 a_cell/can_polarize/migration/dependency, bool, true
