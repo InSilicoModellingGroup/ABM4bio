@@ -117,6 +117,12 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
           cell->SetPhase(bdm::BiologicalCell::Phase::Ap);
           return;
         }
+      // check if cell can transform
+      if (cell->CheckTransformation())
+        {
+          cell->SetPhase(bdm::BiologicalCell::Phase::G1);
+          return;
+        }
       // check if cell can polarize
       if (cell->CheckPolarization())
         {
