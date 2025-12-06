@@ -2243,15 +2243,18 @@ bool bdm::BiologicalCell::CheckDivision() {
                   //
                   real_t d = L2norm(this->GetPosition()-other->GetPosition());
                   // https://mathworld.wolfram.com/Circle-CircleIntersection.html
-                  if (d < abs(R-r))
+                  if (d > (R+r))
+                    ;
+                  else if (d <= abs(R-r))
+                    area += bdm::Math::kPi*pow2(r);
+                  else
                     area += pow2(r)*acos((pow2(d)+pow2(r)-pow2(R))/(2*d*r))
                           + pow2(R)*acos((pow2(d)-pow2(r)+pow2(R))/(2*d*R))
                           - 0.5*sqrt((-d+r+R)*(d+r-R)*(d-r+R)*(d+r+R));
                 }
           });
           //
-          if (area>=A)
-            return false;
+          if (A<=area) return false;
         }
       else
         {
@@ -2266,14 +2269,17 @@ bool bdm::BiologicalCell::CheckDivision() {
                   //
                   real_t d = L2norm(this->GetPosition()-other->GetPosition());
                   // https://mathworld.wolfram.com/Sphere-SphereIntersection.html
-                  if (d < abs(R-r))
+                  if (d > (R+r))
+                    ;
+                  else if (d <= abs(R-r))
+                    volume += bdm::Math::kPi*pow3(r)*(4.0/3.0);
+                  else
                     volume += bdm::Math::kPi*pow2(R+r-d)/(12.0*d)
                             * (d*d+2*d*r-3*r*r+2*d*R-3*R*R+6*r*R);
                 }
           });
           //
-          if (volume>=V)
-            return false;
+          if (V<=volume) return false;
         }
       // finished all the check whether there is "vacant" room
       // so that the cell can further divide
