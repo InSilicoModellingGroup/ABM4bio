@@ -1204,15 +1204,11 @@ void init_cells(bdm::Simulation& sim,
             params.set<double>(CP_name+"/can_divide/probability") = 0.0;
           if (! params.have_parameter<double>(CP_name+"/can_divide/probability_increment_with_age"))
             params.set<double>(CP_name+"/can_divide/probability_increment_with_age") = 0.0;
-          if (! params.have_parameter<double>(CP_name+"/can_divide/radius_of_influence"))
-            params.set<double>(CP_name+"/can_divide/radius_of_influence") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_divide/influence_ratio"))
+            params.set<double>(CP_name+"/can_divide/influence_ratio") = 0.0;
           // sanity check...
-          if (params.get<double>(CP_name+"/can_divide/radius_of_influence")<0.0)
-            ASSERT_(params.get<double>(CP_name+"/can_divide/radius_of_influence")==-1.0,
-                    "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"can_divide/radius_of_influence\"");
-          if (params.get<double>(CP_name+"/can_divide/radius_of_influence")>0.0)
-            ASSERT_(params.get<double>(CP_name+"/can_divide/radius_of_influence")<=params.get<double>(CP_name+"/diameter/max"),
-                    "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"can_divide/radius_of_influence\"");
+          ASSERT_(params.get<double>(CP_name+"/can_divide/influence_ratio")>=0.0,
+                  "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"can_divide/influence_ratio\"");
         }
       // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_transform"))
@@ -1241,8 +1237,8 @@ void init_cells(bdm::Simulation& sim,
           if (! params.have_parameter<std::string>("convection/dynamic/from_file"))
             params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
           // sanity check...
-          if (params.get<double>(CP_name+"/can_migrate/max_adhesion/convection")<0.0)
-            ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"max_adhesion/convection\"");
+          ASSERT_(params.get<double>(CP_name+"/can_migrate/max_adhesion/convection")>=0.0,
+                  "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"max_adhesion/convection\"");
           //
           params.set<double>(CP_name+"/can_migrate/max_adhesion/displacement") =
               params.get<double>("time_step") *
@@ -1325,6 +1321,7 @@ void init_cells(bdm::Simulation& sim,
       if (! params.have_parameter<std::string>(CP_name+"/initial_population/from_file"))
         {
           int number_of_cells = params.get<int>(CP_name+"/initial_population");
+          // sanity check...
           ASSERT_(number_of_cells>=0,
                   "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous initial population");
           // check if to consider simulation varying initial cell population
@@ -1332,8 +1329,9 @@ void init_cells(bdm::Simulation& sim,
             if ( params.have_parameter<int>(CP_name+"/initial_population/std") )
               {
                 const int noc_std = params.get<int>(CP_name+"/initial_population/std");
-                if (noc_std>number_of_cells)
-                  ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous deviation from mean initial population");
+                // sanity check...
+                ASSERT_(noc_std<=number_of_cells,
+                        "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous deviation from mean initial population");
                 number_of_cells = uniform_distro(number_of_cells-noc_std, number_of_cells+noc_std);
               }
           //

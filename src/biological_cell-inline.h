@@ -2224,12 +2224,11 @@ bool bdm::BiologicalCell::CheckDivision() {
   if ( diameter < diameter_cutoff || this->GetAge() < cell_maturity )
     return false;
   //
-  if (this->params()->get<double>(CP_name+"/can_divide/radius_of_influence"))
+  if (this->params()->get<double>(CP_name+"/can_divide/influence_ratio"))
     {
       // the "domain of influence" of a cell to check overlapping...
-      const real_t R = -1.0==this->params()->get<double>(CP_name+"/can_divide/radius_of_influence")
-                     ? 0.5 * this->GetDiameter()
-                     : this->params()->get<double>(CP_name+"/can_divide/radius_of_influence");
+      const real_t R = this->GetDiameter()
+                     * this->params()->get<double>(CP_name+"/can_divide/influence_ratio");
       //
       if (this->params()->get<bool>("simulation_domain_is_2D"))
         {
