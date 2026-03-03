@@ -39,3 +39,5 @@ examples/*/results/*
 # Various uncategorized files
 errors
 
+examples/cell-matrix_interaction/PuTTy Private Key/
+.~lock.*
