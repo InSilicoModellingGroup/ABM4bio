@@ -183,7 +183,7 @@ void bdm::BiologicalCell::RunBiochemics()
 }
 // -----------------------------------------------------------------------------
 inline
-bool bdm::BiologicalCell::CheckPositionValidity()
+bool bdm::BiologicalCell::CheckPositionValidity() /////////////////////////////////////////////////////
 {
   // access BioDynaMo's random number generator
   auto* rg = bdm::Simulation::GetActive()->GetRandom();
@@ -862,7 +862,7 @@ bool bdm::BiologicalCell::CheckQuiescenceAfterDivision()
 }
 // -----------------------------------------------------------------------------
 inline
-bool bdm::BiologicalCell::CheckMigration()
+bool bdm::BiologicalCell::CheckMigration() ///////////////////////////////////////////////
 {
   if (!this->GetCanMigrate()) return false;
   // by design only viable (non-necrotic) cells could migrate

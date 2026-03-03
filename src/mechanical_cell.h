@@ -101,13 +101,6 @@ public:
   void SetCanMigrate(bool migrates) { can_migrate_ = migrates; }
   bool GetCanMigrate() const { return can_migrate_; }
   //
-  // Attachment stiffness (per cell)
-  void SetAttachmentStiffness(const std::vector<double>& k) { attachment_k_ = k; }
-  const std::vector<double>& GetAttachmentStiffness() const { return attachment_k_; }
-  double GetAttachmentStiffness(size_t i) const { return attachment_k_[i]; }
-  size_t GetNumberOfAttachments() const { return attachment_k_.size(); }
-  void ClearAttachmentStiffness() { attachment_k_.clear(); }
-  //
   void SetCanTransform(bool transforms) { can_transform_ = transforms; }
   bool GetCanTransform() const { return can_transform_; }
   //
@@ -184,8 +177,6 @@ private:
   Parameters* params_ = 0;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
-  // stiffness value k for each attachment point of this cell
-  std::vector<double> attachment_k_;
 };
 // =============================================================================
 } // ...end of namespace

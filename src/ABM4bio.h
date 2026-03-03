@@ -256,6 +256,16 @@ void read_csv_file(const std::string& fn,
       }
     else
       std::system(cmd.c_str());
+    // cell positions directory
+    cmd = "mkdir " + params.get<std::string>("output_directory") + "/cell_positions";
+    if (params.get<bool>("clean_output_directory"))
+      {
+        ASSERT_(0==std::system(cmd.c_str()),
+                "could not create directory: "+params.get<std::string>("output_directory")+"/cell_positions");
+      }
+    else
+      std::system(cmd.c_str());
+
   }
   //
   // print-out all parameters read
@@ -352,6 +362,29 @@ void read_csv_file(const std::string& fn,
       {
         if (!params.have_parameter<double>("simulation_domain_is_periodic/antisymmetry"))
           params.set<double>("simulation_domain_is_periodic/antisymmetry") = true;
+      }
+    // Initiate parameters for cell-matrix mechanical interactions
+    if (!params.have_parameter<bool>("cell_matrix_mechanics/enabled"))
+      params.set<bool>("cell_matrix_mechanics/enabled") = false;
+    if (params.get<bool>("cell_matrix_mechanics/enabled"))
+      {
+        // Retreive parameter values or set some default values or trigger error
+        if (!params.have_parameter<double>("cell_matrix_mechanics/contractile_force"))
+          params.set<double>("cell_matrix_mechanics/contractile_force") = 10.0;
+        if (!params.have_parameter<double>("cell_matrix_mechanics/min_cell_radius"))
+          params.set<double>("cell_matrix_mechanics/min_cell_radius") = 5.0;
+        if (!params.have_parameter<double>("cell_matrix_mechanics/max_cell_radius"))
+          params.set<double>("cell_matrix_mechanics/max_cell_radius") = 40.0;
+        if (!params.have_parameter<double>("cell_matrix_mechanics/strut_radius"))
+          ABORT_("model parameter \"cell_matrix_mechanics/strut_radius\" must be provided");
+        if (!params.have_parameter<double>("cell_matrix_mechanics/delta_F"))
+          params.set<double>("cell_matrix_mechanics/delta_F") = 0.1;
+        if (!params.have_parameter<double>("cell_matrix_mechanics/perturbance_dist"))
+          params.set<int>("cell_matrix_mechanics/perturbance_dist") = 1000;
+        if (!params.have_parameter<int>("cell_matrix_mechanics/random_state"))
+          params.set<int>("cell_matrix_mechanics/random_state") = 0;
+        if (!params.have_parameter<bool>("cell_matrix_mechanics/verbose"))
+          params.set<bool>("cell_matrix_mechanics/verbose") = false;
       }
   }
   //
@@ -471,6 +504,7 @@ void read_csv_file(const std::string& fn,
                   "could not save a copy of a data file");
           //
         }
+        
       // ...end of cell phenotypes loop
     }
   // produce a pointer to parameter of the simulation io-flux surfaces object
@@ -492,7 +526,7 @@ void init_obstacles()
       //
       if ("scaffold"==pattern)
         {
-          //
+          // retrieve the file name of the scaffold
           std::string fn;
           fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold");
           //
@@ -599,7 +633,7 @@ void reinit_obstacles(const int time)
   for (unsigned int l=0; l<n_obstacles; l++)
     {
       const std::string oid = std::to_string(l+1);
-      const std::string T = std::to_string(time);
+      const std::string T = std::to_string(time); 
       // define the pattern of the simulation obstacle (use template, or load from STL file)
       const std::string pattern = params.get<std::string>("simulation_obstacle/"+oid+"/pattern");
       //
@@ -3202,6 +3236,227 @@ void one_off_init(bdm::Simulation& sim)
 }
 // =============================================================================
 inline
+int run_fem_solver(bdm::Simulation& sim,
+                   const int time)
+{
+  // --------- User-configurable inputs ---------- 
+  double contractile_force = params.get<double>("cell_matrix_mechanics/contractile_force");// maximum contractile force applied by each cell
+  double min_cell_radius = params.get<double>("cell_matrix_mechanics/min_cell_radius");// Minimum cell radius
+  double max_cell_radius = params.get<double>("cell_matrix_mechanics/max_cell_radius");// Maximum cell radius
+  double strut_radius = params.get<double>("cell_matrix_mechanics/strut_radius");// The radius of each strut - assumed homogeneous
+  double delta_F = params.get<double>("cell_matrix_mechanics/delta_F");// The perturbance force used to calculate k_ce and k_ecm
+  double perturbance_dist = params.get<double>("cell_matrix_mechanics/perturbance_dist");// The distance between cells being perturbed at the same time
+  int random_state = params.get<int>("cell_matrix_mechanics/random_state");// If not 0 use the last cell positionsd & attachments
+  bool verbose = params.get<bool>("cell_matrix_mechanics/verbose");// Print additional information during execution
+  // --------------------------------------------
+
+  // Count cells
+  int cell_count = 0;
+  auto* rm = sim.GetResourceManager();
+  rm->ForEachAgent([&](bdm::Agent* agent) {
+    if (dynamic_cast<bdm::Cell*>(agent)) {
+      ++cell_count;
+    }
+  });
+
+  // Build Python command dynamically
+  std::string cmd = "python3 -u FEM_solver_interface.py ";
+  cmd += "--step_num " + std::to_string(time-1) + " ";
+  cmd += "--cell_count " + std::to_string(cell_count) + " ";
+  cmd += "--contractile_force " + std::to_string(contractile_force) + " ";
+  cmd += "--min_cell_radius " + std::to_string(min_cell_radius) + " ";
+  cmd += "--max_cell_radius " + std::to_string(max_cell_radius) + " ";
+  cmd += "--strut_radius " + std::to_string(strut_radius) + " ";
+  cmd += "--delta_F " + std::to_string(delta_F) + " ";
+  cmd += "--perturbance_dist " + std::to_string(perturbance_dist) + " ";
+  cmd += "--random_state " + std::to_string(random_state) + " ";
+  if (verbose) {
+      cmd += "--verbose";
+  }
+
+      std::cout << "Running command: " << cmd << std::endl;
+    
+  // Open pipe to read Python stdout
+      FILE* pipe = popen(cmd.c_str(), "r");
+      if (!pipe) {
+          std::cerr << "Failed to start Python script\n";
+          return 1;
+      }
+
+  // Read output in real time
+      char buffer[256];
+      while (fgets(buffer, sizeof(buffer), pipe)) {
+          std::cout << buffer << std::flush;
+      }
+
+      int returnCode = pclose(pipe);
+      return returnCode;
+}
+// =============================================================================
+inline 
+void import_cells_from_fem(bdm::Simulation& sim, 
+                           const std::map<int,std::string>& cells, const int time)
+{
+  // read file
+  char buf[2048];
+  const int time_inc = time - 1;
+  std::snprintf(buf, sizeof(buf),
+                "./results/FEM/step_%d/cell_mechanics_step_%d.dat",
+                time_inc, time_inc);
+  const std::string fname(buf);
+
+  // open file
+  std::ifstream fin(fname);
+  ASSERT_(fin, "FEM import: could not open file " + fname);
+
+  // number of cells
+  int n_cells = -1;
+  fin >> n_cells;
+  ASSERT_(fin && n_cells >= 0, "FEM import: invalid n_cells in " + fname);
+
+  std::vector<bdm::BiologicalCell*> cell_ptrs;
+  auto* rm = sim.GetResourceManager();
+  rm->ForEachAgent([&](bdm::Agent* agent) {
+    auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
+    if (!cell) return;
+    cell_ptrs.push_back(cell);
+  });
+
+
+
+  // consistency check with ABM container
+  ASSERT_(n_cells == (int)cell_ptrs.size(),
+          "FEM import: file n_cells does not match number of Cell agents");
+
+  // Create a vector to contain the stiffness of attachments
+  std::vector<std::vector<double>> cell_attachment_k;
+  cell_attachment_k.clear();
+  cell_attachment_k.resize(n_cells);
+
+  const int debug_cells_to_print = 3;
+
+  // read each cell row as tokens
+  for (int i = 0; i < n_cells; ++i){
+
+    double x=0.0, y=0.0, z=0.0, k_ce=0.0;
+    int n_attach=0;
+
+    fin >> x >> y >> z >> k_ce >> n_attach;
+    ASSERT_(fin && n_attach >= 0,
+            "FEM import: failed parsing header for cell " + std::to_string(i)
+            + " in " + fname);
+
+    // Read attachment coordinates
+    for (int a = 0; a < n_attach; ++a) {
+      double ax, ay, az;
+      fin >> ax >> ay >> az;
+      ASSERT_(fin, "FEM import: not enough attachment xyz values for cell "
+                   + std::to_string(i) + " in " + fname);
+    }
+
+    // store stiffness values for this cell
+    // cell_attachment_k[i].resize(n_attach);
+
+    // for (int a = 0; a < n_attach; ++a) {
+    //   fin >> cell_attachment_k[i][a];
+    //   ASSERT_(fin,
+    //           "FEM import: not enough attachment stiffness for cell "
+    //           + std::to_string(i));
+    // }
+
+    // Collect pointers to bdm::Cell 
+    // std::vector<bdm::Cell*> cell_ptrs;
+    // auto* rm = sim.GetResourceManager();
+    // rm->ForEachAgent([&](bdm::Agent* agent) {
+    //   auto* cell = dynamic_cast<bdm::Cell*>(agent);
+    //   if (cell) cell_ptrs.push_back(cell);
+    // });
+
+    std::vector<double> k_values(n_attach);
+
+    for (int a = 0; a < n_attach; ++a) {
+      fin >> k_values[a];
+      ASSERT_(fin, "FEM import: not enough stiffness values");
+    }
+
+    // Update the position and attachment stiffness of each cell
+    bdm::BiologicalCell* cell = cell_ptrs[i];
+    const auto uid = cell->GetUid();
+    const auto old_pos = cell->GetPosition();
+    cell->SetPosition(bdm::Double3{x, y, z});
+    cell->SetAttachmentStiffness(k_values);
+
+    // debug print
+    if (i < 3) {
+      const auto& kk = cell->GetAttachmentStiffness();
+      std::cout << "[STORE VERIFY] UID " << cell->GetUid() << " k=[";
+      for (size_t a = 0; a < kk.size(); ++a) {
+        std::cout << kk[a] << (a + 1 < kk.size() ? ", " : "");
+      }
+      std::cout << "]\n";
+    }
+
+    // debug print
+    // if (i < debug_cells_to_print) {
+    //   std::cout << "[IMPORT] row " << i
+    //             << " -> UID " << uid
+    //             << " old=(" << old_pos[0] << "," << old_pos[1] << "," << old_pos[2] << ")"
+    //             << " new=(" << x << "," << y << "," << z << ")"
+    //             << " k=[";
+    //   for (int a = 0; a < n_attach; ++a) {
+    //     std::cout << cell_attachment_k[i][a] << (a+1<n_attach ? ", " : "");
+    //   }
+    //   std::cout << "]\n";
+    // }
+
+  }
+
+  fin.close();
+}
+// =============================================================================
+inline
+void export_cell_positions(bdm::Simulation& sim,
+                           const std::map<int,std::string>& cells, const int time)
+{
+
+
+  // Generate filename based on current time
+  std::ostringstream filename;
+  filename << params.get<std::string>("output_directory")+"/cell_positions/cells_t"
+           << std::setw(4) << std::setfill('0') << (time)
+           << ".csv";
+
+  std::ofstream fpos(filename.str());
+  if (!fpos.is_open()) {
+    std::cerr << "Could not open file " << filename.str() << "\n";
+    return;
+  }
+
+   // header
+  fpos << "time,cell_id,x,y,z\n";
+
+  // Loop over all agents in the simulation
+  auto* rm = sim.GetResourceManager();
+  rm->ForEachAgent([&](bdm::Agent* agent) {
+    // Only operate on cells
+    auto* cell = dynamic_cast<bdm::Cell*>(agent);
+    if (!cell) {
+      return;  // skip non-cell agents
+    }
+
+    const auto& pos = cell->GetPosition();
+
+    fpos << time << ","
+         << cell->GetUid() << ","
+         << pos[0] << ","
+         << pos[1] << ","
+         << pos[2] << "\n";
+  });
+
+  fpos.close();
+}
+// =============================================================================
+inline
 int simulate(const std::string& fname, const int seed)
 {
   // read all the model parameters
@@ -3238,7 +3493,7 @@ int simulate(const std::string& fname, const int seed)
   // load all vessels in the simulation
   init_vessels(sim, biochem);
   // load all cells in the simulation
-  init_cells(sim, cells, biochem);
+  init_cells(sim, cells, biochem); 
   // load the convection field data in the simulation
   init_convection(sim);
   // check for cells input/output flux to the domain
@@ -3254,14 +3509,31 @@ int simulate(const std::string& fname, const int seed)
             stat_step = params.get<int>("statistics_interval"),
             viz_step = params.get<int>("visualization_interval");
   const double time_step = params.get<double>("time_step");
+  
   for (int time=1; time<=n_time; time++)
-    {
+    { 
+      
       params.set<int>("index time") = time;
       const double TIME = time*time_step;
       params.set<double>("current time") = TIME;
       time_status_bar(std::cout, time, n_time, TIME);
+      
+      if (params.get<bool>("cell_matrix_mechanics/enabled"))
+      {
+        // Run FEM solver using ABM state
+        int fem_rc = run_fem_solver(sim, time);
+        ASSERT_(fem_rc == 0, "FEM solver failed");
+
+        // Import cell info to ABM - for now just position
+        import_cells_from_fem(sim, cells, time);
+      }
+
       // run the BioDynaMo simulator for one step
       sim.GetScheduler()->Simulate(1);
+
+      // Export cell positions
+      export_cell_positions(sim, cells, TIME);
+      
       if (1==time) one_off_init(sim);
       // save simulation statistics in a file stream
       if (0==time%stat_step) save_stats(sim, cells, fstat);
@@ -3277,7 +3549,9 @@ int simulate(const std::string& fname, const int seed)
       ioflux_cells(sim, cells, time);
       // ...and convection field (if present)
       set_convection(sim, time);
+           
     }
+    
   std::cout << "Simulation terminating..." << std::endl;
   // empty the local containers
   params.clear();

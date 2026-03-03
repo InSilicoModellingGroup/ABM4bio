@@ -1,0 +1,83 @@
+parameter_name, type, parameter_value
+### START , ### , ###
+output_directory,               string, results
+simulation_title,               string, ABM4bio
+#,#,#
+number_of_time_steps,           int,1
+time_step,                      float,1
+visualization_interval,         int,1
+#,#,#
+min_boundary,                  float,-100
+max_boundary,                  float,100
+domain_tolerance,              float,1
+safe_distance_ratio,           float,0.999
+# convection/dynamic/from_file, string, ./Velocity/*.dat
+convection/dynamic/from_file, string, ./Velocity/0.dat
+simulation_domain_is_2D,        bool, false
+simulation_domain_is_polar,     bool, false
+simulation_domain_is_bounded,   bool, false
+simulation_domain_is_periodic,  bool, false
+simulation_models_vessels,      bool, false
+simulation_obstacles,            int,1
+#,#,#
+#,#,#
+#simulation_obstacle/1/pattern,     string, STL
+#simulation_obstacle/1/pattern/STL, string, obstacles/wall-1.stl
+#,#,#
+#simulation_obstacle/2/pattern,     string, STL
+#simulation_obstacle/2/pattern/STL, string, obstacles/wall-2.stl
+#,#,#
+simulation_obstacle/1/pattern,          string, scaffold
+simulation_obstacle/1/pattern/scaffold, string, obstacles/lattice.1d
+#simulation_obstacle/1/pattern/scaffold, string, obstacles/RVE.1d
+#,#,#
+#,#,#
+cell/phenotypes,                   string, a_cell
+cell/max_displacement,             float,5
+diffusion_grid/biochemicals,       string, O2
+diffusion_grid/spatial_resolution, int,50
+#,#,#
+### O2 , ### , ###
+O2/initial_value/min,           float,0
+O2/initial_value/max,           float,1
+O2/initial_value/from_file,    string, ./O2.radial.dat
+#,#,#
+### a_dummy_cell , ### , ###
+a_cell/phenotype_ID, int,1
+a_cell/initial_population, int,1
+a_cell/initial_population/pattern, string, box/inside
+a_cell/initial_population/pattern/box/point_A/0, float,-100
+a_cell/initial_population/pattern/box/point_A/1, float,-100
+a_cell/initial_population/pattern/box/point_A/2, float,-100
+a_cell/initial_population/pattern/box/point_B/0, float,100
+a_cell/initial_population/pattern/box/point_B/1, float,100
+a_cell/initial_population/pattern/box/point_B/2, float,100
+a_cell/mechanism_order, int,10
+a_cell/can_migrate, bool, true
+a_cell/can_migrate/probability,                     float,0.9999
+a_cell/can_migrate/half_range,                      float,1
+a_cell/can_migrate/chemotaxis/O2,                   float,0.5
+a_cell/can_migrate/chemotaxis/O2/threshold,         float,1E-12
+a_cell/can_migrate/chemotaxis/O2/probability,       float,0.9999
+a_cell/can_migrate/chemotaxis/O2/normalize_gradient, bool, true
+a_cell/can_polarize, bool, true
+a_cell/can_polarize/probability,         float,0.9999
+a_cell/can_polarize/migration/dependency, bool, true
+a_cell/can_polarize/O2/threshold,        float,0
+a_cell/diameter/min,  float,5
+a_cell/diameter/max,  float,5
+a_cell/principal/0,   float,1
+a_cell/principal/1,   float,1
+a_cell/principal/2,   float,0.25
+a_cell/principal/min, float,0.2
+a_cell/principal/max, float,1.5
+#,#,#
+cell_matrix_mechanics/enabled   ,bool, true
+cell_matrix_mechanics/contractile_force,float,20
+cell_matrix_mechanics/min_cell_radius,float,5
+cell_matrix_mechanics/max_cell_radius,float,40
+cell_matrix_mechanics/strut_radius,float,1.25
+cell_matrix_mechanics/delta_F,float,0.1
+cell_matrix_mechanics/perturbance_dist,float,1000
+cell_matrix_mechanics/random_state,int,42
+cell_matrix_mechanics/verbose,bool, true
