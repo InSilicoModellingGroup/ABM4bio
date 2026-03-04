@@ -41,3 +41,4 @@ errors
 
 examples/cell-matrix_interaction/PuTTy Private Key/
 .~lock.*
+examples/cell-matrix_interaction/input.csv
