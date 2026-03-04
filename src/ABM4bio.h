@@ -363,29 +363,7 @@ void read_csv_file(const std::string& fn,
         if (!params.have_parameter<double>("simulation_domain_is_periodic/antisymmetry"))
           params.set<double>("simulation_domain_is_periodic/antisymmetry") = true;
       }
-    // Initiate parameters for cell-matrix mechanical interactions
-    if (!params.have_parameter<bool>("cell_matrix_mechanics/enabled"))
-      params.set<bool>("cell_matrix_mechanics/enabled") = false;
-    if (params.get<bool>("cell_matrix_mechanics/enabled"))
-      {
-        // Retreive parameter values or set some default values or trigger error
-        if (!params.have_parameter<double>("cell_matrix_mechanics/contractile_force"))
-          params.set<double>("cell_matrix_mechanics/contractile_force") = 10.0;
-        if (!params.have_parameter<double>("cell_matrix_mechanics/min_cell_radius"))
-          params.set<double>("cell_matrix_mechanics/min_cell_radius") = 5.0;
-        if (!params.have_parameter<double>("cell_matrix_mechanics/max_cell_radius"))
-          params.set<double>("cell_matrix_mechanics/max_cell_radius") = 40.0;
-        if (!params.have_parameter<double>("cell_matrix_mechanics/strut_radius"))
-          ABORT_("model parameter \"cell_matrix_mechanics/strut_radius\" must be provided");
-        if (!params.have_parameter<double>("cell_matrix_mechanics/delta_F"))
-          params.set<double>("cell_matrix_mechanics/delta_F") = 0.1;
-        if (!params.have_parameter<double>("cell_matrix_mechanics/perturbance_dist"))
-          params.set<int>("cell_matrix_mechanics/perturbance_dist") = 1000;
-        if (!params.have_parameter<int>("cell_matrix_mechanics/random_state"))
-          params.set<int>("cell_matrix_mechanics/random_state") = 0;
-        if (!params.have_parameter<bool>("cell_matrix_mechanics/verbose"))
-          params.set<bool>("cell_matrix_mechanics/verbose") = false;
-      }
+    
   }
   //
   if ( params.get<bool>("simulation_models_vessels") )
@@ -1133,6 +1111,8 @@ void init_cells(bdm::Simulation& sim,
   std::vector<double> radius, theta, phi;
   // cell phase for all escaping cells:
   std::vector<int> phase;
+  // flag if any cell-matrix mechanics are enabled
+  bool any_mech_enabled = false;
   // iterate for all cell phenotypes
   for ( std::map<int, std::string>::const_iterator
         ci=cells.begin(); ci!=cells.end(); ci++ )
@@ -1186,9 +1166,62 @@ void init_cells(bdm::Simulation& sim,
           params.get<double>(CP_name+"/initial_population/phase_Sy/percentage") -
           params.get<double>(CP_name+"/initial_population/phase_G2/percentage") -
           params.get<double>(CP_name+"/initial_population/phase_Di/percentage");
+
+      // Initiate parameters for cell-matrix mechanical interactions (per phenotype)
+      const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+      // default: phenotype mechanics off unless explicitly enabled
+      if (!params.have_parameter<bool>(mech_base + "/enabled")) {
+        params.set<bool>(mech_base + "/enabled") = false;
+      }
+      // Flag mechanics are being used
+      const bool mech_enabled = params.get<bool>(mech_base + "/enabled");
+      if (mech_enabled) {
+        any_mech_enabled = true;
+      }
+
+      if (params.get<bool>(mech_base + "/enabled")) {
+
+        if (!params.have_parameter<double>(mech_base + "/contractile_force"))
+          params.set<double>(mech_base + "/contractile_force") = 10.0;
+
+        if (!params.have_parameter<double>(mech_base + "/min_cell_radius"))
+          params.set<double>(mech_base + "/min_cell_radius") = 5.0;
+
+        if (!params.have_parameter<double>(mech_base + "/max_cell_radius"))
+          params.set<double>(mech_base + "/max_cell_radius") = 40.0;
+
+        if (!params.have_parameter<double>(mech_base + "/strut_radius"))
+          ABORT_("model parameter \"" + mech_base + "/strut_radius\" must be provided");
+
+        if (!params.have_parameter<double>(mech_base + "/delta_F"))
+          params.set<double>(mech_base + "/delta_F") = 0.1;
+
+        if (!params.have_parameter<double>(mech_base + "/perturbance_dist"))
+          params.set<double>(mech_base + "/perturbance_dist") = 1000.0;
+
+        if (!params.have_parameter<int>(mech_base + "/random_state"))
+          params.set<int>(mech_base + "/random_state") = 0;
+
+        if (!params.have_parameter<bool>(mech_base + "/verbose"))
+          params.set<bool>(mech_base + "/verbose") = false;
+
+      }
       //
       // ...end of cell phenotypes loop
     }
+
+  // If mechanics are enabled must provide HPC login details
+  if (any_mech_enabled) {
+    if (!params.have_parameter<std::string>("cell_matrix_mechanics/HPC/private_key_path"))
+      ABORT_("model parameter \"cell_matrix_mechanics/HPC/private_key_path\" must be provided");
+
+    if (!params.have_parameter<std::string>("cell_matrix_mechanics/HPC/user_name"))
+      ABORT_("model parameter \"cell_matrix_mechanics/HPC/user_name\" must be provided");
+
+    if (!params.have_parameter<std::string>("cell_matrix_mechanics/HPC/host_name"))
+      ABORT_("model parameter \"cell_matrix_mechanics/HPC/host_name\" must be provided");
+  }
+
   const double min_radius = 0.5*(*std::min_element(cell_Dmin.begin(),cell_Dmin.end())),
                max_radius = 0.5*(*std::max_element(cell_Dmax.begin(),cell_Dmax.end()));
   const double safe_distance = (min_radius + max_radius)
@@ -3237,61 +3270,123 @@ void one_off_init(bdm::Simulation& sim)
 // =============================================================================
 inline
 int run_fem_solver(bdm::Simulation& sim,
-                   const int time)
+                   const std::map<int, std::string>& cells,
+                   const int time,
+                   bool* ran_any)
 {
-  // --------- User-configurable inputs ---------- 
-  double contractile_force = params.get<double>("cell_matrix_mechanics/contractile_force");// maximum contractile force applied by each cell
-  double min_cell_radius = params.get<double>("cell_matrix_mechanics/min_cell_radius");// Minimum cell radius
-  double max_cell_radius = params.get<double>("cell_matrix_mechanics/max_cell_radius");// Maximum cell radius
-  double strut_radius = params.get<double>("cell_matrix_mechanics/strut_radius");// The radius of each strut - assumed homogeneous
-  double delta_F = params.get<double>("cell_matrix_mechanics/delta_F");// The perturbance force used to calculate k_ce and k_ecm
-  double perturbance_dist = params.get<double>("cell_matrix_mechanics/perturbance_dist");// The distance between cells being perturbed at the same time
-  int random_state = params.get<int>("cell_matrix_mechanics/random_state");// If not 0 use the last cell positionsd & attachments
-  bool verbose = params.get<bool>("cell_matrix_mechanics/verbose");// Print additional information during execution
-  // --------------------------------------------
 
-  // Count cells
-  int cell_count = 0;
-  auto* rm = sim.GetResourceManager();
-  rm->ForEachAgent([&](bdm::Agent* agent) {
-    if (dynamic_cast<bdm::Cell*>(agent)) {
-      ++cell_count;
+  // initialise flag
+  *ran_any = false;
+
+  // Check if ANY phenotype has mechanics enabled
+  bool any_mech_enabled = false;
+  for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
+    const int CP_ID = ci->first;
+    const std::string& CP_name = ci->second;
+    if (CP_ID < 1) { continue; }
+
+    const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+    if (params.have_parameter<bool>(mech_base + "/enabled") &&
+        params.get<bool>(mech_base + "/enabled")) {
+      any_mech_enabled = true;
+      break;
     }
-  });
-
-  // Build Python command dynamically
-  std::string cmd = "python3 -u FEM_solver_interface.py ";
-  cmd += "--step_num " + std::to_string(time-1) + " ";
-  cmd += "--cell_count " + std::to_string(cell_count) + " ";
-  cmd += "--contractile_force " + std::to_string(contractile_force) + " ";
-  cmd += "--min_cell_radius " + std::to_string(min_cell_radius) + " ";
-  cmd += "--max_cell_radius " + std::to_string(max_cell_radius) + " ";
-  cmd += "--strut_radius " + std::to_string(strut_radius) + " ";
-  cmd += "--delta_F " + std::to_string(delta_F) + " ";
-  cmd += "--perturbance_dist " + std::to_string(perturbance_dist) + " ";
-  cmd += "--random_state " + std::to_string(random_state) + " ";
-  if (verbose) {
-      cmd += "--verbose";
   }
 
-      std::cout << "Running command: " << cmd << std::endl;
-    
-  // Open pipe to read Python stdout
-      FILE* pipe = popen(cmd.c_str(), "r");
-      if (!pipe) {
-          std::cerr << "Failed to start Python script\n";
-          return 1;
-      }
+  // Read global HPC once
+  std::string private_key_path, user_name, host_name;
+  if (any_mech_enabled) {
+    private_key_path = params.get<std::string>("cell_matrix_mechanics/HPC/private_key_path");
+    user_name        = params.get<std::string>("cell_matrix_mechanics/HPC/user_name");
+    host_name        = params.get<std::string>("cell_matrix_mechanics/HPC/host_name");
+  }
 
-  // Read output in real time
-      char buffer[256];
-      while (fgets(buffer, sizeof(buffer), pipe)) {
-          std::cout << buffer << std::flush;
-      }
+  for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
+    const int CP_ID = ci->first;
+    const std::string& CP_name = ci->second;
+    if (CP_ID < 1) { continue; }  // ignore necrotic phenotype
 
-      int returnCode = pclose(pipe);
+    const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+
+    // Skip phenotypes without mechanics enabled
+    if (!params.have_parameter<bool>(mech_base + "/enabled") ||
+        !params.get<bool>(mech_base + "/enabled")) {
+      continue;
+    }
+
+    // ---- phenotype-specific mechanics params ----
+    const double contractile_force = params.get<double>(mech_base + "/contractile_force");
+    const double min_cell_radius   = params.get<double>(mech_base + "/min_cell_radius");
+    const double max_cell_radius   = params.get<double>(mech_base + "/max_cell_radius");
+    const double strut_radius      = params.get<double>(mech_base + "/strut_radius");
+    const double delta_F           = params.get<double>(mech_base + "/delta_F");
+    const double perturbance_dist  = params.get<double>(mech_base + "/perturbance_dist");
+    const int random_state         = params.get<int>(mech_base + "/random_state");
+    const bool verbose             = params.get<bool>(mech_base + "/verbose");
+
+     // ---- count cells of THIS phenotype ----
+    int cell_count = 0;
+    auto* rm = sim.GetResourceManager();
+
+    rm->ForEachAgent([&](bdm::Agent* agent) {
+      auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
+      if (!cell) { return; }
+
+      if (cell->GetPhenotype() == CP_ID) {
+        ++cell_count;
+      }
+    });
+
+    if (cell_count == 0) {
+      continue;
+    }
+    // FEM solver will run for this phenotype
+    *ran_any = true;
+
+    // ---- build python command ----
+    std::string cmd = "python3 -u FEM_solver_interface.py ";
+    //cmd += "--phenotype \"" + CP_name + "\" ";
+    cmd += "--step_num " + std::to_string(time - 1) + " ";
+    cmd += "--cell_count " + std::to_string(cell_count) + " ";
+    cmd += "--contractile_force " + std::to_string(contractile_force) + " ";
+    cmd += "--min_cell_radius " + std::to_string(min_cell_radius) + " ";
+    cmd += "--max_cell_radius " + std::to_string(max_cell_radius) + " ";
+    cmd += "--strut_radius " + std::to_string(strut_radius) + " ";
+    cmd += "--delta_F " + std::to_string(delta_F) + " ";
+    cmd += "--perturbance_dist " + std::to_string(perturbance_dist) + " ";
+    cmd += "--random_state " + std::to_string(random_state) + " ";
+    if (verbose) { cmd += "--verbose "; }
+
+    // global HPC args (same for every phenotype)
+    cmd += "--private_key_path \"" + private_key_path + "\" ";
+    cmd += "--user_name \"" + user_name + "\" ";
+    cmd += "--host_name \"" + host_name + "\" ";
+
+    std::cout << "Running command: " << cmd << std::endl;
+
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+      std::cerr << "Failed to start Python script for phenotype " << CP_name << "\n";
+      return 1;
+    }
+
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+      std::cout << buffer << std::flush;
+    }
+
+    int returnCode = pclose(pipe);
+    if (returnCode != 0) {
+      std::cerr << "Python script failed for phenotype " << CP_name
+                << " with code " << returnCode << "\n";
       return returnCode;
+    }
+  }
+
+  return 0;
+
 }
+
 // =============================================================================
 inline 
 void import_cells_from_fem(bdm::Simulation& sim, 
@@ -3321,8 +3416,6 @@ void import_cells_from_fem(bdm::Simulation& sim,
     if (!cell) return;
     cell_ptrs.push_back(cell);
   });
-
-
 
   // consistency check with ABM container
   ASSERT_(n_cells == (int)cell_ptrs.size(),
@@ -3518,13 +3611,16 @@ int simulate(const std::string& fname, const int seed)
       params.set<double>("current time") = TIME;
       time_status_bar(std::cout, time, n_time, TIME);
       
-      if (params.get<bool>("cell_matrix_mechanics/enabled"))
-      {
-        // Run FEM solver using ABM state
-        int fem_rc = run_fem_solver(sim, time);
-        ASSERT_(fem_rc == 0, "FEM solver failed");
+      
+      // Run FEM solver using ABM state
+      bool ran_any = false;
+      int fem_rc = run_fem_solver(sim, cells, time, &ran_any);
+      ASSERT_(fem_rc == 0, "FEM solver failed");
 
-        // Import cell info to ABM - for now just position
+      if (ran_any) {
+        // Only import if mechanics actually ran for at least one phenotype
+        // (see note below: run_fem_solver should return 0 if nothing ran too;
+        // if you want to detect "did run", return a different code or set a flag)
         import_cells_from_fem(sim, cells, time);
       }
 

@@ -22,6 +22,9 @@ parser.add_argument("--delta_F", type=float, default=0.1, help="Perturbance forc
 parser.add_argument("--perturbance_dist", type=float, default=1000.0, help="Distance between cells being perturbed at the same time")
 parser.add_argument("--random_state", type=int, default=0, help="Randomize the cells or repeat the last run positions and attachments")
 parser.add_argument("--verbose", action="store_true")
+parser.add_argument("--private_key_path", type=str, required=True, help="Path to private key (.pem)")
+parser.add_argument("--user_name", type=str, required=True, help="HPC username")
+parser.add_argument("--host_name", type=str, required=True, help="HPC hostname")
 
 args = parser.parse_args()
 
@@ -36,20 +39,22 @@ delta_F = args.delta_F
 perturbance_dist = args.perturbance_dist
 random_state = args.random_state
 verbose = args.verbose
-
+private_key_path = args.private_key_path
+user_name = args.user_name
+host_name = args.host_name
 
 # translate verbose into Slurm flag
 verbose_flag = "--VERBOSE True" if verbose else ""
 
 # Start by loading private key (.pem extension)
 
-key = paramiko.RSAKey.from_private_key_file("./PuTTY Private Key/id_rsa.pem")
+key = paramiko.RSAKey.from_private_key_file(private_key_path)
 
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
 # Connect using the private key
-ssh.connect(hostname='turing1.ucy.ac.cy', username='osanto02', pkey=key)
+ssh.connect(hostname=host_name, username=user_name, pkey=key)
 
 try:
     # Run a simple command to confirm login (returns username)
@@ -68,7 +73,7 @@ try:
     	# Set up a SHH file transfer protocal (SFTP)
         sftp = ssh.open_sftp()
         local_get_file = f'./results/cell_positions/cells_t{step_num:04d}.csv'
-        hpc_put_file = f'/home/osanto02/FEM_SOLVER_folder/detached_cell_positions/detach_cells_step_{step_num}.csv'
+        hpc_put_file = "/home/"+user_name+f"/FEM_SOLVER_folder/detached_cell_positions/detach_cells_step_{step_num}.csv"
 
         sftp.put(local_get_file, hpc_put_file)
         print(f"Copied local file {local_get_file} to remote path {hpc_put_file}")
@@ -175,7 +180,7 @@ try:
     os.makedirs(local_dir, exist_ok=True)
 
     # Retrieve the lattice mesh file
-    hpc_get_file = f'/home/osanto02/FEM_SOLVER_folder/results/step_{step_num}/lattice.1d'
+    hpc_get_file = "/home/"+user_name+f"/FEM_SOLVER_folder/results/step_{step_num}/lattice.1d"
     local_put_file = local_dir + '/lattice.1d'
 
     sftp.get(hpc_get_file, local_put_file)
@@ -183,7 +188,7 @@ try:
 
   
     # Retrieve the cell information file
-    hpc_get_file = f'/home/osanto02/FEM_SOLVER_folder/results/step_{step_num}/cell_mechanics_step_{step_num}.dat'
+    hpc_get_file = f"/home/"+user_name+f"/FEM_SOLVER_folder/results/step_{step_num}/cell_mechanics_step_{step_num}.dat"
     local_put_file = local_dir + f'/cell_mechanics_step_{step_num}.dat'
 
     sftp.get(hpc_get_file, local_put_file)
