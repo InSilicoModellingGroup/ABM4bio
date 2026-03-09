@@ -39,6 +39,11 @@ examples/*/results/*
 # Various uncategorized files
 errors
 
+# Ignore user sensitive details
 examples/cell-matrix_interaction/PuTTy Private Key/
-.~lock.*
 examples/cell-matrix_interaction/input.csv
+
+# LibreOffice lock files
+.~lock.*
+*#
+
