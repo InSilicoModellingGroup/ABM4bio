@@ -3285,6 +3285,28 @@ int run_fem_solver(bdm::Simulation& sim,
   int mech_enabled_phenotypes = 0;
   std::string enabled_list;
 
+  for (const auto& kv : cells) {
+    const int CP_ID = kv.first;
+    const std::string& CP_name = kv.second;
+    if (CP_ID < 1) { continue; }
+
+    const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+    if (params.have_parameter<bool>(mech_base + "/enabled") &&
+        params.get<bool>(mech_base + "/enabled")) {
+      ++mech_enabled_phenotypes;
+      if (!enabled_list.empty()) { enabled_list += ", "; }
+      enabled_list += CP_name + " (ID " + std::to_string(CP_ID) + ")";
+    }
+  }
+
+  if (mech_enabled_phenotypes > 1) {
+    ABORT_(
+      "Temporary limitation: FEM solver currently supports only ONE cell phenotype with "
+      "cell-matrix mechanics enabled. Enabled phenotypes: " + enabled_list +
+      ". Please enable mechanics for only one phenotype. Future versions will support multiple phenotypes."
+    );
+  }
+
   // Check if ANY phenotype has mechanics enabled
   bool any_mech_enabled = false;
   for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
@@ -3348,6 +3370,7 @@ int run_fem_solver(bdm::Simulation& sim,
     if (cell_count == 0) {
       continue;
     }
+
     // FEM solver will run for this phenotype
     *ran_any = true;
 
