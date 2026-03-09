@@ -21,6 +21,7 @@ parser.add_argument("--strut_radius", type=float, default=2.5, help="Radius of e
 parser.add_argument("--delta_F", type=float, default=0.1, help="Perturbance force used to calculate k_ce and k_ecm")
 parser.add_argument("--perturbance_dist", type=float, default=1000.0, help="Distance between cells being perturbed at the same time")
 parser.add_argument("--random_state", type=int, default=0, help="Randomize the cells or repeat the last run positions and attachments")
+parser.add_argument("--num_attachments", type=int, default=4, help="The maximum number of points a cell can attach to")
 parser.add_argument("--verbose", action="store_true")
 parser.add_argument("--private_key_path", type=str, required=True, help="Path to private key (.pem)")
 parser.add_argument("--user_name", type=str, required=True, help="HPC username")
@@ -38,6 +39,7 @@ strut_radius = args.strut_radius
 delta_F = args.delta_F
 perturbance_dist = args.perturbance_dist
 random_state = args.random_state
+num_attachments = args.num_attachments
 verbose = args.verbose
 private_key_path = args.private_key_path
 user_name = args.user_name
@@ -89,6 +91,7 @@ try:
         "DELTA_F": delta_F,
         "PERTURBANCE_DIST": perturbance_dist,
         "RANDOM_STATE": random_state,
+        "NUM_ATTACHMENTS": num_attachments,
         "VERBOSE": verbose_flag,  # either "--VERBOSE True" or ""
     }
 

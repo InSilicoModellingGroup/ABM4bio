@@ -1200,7 +1200,10 @@ void init_cells(bdm::Simulation& sim,
           params.set<double>(mech_base + "/perturbance_dist") = 1000.0;
 
         if (!params.have_parameter<int>(mech_base + "/random_state"))
-          params.set<int>(mech_base + "/random_state") = 0;
+          params.set<int>(mech_base + "/s") = 0;
+
+        if (!params.have_parameter<int>(mech_base + "/num_attachments"))
+          params.set<int>(mech_base + "/num_attachments") = 0;
 
         if (!params.have_parameter<bool>(mech_base + "/verbose"))
           params.set<bool>(mech_base + "/verbose") = false;
@@ -3278,6 +3281,10 @@ int run_fem_solver(bdm::Simulation& sim,
   // initialise flag
   *ran_any = false;
 
+  // Temporary limitation: FEM solver supports only one phenotype at a time
+  int mech_enabled_phenotypes = 0;
+  std::string enabled_list;
+
   // Check if ANY phenotype has mechanics enabled
   bool any_mech_enabled = false;
   for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
@@ -3322,6 +3329,7 @@ int run_fem_solver(bdm::Simulation& sim,
     const double delta_F           = params.get<double>(mech_base + "/delta_F");
     const double perturbance_dist  = params.get<double>(mech_base + "/perturbance_dist");
     const int random_state         = params.get<int>(mech_base + "/random_state");
+    const int num_attachments      = params.get<int>(mech_base + "/num_attachments");
     const bool verbose             = params.get<bool>(mech_base + "/verbose");
 
      // ---- count cells of THIS phenotype ----
@@ -3355,6 +3363,7 @@ int run_fem_solver(bdm::Simulation& sim,
     cmd += "--delta_F " + std::to_string(delta_F) + " ";
     cmd += "--perturbance_dist " + std::to_string(perturbance_dist) + " ";
     cmd += "--random_state " + std::to_string(random_state) + " ";
+    cmd += "--num_attachments " + std::to_string(num_attachments) + " ";
     if (verbose) { cmd += "--verbose "; }
 
     // global HPC args (same for every phenotype)
