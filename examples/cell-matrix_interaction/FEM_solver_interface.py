@@ -165,12 +165,9 @@ try:
     if not success:
         print("Job failed. Check the Slurm output for details.")
     else:
-    	print("Job completed successfull")
-    	out_file = f"FEM_SOLVER_folder/FEM_SOLVE-{job_id}.out"
-    	
-    	if not verbose:
-    	    print(".out file was removed.")
-    	    ssh.exec_command(f"rm -f {out_file}")
+        print("Job completed successfully")
+        out_file = f"FEM_SOLVER_folder/FEM_SOLVE-{job_id}.out"
+        ssh.exec_command(f"rm -f {out_file}")
         
    
 
