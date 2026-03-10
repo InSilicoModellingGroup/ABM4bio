@@ -949,6 +949,154 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
           //
           this->active_displacement_ = {0.0, 0.0, 0.0};
           //
+          // Mechanics driven migration
+          if (this->params()->have_parameter<bool>(CP_name + "/cell_matrix_mechanics/enabled") &&
+              this->params()->get<bool>(CP_name + "/cell_matrix_mechanics/enabled") &&
+              this->HasAttachments())
+          {
+            const auto& k_vals = this->GetAttachmentStiffness();
+            const auto& pts    = this->GetAttachmentPoints();
+
+            // const auto& k_vals = this->GetAttachmentStiffness();
+            // const auto& pts    = this->GetAttachmentPoints();
+
+            if (k_vals.size() != pts.size()) {
+
+              const auto uid = this->GetUid();
+
+              std::cout << "\n[ATTACHMENT SIZE MISMATCH]\n";
+              std::cout << "UID: " << uid.GetIndex() << "\n";
+
+              std::cout << "k_vals.size() = " << k_vals.size() << "\n";
+              std::cout << "pts.size()    = " << pts.size() << "\n";
+
+              std::cout << "k_vals = [";
+              for (size_t i = 0; i < k_vals.size(); ++i) {
+                std::cout << k_vals[i];
+                if (i + 1 < k_vals.size()) std::cout << ", ";
+              }
+              std::cout << "]\n";
+
+              std::cout << "pts = [";
+              for (size_t i = 0; i < pts.size(); ++i) {
+                std::cout << "("
+                          << pts[i][0] << ", "
+                          << pts[i][1] << ", "
+                          << pts[i][2] << ")";
+                if (i + 1 < pts.size()) std::cout << ", ";
+              }
+              std::cout << "]\n";
+
+              ASSERT_(k_vals.size() == pts.size(),
+                      "Attachment stiffness and attachment points size mismatch in CheckMigration()");
+            }
+
+            // if (k_vals.size() != pts.size()) {
+
+            //   const auto uid = this->GetUid();
+
+            //   std::cout << "\n[ATTACHMENT SIZE MISMATCH]\n";
+            //   std::cout << "UID: " << uid.GetIndex() << "\n";
+
+            //   std::cout << "k_vals.size() = " << k_vals.size() << "\n";
+            //   std::cout << "pts.size()    = " << pts.size() << "\n";
+
+            //   std::cout << "k_vals = [";
+            //   for (size_t i = 0; i < k_vals.size(); ++i) {
+            //     std::cout << k_vals[i];
+            //     if (i + 1 < k_vals.size()) std::cout << ", ";
+            //   }
+            //   std::cout << "]\n";
+
+            //   std::cout << "pts = [";
+            //   for (size_t i = 0; i < pts.size(); ++i) {
+            //     std::cout << "("
+            //               << pts[i][0] << ", "
+            //               << pts[i][1] << ", "
+            //               << pts[i][2] << ")";
+            //     if (i + 1 < pts.size()) std::cout << ", ";
+            //   }
+            //   std::cout << "]\n";
+
+            //   ASSERT_(k_vals.size() == pts.size(),
+            //           "Attachment stiffness and attachment points size mismatch in CheckMigration()");
+            // }
+
+            if (!k_vals.empty())
+            {
+              size_t best_idx = 0;
+              for (size_t a = 1; a < k_vals.size(); ++a)
+              {
+                if (k_vals[a] > k_vals[best_idx]) {
+                  best_idx = a;
+                }
+              }
+
+              const double strut_radius = this->params()->get<double>(CP_name + "/cell_matrix_mechanics/strut_radius");
+              const double min_cell_diameter = this->params()->get<double>(CP_name + "/diameter/min");
+              const double stop_distance = strut_radius + 0.5 * min_cell_diameter;
+
+              bdm::Double3 dvec = pts[best_idx] - this->GetPosition();
+              const double d_magn = L2norm(dvec);
+
+              if (d_magn > this->params()->get<double>("migration_tolerance"))
+              {
+                // unit direction towards the selected attachment point
+                bdm::Double3 dir = dvec;
+                dir /= d_magn;
+
+                // move only until cell surface touches strut surface
+                const double move_dist = d_magn - stop_distance;
+
+                if (move_dist > this->params()->get<double>("migration_tolerance"))
+                {
+
+                  // debug: print mechanics migration info for first few cells
+                  const auto uid = this->GetUid();
+                  
+                  if (uid.GetIndex() < 5) {
+                    const auto pos = this->GetPosition();
+                    const auto& target = pts[best_idx];
+
+                    std::cout << "[MECH MIGRATION] UID " << uid.GetIndex()
+                              << " best_attach=" << best_idx
+                              << " k=" << k_vals[best_idx]
+                              << " dist_to_attach=" << d_magn
+                              << " stop_dist=" << stop_distance
+                              << " move_dist=" << move_dist
+                              << "\n";
+
+                    std::cout << "  pos=(" << pos[0] << "," << pos[1] << "," << pos[2] << ")"
+                              << " target=(" << target[0] << "," << target[1] << "," << target[2] << ")\n";
+                  }
+
+                  this->active_displacement_ += dir * move_dist;
+
+                  // debug: print mechanics migration info for first few cells
+                
+                  if (uid.GetIndex() < 5) {
+                    auto disp = dir * move_dist;
+                    std::cout << "  displacement=("
+                              << disp[0] << ", "
+                              << disp[1] << ", "
+                              << disp[2] << ")\n";
+                  }
+
+                  has_migrated = true;
+                }
+              }
+
+              // bdm::Double3 dvec = pts[best_idx] - this->GetPosition();
+              // const double d_magn = L2norm(dvec);
+
+              // if (d_magn > this->params()->get<double>("migration_tolerance"))
+              // {
+              //   // move directly to the selected attachment point
+              //   this->active_displacement_ += dvec;
+              //   has_migrated = true;
+              // }
+            }
+          }
           // Brownian cell motion
           if (this->params()->get<double>(CP_name+"/can_migrate/half_range") > 0.0)
             {

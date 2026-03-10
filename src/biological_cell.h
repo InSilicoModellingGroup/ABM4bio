@@ -101,12 +101,32 @@ public:
   void SetCanMigrate(bool migrates) { can_migrate_ = migrates; }
   bool GetCanMigrate() const { return can_migrate_; }
   //
-  // Attachment stiffness (per cell)
-  void SetAttachmentStiffness(const std::vector<double>& k) { attachment_k_ = k; }
+  void SetAttachmentPoints(const std::vector<bdm::Double3>& pts) {
+    if (!attachment_k_.empty()) {
+      ASSERT_(pts.size() == attachment_k_.size(),
+              "Attachment points size does not match attachment stiffness size");
+    }
+    attachment_points_ = pts;
+  }
+  const std::vector<bdm::Double3>& GetAttachmentPoints() const { return attachment_points_; }
+  const bdm::Double3& GetAttachmentPoint(size_t i) const { return attachment_points_[i]; }
+  void ClearAttachmentPoints() { attachment_points_.clear(); }
+  //
+  void SetAttachmentStiffness(const std::vector<double>& k) {
+    if (!attachment_points_.empty()) {
+      ASSERT_(k.size() == attachment_points_.size(),
+              "Attachment stiffness size does not match attachment points size");
+    }
+    attachment_k_ = k;
+  }
   const std::vector<double>& GetAttachmentStiffness() const { return attachment_k_; }
   double GetAttachmentStiffness(size_t i) const { return attachment_k_[i]; }
   size_t GetNumberOfAttachments() const { return attachment_k_.size(); }
   void ClearAttachmentStiffness() { attachment_k_.clear(); }
+  //
+  bool HasAttachments() const {
+    return !attachment_k_.empty() && !attachment_points_.empty();
+  }
   //
   void SetCanTransform(bool transforms) { can_transform_ = transforms; }
   bool GetCanTransform() const { return can_transform_; }
@@ -186,6 +206,8 @@ private:
   std::vector<bdm::Double3> protrusions_;
   // stiffness value k for each attachment point of this cell
   std::vector<double> attachment_k_;
+  // Attachment points of a cell
+  std::vector<bdm::Double3> attachment_points_;
 };
 // =============================================================================
 } // ...end of namespace

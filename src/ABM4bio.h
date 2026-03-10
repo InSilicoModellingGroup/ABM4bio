@@ -3421,7 +3421,7 @@ int run_fem_solver(bdm::Simulation& sim,
 
 // =============================================================================
 inline 
-void import_cells_from_fem(bdm::Simulation& sim, 
+void import_fem_cells(bdm::Simulation& sim, 
                            const std::map<int,std::string>& cells, const int time)
 {
   // read file
@@ -3471,31 +3471,22 @@ void import_cells_from_fem(bdm::Simulation& sim,
             "FEM import: failed parsing header for cell " + std::to_string(i)
             + " in " + fname);
 
-    // Read attachment coordinates
+    // Read attachment coordinates and attach them to a cell
+    std::vector<bdm::Double3> attachment_points(n_attach);
     for (int a = 0; a < n_attach; ++a) {
       double ax, ay, az;
       fin >> ax >> ay >> az;
       ASSERT_(fin, "FEM import: not enough attachment xyz values for cell "
                    + std::to_string(i) + " in " + fname);
+      attachment_points[a] = bdm::Double3{ax, ay, az};
     }
 
-    // store stiffness values for this cell
-    // cell_attachment_k[i].resize(n_attach);
-
     // for (int a = 0; a < n_attach; ++a) {
-    //   fin >> cell_attachment_k[i][a];
-    //   ASSERT_(fin,
-    //           "FEM import: not enough attachment stiffness for cell "
-    //           + std::to_string(i));
+    //   double ax, ay, az;
+    //   fin >> ax >> ay >> az;
+    //   ASSERT_(fin, "FEM import: not enough attachment xyz values for cell "
+    //                + std::to_string(i) + " in " + fname);
     // }
-
-    // Collect pointers to bdm::Cell 
-    // std::vector<bdm::Cell*> cell_ptrs;
-    // auto* rm = sim.GetResourceManager();
-    // rm->ForEachAgent([&](bdm::Agent* agent) {
-    //   auto* cell = dynamic_cast<bdm::Cell*>(agent);
-    //   if (cell) cell_ptrs.push_back(cell);
-    // });
 
     std::vector<double> k_values(n_attach);
 
@@ -3509,30 +3500,10 @@ void import_cells_from_fem(bdm::Simulation& sim,
     const auto uid = cell->GetUid();
     const auto old_pos = cell->GetPosition();
     cell->SetPosition(bdm::Double3{x, y, z});
+    cell->ClearAttachmentStiffness();
+    cell->ClearAttachmentPoints();
     cell->SetAttachmentStiffness(k_values);
-
-    // debug print
-    if (i < 3) {
-      const auto& kk = cell->GetAttachmentStiffness();
-      std::cout << "[STORE VERIFY] UID " << cell->GetUid() << " k=[";
-      for (size_t a = 0; a < kk.size(); ++a) {
-        std::cout << kk[a] << (a + 1 < kk.size() ? ", " : "");
-      }
-      std::cout << "]\n";
-    }
-
-    // debug print
-    // if (i < debug_cells_to_print) {
-    //   std::cout << "[IMPORT] row " << i
-    //             << " -> UID " << uid
-    //             << " old=(" << old_pos[0] << "," << old_pos[1] << "," << old_pos[2] << ")"
-    //             << " new=(" << x << "," << y << "," << z << ")"
-    //             << " k=[";
-    //   for (int a = 0; a < n_attach; ++a) {
-    //     std::cout << cell_attachment_k[i][a] << (a+1<n_attach ? ", " : "");
-    //   }
-    //   std::cout << "]\n";
-    // }
+    cell->SetAttachmentPoints(attachment_points);
 
   }
 
@@ -3653,7 +3624,7 @@ int simulate(const std::string& fname, const int seed)
         // Only import if mechanics actually ran for at least one phenotype
         // (see note below: run_fem_solver should return 0 if nothing ran too;
         // if you want to detect "did run", return a different code or set a flag)
-        import_cells_from_fem(sim, cells, time);
+        import_fem_cells(sim, cells, time);
       }
 
       // run the BioDynaMo simulator for one step
