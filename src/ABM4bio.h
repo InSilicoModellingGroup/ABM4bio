@@ -1184,11 +1184,11 @@ void init_cells(bdm::Simulation& sim,
         if (!params.have_parameter<double>(mech_base + "/contractile_force"))
           params.set<double>(mech_base + "/contractile_force") = 10.0;
 
-        if (!params.have_parameter<double>(mech_base + "/min_cell_radius"))
-          params.set<double>(mech_base + "/min_cell_radius") = 5.0;
+        if (!params.have_parameter<double>(mech_base + "/min_cell_reach_radius"))
+          params.set<double>(mech_base + "/min_cell_reach_radius") = 5.0; 
 
-        if (!params.have_parameter<double>(mech_base + "/max_cell_radius"))
-          params.set<double>(mech_base + "/max_cell_radius") = 40.0;
+        if (!params.have_parameter<double>(mech_base + "/max_cell_reach_radius"))
+          params.set<double>(mech_base + "/max_cell_reach_radius") = 40.0;
 
         if (!params.have_parameter<double>(mech_base + "/strut_radius"))
           ABORT_("model parameter \"" + mech_base + "/strut_radius\" must be provided");
@@ -3345,14 +3345,22 @@ int run_fem_solver(bdm::Simulation& sim,
 
     // ---- phenotype-specific mechanics params ----
     const double contractile_force = params.get<double>(mech_base + "/contractile_force");
-    const double min_cell_radius   = params.get<double>(mech_base + "/min_cell_radius");
-    const double max_cell_radius   = params.get<double>(mech_base + "/max_cell_radius");
+    const double min_cell_radius   = params.get<double>(mech_base + "/min_cell_reach_radius");
+    
+    if ((2*min_cell_radius) < params.get<double>(CP_name+"/diameter/min"))
+      ABORT_("Model parameter '" + mech_base + "/min_cell_reach_radius' cannot be less than'" + CP_name +"/diameter/min");
+
+    const double max_cell_radius   = params.get<double>(mech_base + "/max_cell_reach_radius");
     const double strut_radius      = params.get<double>(mech_base + "/strut_radius");
     const double delta_F           = params.get<double>(mech_base + "/delta_F");
     const double perturbance_dist  = params.get<double>(mech_base + "/perturbance_dist");
     const int random_state         = params.get<int>(mech_base + "/random_state");
     const int num_attachments      = params.get<int>(mech_base + "/num_attachments");
     const bool verbose             = params.get<bool>(mech_base + "/verbose");
+
+
+    // This parameter needs work both in ABM4bio and the FEM solver
+    const double bounding_box_size = params.get<double>(CP_name + "/initial_population/pattern/box/point_B/0");
 
      // ---- count cells of THIS phenotype ----
     int cell_count = 0;
@@ -3382,6 +3390,7 @@ int run_fem_solver(bdm::Simulation& sim,
     cmd += "--contractile_force " + std::to_string(contractile_force) + " ";
     cmd += "--min_cell_radius " + std::to_string(min_cell_radius) + " ";
     cmd += "--max_cell_radius " + std::to_string(max_cell_radius) + " ";
+    cmd += "--bounding_box_size " + std::to_string(bounding_box_size) + " ";
     cmd += "--strut_radius " + std::to_string(strut_radius) + " ";
     cmd += "--delta_F " + std::to_string(delta_F) + " ";
     cmd += "--perturbance_dist " + std::to_string(perturbance_dist) + " ";

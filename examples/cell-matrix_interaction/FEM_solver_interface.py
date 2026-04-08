@@ -17,6 +17,7 @@ parser.add_argument("--cell_count", type=int, default=1)
 parser.add_argument("--contractile_force", type=float, default=10.0, help="Maximum contractile force applied by each cell")
 parser.add_argument("--min_cell_radius", type=float, default=5.0, help="Minimum cell radius")
 parser.add_argument("--max_cell_radius", type=float, default=40.0, help="Maximum cell radius")
+parser.add_argument("--bounding_box_size", type=float, default=100.0, help="Maximum size of the boundary for cell initiation")
 parser.add_argument("--strut_radius", type=float, default=2.5, help="Radius of each strut - assumed homogeneous")
 parser.add_argument("--delta_F", type=float, default=0.1, help="Perturbance force used to calculate k_ce and k_ecm")
 parser.add_argument("--perturbance_dist", type=float, default=1000.0, help="Distance between cells being perturbed at the same time")
@@ -35,6 +36,7 @@ cell_count = args.cell_count
 contractile_force = args.contractile_force
 min_cell_radius = args.min_cell_radius
 max_cell_radius = args.max_cell_radius
+bounding_box_size = args.bounding_box_size
 strut_radius = args.strut_radius
 delta_F = args.delta_F
 perturbance_dist = args.perturbance_dist
@@ -87,6 +89,7 @@ try:
         "CONTRACTILE_FORCE": contractile_force,
         "MIN_CELL_RADIUS": min_cell_radius,
         "MAX_CELL_RADIUS": max_cell_radius,
+        "BOUNDING_BOX_SIZE": bounding_box_size,
         "STRUT_RADIUS": strut_radius,
         "DELTA_F": delta_F,
         "PERTURBANCE_DIST": perturbance_dist,
