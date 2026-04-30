@@ -73,7 +73,7 @@ try:
         
         
     # If step_num > 0 transfer the position of the cells to the HPC
-    if step_num > 0:
+    if step_num >= 0:
     	# Set up a SHH file transfer protocal (SFTP)
         sftp = ssh.open_sftp()
         local_get_file = f'./results/cell_positions/cells_t{step_num:04d}.csv'

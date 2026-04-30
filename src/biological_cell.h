@@ -100,7 +100,7 @@ public:
   //
   void SetCanMigrate(bool migrates) { can_migrate_ = migrates; }
   bool GetCanMigrate() const { return can_migrate_; }
-  //
+  // Define information for attachment points (ids, xyz, stiffness(kecm/k) )
   void SetAttachmentPoints(const std::vector<bdm::Double3>& pts) {
     if (!attachment_k_.empty()) {
       ASSERT_(pts.size() == attachment_k_.size(),
@@ -124,8 +124,77 @@ public:
   size_t GetNumberOfAttachments() const { return attachment_k_.size(); }
   void ClearAttachmentStiffness() { attachment_k_.clear(); }
   //
+  bool HasValidMechanicsAttachments() const {
+  if (attachment_node_ids_.empty()) return false;
+  if (attachment_points_.empty()) return false;
+  if (attachment_k_.empty()) return false;
+  
+  if (attachment_node_ids_.size() != attachment_points_.size()) return false;
+  if (attachment_node_ids_.size() != attachment_k_.size()) return false;
+
+  return true;
+  }
   bool HasAttachments() const {
     return !attachment_k_.empty() && !attachment_points_.empty();
+  }
+  void SetAttachmentNodeIds(const std::vector<int>& node_ids) {
+    if (!attachment_points_.empty()) {
+      ASSERT_(
+          node_ids.size() == attachment_points_.size(),
+          "Attachment node IDs size does not match attachment points size"
+      );
+    }
+    if (!attachment_k_.empty()) {
+      ASSERT_(
+          node_ids.size() == attachment_k_.size(),
+          "Attachment node IDs size does not match attachment stiffness size"
+      );
+    }
+    attachment_node_ids_ = node_ids;
+  }
+  const std::vector<int>& GetAttachmentNodeIds() const {
+    return attachment_node_ids_;
+  }
+  int GetAttachmentNodeId(size_t i) const {
+    return attachment_node_ids_[i];
+  }
+  void ClearAttachmentNodeIds() {
+    attachment_node_ids_.clear();
+  }
+  // Matrix stiffness perceived by a cell
+  void SetKce(double k_ce) {
+    k_ce_ = k_ce;
+  }
+  double GetKce() const {
+    return k_ce_;
+  }
+  // Contractile force of the cell is adaptable
+  void SetContractileForce(double contractile_force) {
+    contractile_force_ = contractile_force;
+  }
+  double GetContractileForce() const {
+    return contractile_force_;
+  }
+  // Cells moved due to mechanics
+  void SetMovedDueToMechanics(bool moved_due_to_mechanics) {
+    moved_due_to_mechanics_ = moved_due_to_mechanics;
+  }
+  bool GetMovedDueToMechanics() const {
+    return moved_due_to_mechanics_;
+  }
+  void ClearMovedDueToMechanics() {
+    moved_due_to_mechanics_ = false;
+  }
+  // Cell state for coupled fem solver (cell-matrix mechanics)
+  void SetCellState(const std::string& state) {
+    ASSERT_(
+        state == "attach" || state == "contract",
+        "Invalid cell_state. Expected 'attach' or 'contract'."
+    );
+    cell_state_ = state;
+  }
+  const std::string& GetCellState() const {
+    return cell_state_;
   }
   //
   void SetCanTransform(bool transforms) { can_transform_ = transforms; }
@@ -204,10 +273,18 @@ private:
   Parameters* params_ = 0;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
-  // stiffness value k for each attachment point of this cell
+  // FEM mechanics state
+  std::string cell_state_ = "attach";
+  double k_ce_ = 0.0;
+  double contractile_force_ = 0.0;
+  bool moved_due_to_mechanics_ = false;
+  // FEM attachment node IDs
+  std::vector<int> attachment_node_ids_;
+  // Stiffness value kecm for each attachment point of this cell
   std::vector<double> attachment_k_;
   // Attachment points of a cell
   std::vector<bdm::Double3> attachment_points_;
+
 };
 // =============================================================================
 } // ...end of namespace

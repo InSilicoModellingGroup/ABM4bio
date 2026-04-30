@@ -1200,10 +1200,13 @@ void init_cells(bdm::Simulation& sim,
           params.set<double>(mech_base + "/perturbance_dist") = 1000.0;
 
         if (!params.have_parameter<int>(mech_base + "/random_state"))
-          params.set<int>(mech_base + "/s") = 0;
+          params.set<int>(mech_base + "/random_state") = 0;
 
         if (!params.have_parameter<int>(mech_base + "/num_attachments"))
           params.set<int>(mech_base + "/num_attachments") = 0;
+
+        if (!params.have_parameter<double>(mech_base + "/mechanics_migration_probability"))
+          params.set<double>(mech_base + "/mechanics_migration_probability") = 1.0;
 
         if (!params.have_parameter<bool>(mech_base + "/verbose"))
           params.set<bool>(mech_base + "/verbose") = false;
@@ -3429,134 +3432,369 @@ int run_fem_solver(bdm::Simulation& sim,
 }
 
 // =============================================================================
-inline 
-void import_fem_cells(bdm::Simulation& sim, 
-                           const std::map<int,std::string>& cells, const int time)
+inline
+void import_fem_cells(bdm::Simulation& sim,
+                      const std::map<int, std::string>& cells,
+                      const int time)
 {
-  // read file
+  // ---------------------------------------------------------------------------
+  // Step 1: Build FEM result filename
+  // ---------------------------------------------------------------------------
+
   char buf[2048];
+
   const int time_inc = time - 1;
+
   std::snprintf(buf, sizeof(buf),
                 "./results/FEM/step_%d/cell_mechanics_step_%d.dat",
                 time_inc, time_inc);
+
   const std::string fname(buf);
 
-  // open file
+  // ---------------------------------------------------------------------------
+  // Step 2: Open FEM result file
+  // ---------------------------------------------------------------------------
+
   std::ifstream fin(fname);
+
   ASSERT_(fin, "FEM import: could not open file " + fname);
 
-  // number of cells
-  int n_cells = -1;
-  fin >> n_cells;
-  ASSERT_(fin && n_cells >= 0, "FEM import: invalid n_cells in " + fname);
+  // ---------------------------------------------------------------------------
+  // Step 3: Read number of cells
+  // ---------------------------------------------------------------------------
 
-  std::vector<bdm::BiologicalCell*> cell_ptrs;
+  int n_cells = -1;
+
+  fin >> n_cells;
+
+  ASSERT_(fin && n_cells >= 0,
+          "FEM import: invalid n_cells in " + fname);
+
+  // ---------------------------------------------------------------------------
+  // Step 4: Build ABM cell lookup using BioDynaMo UID string
+  // ---------------------------------------------------------------------------
+
+  std::unordered_map<std::string, bdm::BiologicalCell*> cell_lookup;
+
   auto* rm = sim.GetResourceManager();
+
   rm->ForEachAgent([&](bdm::Agent* agent) {
     auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
-    if (!cell) return;
-    cell_ptrs.push_back(cell);
+
+    if (!cell) {
+      return;
+    }
+
+    std::ostringstream uid_stream;
+    uid_stream << cell->GetUid();
+
+    const std::string abm_cell_id = uid_stream.str();
+
+    ASSERT_(cell_lookup.find(abm_cell_id) == cell_lookup.end(),
+            "FEM import: duplicate ABM cell UID found: " + abm_cell_id);
+
+    cell_lookup[abm_cell_id] = cell;
   });
 
-  // consistency check with ABM container
-  ASSERT_(n_cells == (int)cell_ptrs.size(),
-          "FEM import: file n_cells does not match number of Cell agents");
+  ASSERT_(n_cells == static_cast<int>(cell_lookup.size()),
+          "FEM import: file n_cells does not match number of BiologicalCell agents");
 
-  // Create a vector to contain the stiffness of attachments
-  std::vector<std::vector<double>> cell_attachment_k;
-  cell_attachment_k.clear();
-  cell_attachment_k.resize(n_cells);
+  // ---------------------------------------------------------------------------
+  // Step 5: Read each FEM result row and update the matching ABM cell
+  // ---------------------------------------------------------------------------
+
+  std::unordered_map<std::string, bool> imported_flags;
+
+  for (const auto& item : cell_lookup) {
+    imported_flags[item.first] = false;
+  }
 
   const int debug_cells_to_print = 3;
 
-  // read each cell row as tokens
-  for (int i = 0; i < n_cells; ++i){
+  for (int i = 0; i < n_cells; ++i) {
 
-    double x=0.0, y=0.0, z=0.0, k_ce=0.0;
-    int n_attach=0;
+    std::string abm_cell_id;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double k_ce = 0.0;
+    int n_attach = 0;
 
-    fin >> x >> y >> z >> k_ce >> n_attach;
+    fin >> abm_cell_id >> x >> y >> z >> k_ce >> n_attach;
+
     ASSERT_(fin && n_attach >= 0,
-            "FEM import: failed parsing header for cell " + std::to_string(i)
+            "FEM import: failed parsing header for row " + std::to_string(i)
             + " in " + fname);
 
-    // Read attachment coordinates and attach them to a cell
-    std::vector<bdm::Double3> attachment_points(n_attach);
+    auto cell_it = cell_lookup.find(abm_cell_id);
+
+    ASSERT_(cell_it != cell_lookup.end(),
+            "FEM import: could not find ABM cell with abm_cell_id = "
+            + abm_cell_id);
+
+    ASSERT_(!imported_flags[abm_cell_id],
+            "FEM import: duplicate FEM row for abm_cell_id = " + abm_cell_id);
+
+    bdm::BiologicalCell* cell = cell_it->second;
+
+    // -------------------------------------------------------------------------
+    // Step 5a: Read attachment node IDs
+    // -------------------------------------------------------------------------
+
+    std::vector<int> attachment_node_ids(n_attach);
+
     for (int a = 0; a < n_attach; ++a) {
-      double ax, ay, az;
+      fin >> attachment_node_ids[a];
+
+      ASSERT_(fin,
+              "FEM import: not enough attachment node IDs for abm_cell_id = "
+              + abm_cell_id + " in " + fname);
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 5b: Read attachment coordinates
+    // -------------------------------------------------------------------------
+
+    std::vector<bdm::Double3> attachment_points(n_attach);
+
+    for (int a = 0; a < n_attach; ++a) {
+      double ax = 0.0;
+      double ay = 0.0;
+      double az = 0.0;
+
       fin >> ax >> ay >> az;
-      ASSERT_(fin, "FEM import: not enough attachment xyz values for cell "
-                   + std::to_string(i) + " in " + fname);
+
+      ASSERT_(fin,
+              "FEM import: not enough attachment xyz values for abm_cell_id = "
+              + abm_cell_id + " in " + fname);
+
       attachment_points[a] = bdm::Double3{ax, ay, az};
     }
 
-    // for (int a = 0; a < n_attach; ++a) {
-    //   double ax, ay, az;
-    //   fin >> ax >> ay >> az;
-    //   ASSERT_(fin, "FEM import: not enough attachment xyz values for cell "
-    //                + std::to_string(i) + " in " + fname);
-    // }
+    // -------------------------------------------------------------------------
+    // Step 5c: Read attachment stiffness values
+    // -------------------------------------------------------------------------
 
     std::vector<double> k_values(n_attach);
 
     for (int a = 0; a < n_attach; ++a) {
       fin >> k_values[a];
-      ASSERT_(fin, "FEM import: not enough stiffness values");
+
+      ASSERT_(fin,
+              "FEM import: not enough stiffness values for abm_cell_id = "
+              + abm_cell_id + " in " + fname);
     }
 
-    // Update the position and attachment stiffness of each cell
-    bdm::BiologicalCell* cell = cell_ptrs[i];
-    const auto uid = cell->GetUid();
-    const auto old_pos = cell->GetPosition();
-    cell->SetPosition(bdm::Double3{x, y, z});
-    cell->ClearAttachmentStiffness();
-    cell->ClearAttachmentPoints();
-    cell->SetAttachmentStiffness(k_values);
-    cell->SetAttachmentPoints(attachment_points);
+    // -------------------------------------------------------------------------
+    // Step 5d: Update the matched ABM cell
+    // -------------------------------------------------------------------------
 
+    cell->SetPosition(bdm::Double3{x, y, z});
+
+    cell->ClearAttachmentNodeIds();
+    cell->ClearAttachmentPoints();
+    cell->ClearAttachmentStiffness();
+
+    // Set points and stiffness before node IDs, or IDs before both, both are
+    // valid because the vectors are empty after clearing. This order keeps the
+    // geometry and stiffness assignment similar to the original implementation.
+    cell->SetAttachmentPoints(attachment_points);
+    cell->SetAttachmentStiffness(k_values);
+    cell->SetAttachmentNodeIds(attachment_node_ids);
+
+    cell->SetKce(k_ce);
+
+    // After a successful FEM import, the cell has received the latest mechanics
+    // data. It is now eligible to contract on the next FEM call if it has at
+    // least two valid attachment nodes and does not move during the ABM step.
+    if (cell->HasValidMechanicsAttachments() &&
+        cell->GetAttachmentNodeIds().size() >= 2) {
+      cell->SetCellState("contract");
+    } else {
+      cell->SetCellState("attach");
+    }
+
+    imported_flags[abm_cell_id] = true;
+
+    if (i < debug_cells_to_print) {
+      std::cout << "[FEM IMPORT] abm_cell_id=" << abm_cell_id
+                << " pos=(" << x << ", " << y << ", " << z << ")"
+                << " k_ce=" << k_ce
+                << " n_attach=" << n_attach
+                << "\n";
+    }
   }
+
+  // ---------------------------------------------------------------------------
+  // Step 6: Confirm every ABM cell was imported exactly once
+  // ---------------------------------------------------------------------------
+
+  for (const auto& item : imported_flags) {
+    ASSERT_(item.second,
+            "FEM import: no FEM row was imported for abm_cell_id = "
+            + item.first);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 7: Check for trailing unread data issues
+  // ---------------------------------------------------------------------------
 
   fin.close();
 }
 // =============================================================================
 inline
-void export_cell_positions(bdm::Simulation& sim,
-                           const std::map<int,std::string>& cells, const int time)
+std::string format_attachment_node_ids_json_like(const std::vector<int>& node_ids)
 {
+  /*
+   * Format attachment node IDs as JSON-like list text.
+   *
+   * Function goal
+   * -------------
+   * Create a stable string representation that Python can parse robustly for FEM solver.
+   *
+   * Inputs
+   * ------
+   * node_ids : std::vector<int>
+   *   Attachment node IDs stored on the BiologicalCell.
+   *
+   * Returns
+   * -------
+   * std::string
+   *   JSON-like list string, for example "[5316, 33603]".
+   */
 
+  std::ostringstream oss;
 
-  // Generate filename based on current time
+  oss << "[";
+
+  for (size_t i = 0; i < node_ids.size(); ++i) {
+    oss << node_ids[i];
+
+    if (i + 1 < node_ids.size()) {
+      oss << ", ";
+    }
+  }
+
+  oss << "]";
+
+  return oss.str();
+}
+// =============================================================================
+inline
+void export_cell_positions(bdm::Simulation& sim,
+                           const std::map<int, std::string>& cells,
+                           const int time)
+{
+  /*
+   * Export ABM cell positions and FEM state instructions.
+   *
+   * Function goal
+   * -------------
+   * Write the ABM-to-FEM csv file containing each cell position, the requested
+   * FEM handling state, reusable attachment node IDs, and the contractile force.
+   *
+   * File format
+   * -----------
+   * time,abm_cell_id,x,y,z,cell_state,attachment_node_ids,contractile_force
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Generate filename
+  // ---------------------------------------------------------------------------
+
   std::ostringstream filename;
-  filename << params.get<std::string>("output_directory")+"/cell_positions/cells_t"
-           << std::setw(4) << std::setfill('0') << (time)
+
+  filename << params.get<std::string>("output_directory")
+           << "/cell_positions/cells_t"
+           << std::setw(4) << std::setfill('0') << time-1
            << ".csv";
 
   std::ofstream fpos(filename.str());
+
   if (!fpos.is_open()) {
     std::cerr << "Could not open file " << filename.str() << "\n";
     return;
   }
 
-   // header
-  fpos << "time,cell_id,x,y,z\n";
+  // ---------------------------------------------------------------------------
+  // Step 2: Write header
+  // ---------------------------------------------------------------------------
 
-  // Loop over all agents in the simulation
+  fpos << "time,abm_cell_id,x,y,z,cell_state,attachment_node_ids,contractile_force\n";
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Loop over BiologicalCell agents and write records
+  // ---------------------------------------------------------------------------
+
   auto* rm = sim.GetResourceManager();
+
   rm->ForEachAgent([&](bdm::Agent* agent) {
-    // Only operate on cells
-    auto* cell = dynamic_cast<bdm::Cell*>(agent);
+
+    auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
+
     if (!cell) {
-      return;  // skip non-cell agents
+      return;
     }
 
     const auto& pos = cell->GetPosition();
 
+    std::ostringstream uid_stream;
+    uid_stream << cell->GetUid();
+
+    const std::string abm_cell_id = uid_stream.str();
+
+    const std::string& CP_name =
+      cell->params()->get<std::string>(
+        "phenotype_ID/" + std::to_string(cell->GetPhenotype())
+      );
+
+    const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+
+    double phenotype_contractile_force = 0.0;
+
+    if (cell->params()->have_parameter<double>(mech_base + "/contractile_force")) {
+      phenotype_contractile_force =
+        cell->params()->get<double>(mech_base + "/contractile_force");
+    }
+
+    const bool has_valid_mechanics_attachments =
+      cell->HasValidMechanicsAttachments();
+
+    const bool has_enough_contract_attachments =
+      has_valid_mechanics_attachments &&
+      cell->GetAttachmentNodeIds().size() >= 2;
+
+    std::string cell_state = "attach";
+    std::string attachment_node_ids_text = "[]";
+    double contractile_force = 0.0;
+
+    if (has_enough_contract_attachments && !cell->GetMovedDueToMechanics()) {
+      cell_state = "contract";
+      attachment_node_ids_text =
+        format_attachment_node_ids_json_like(cell->GetAttachmentNodeIds());
+      contractile_force = phenotype_contractile_force;
+    } else {
+      cell_state = "attach";
+      attachment_node_ids_text = "[]";
+      contractile_force = 0.0;
+    }
+
     fpos << time << ","
-         << cell->GetUid() << ","
+         << abm_cell_id << ","
          << pos[0] << ","
          << pos[1] << ","
-         << pos[2] << "\n";
+         << pos[2] << ","
+         << cell_state << ","
+         << "\"" << attachment_node_ids_text << "\"" << ","
+         << contractile_force << "\n";
+
+    // The movement flag has now been communicated to FEM.
+    cell->ClearMovedDueToMechanics();
   });
+
+  // ---------------------------------------------------------------------------
+  // Step 4: Close file
+  // ---------------------------------------------------------------------------
 
   fpos.close();
 }
@@ -3622,7 +3860,9 @@ int simulate(const std::string& fname, const int seed)
       const double TIME = time*time_step;
       params.set<double>("current time") = TIME;
       time_status_bar(std::cout, time, n_time, TIME);
-      
+
+      // Export cell positions
+      export_cell_positions(sim, cells, TIME);
       
       // Run FEM solver using ABM state
       bool ran_any = false;
@@ -3638,9 +3878,6 @@ int simulate(const std::string& fname, const int seed)
 
       // run the BioDynaMo simulator for one step
       sim.GetScheduler()->Simulate(1);
-
-      // Export cell positions
-      export_cell_positions(sim, cells, TIME);
       
       if (1==time) one_off_init(sim);
       // save simulation statistics in a file stream
