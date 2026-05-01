@@ -599,77 +599,225 @@ void init_obstacles()
 }
 // =============================================================================
 inline
-void reinit_obstacles(const int time)
+bool any_cell_matrix_mechanics_enabled(const std::map<int, std::string>& cells)
 {
-  const unsigned int n_obstacles = params.get<int>("simulation_obstacles");
-  // if there are no obstacles in the simulation, then exit normally
-  if (0==n_obstacles) return;
-  // if there is no need to update the obstacles in the simulation, then again
-  // exit normally
-  if (!params.get<bool>("simulation_obstacles/update")) return;
-  // iterate for all simulation obstacles
-  for (unsigned int l=0; l<n_obstacles; l++)
-    {
-      const std::string oid = std::to_string(l+1);
-      const std::string T = std::to_string(time); 
-      // define the pattern of the simulation obstacle (use template, or load from STL file)
-      const std::string pattern = params.get<std::string>("simulation_obstacle/"+oid+"/pattern");
-      //
-      if ("scaffold"==pattern)
-        {
-          if (params.have_parameter<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold/"+T))
-            {
-              //
-              std::string fn;
-              fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold/"+T);
-              //
-              ObstacleScaffold obs;
-              obs.init(pattern, fn);
-              //
-              obstacles.scaffold.push_back(obs);
-              //
-              // create a copy of the file just processed
-              const std::string cmd = "cp " + fn + "  "
-                                    + params.get<std::string>("output_directory")
-                                    + "/in/simulation_obstacle." + oid + ".scaffold." + T;
-              ASSERT_(0==std::system(cmd.c_str()),
-                      "could not save a copy of a data file");
-              //
-            }
-        }
-      else if ("box/inside"==pattern || "box/outside"==pattern)
-        {
-          ;
-        }
-      else if ("sphere/inside"==pattern || "sphere/outside"==pattern)
-        {
-          ;
-        }
-      else if ("STL"==pattern)
-        {
-          if (params.have_parameter<std::string>("simulation_obstacle/"+oid+"/pattern/STL/"+T))
-            {
-              //
-              std::string fn;
-              fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/STL/"+T);
-              //
-              ObstacleSTL obs;
-              obs.init(pattern, fn);
-              //
-              obstacles.surface.push_back(obs);
-              //
-              // create a copy of the file just processed
-              const std::string cmd = "cp " + fn + "  "
-                                    + params.get<std::string>("output_directory")
-                                    + "/in/simulation_obstacle." + oid + ".stl." + T;
-              ASSERT_(0==std::system(cmd.c_str()),
-                      "could not save a copy of the data file");
-              //
-            }
-        }
-      else
-        ABORT_("model parameter \""+pattern+"\" is initialized wrong");
+  /*
+   * Check whether cell-matrix mechanics is enabled for any phenotype.
+   *
+   * Function goal
+   * -------------
+   * Inspect all phenotype names listed in `cells` and return true if at least
+   * one phenotype has:
+   *
+   *   <phenotype_name>/cell_matrix_mechanics/enabled = true
+   *
+   * This is used to decide whether scaffold obstacles should be reloaded from
+   * the automatically generated FEM lattice path.
+   */
+
+  for (const auto& cell_type : cells) {
+    const std::string& CP_name = cell_type.second;
+
+    const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+
+    if (params.have_parameter<bool>(mech_base + "/enabled") &&
+        params.get<bool>(mech_base + "/enabled")) {
+      return true;
     }
+  }
+
+  return false;
+}
+// =============================================================================
+inline
+void reinit_obstacles(bdm::Simulation& sim,
+                      const std::map<int, std::string>& cells,
+                      const int time)
+{
+  /*
+   * Reinitialise simulation obstacles.
+   *
+   * Function goal
+   * -------------
+   * Reload obstacle data during the coupled ABM-FEM simulation.
+   *
+   * For scaffold obstacles, two behaviours are supported:
+   *
+   *   1. If cell-matrix mechanics is enabled for at least one phenotype,
+   *      automatically load the updated FEM lattice from:
+   *
+   *        <output_directory>/FEM/step_<time-1>/lattice.1d
+   *
+   *      This avoids requiring the user to manually define a scaffold file path
+   *      for every simulation time step.
+   *
+   *   2. If cell-matrix mechanics is not enabled, fall back to the original
+   *      parameter-based obstacle loading logic:
+   *
+   *        simulation_obstacle/<oid>/pattern/scaffold/<time>
+   *
+   * Other obstacle types, including STL obstacles, retain their original
+   * behaviour.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Check whether obstacle reinitialisation is required
+  // ---------------------------------------------------------------------------
+
+  const unsigned int n_obstacles = params.get<int>("simulation_obstacles");
+
+  // If there are no obstacles in the simulation, exit normally.
+  if (0 == n_obstacles) {
+    return;
+  }
+
+  // If obstacle updates are disabled, exit normally.
+  if (!params.get<bool>("simulation_obstacles/update")) {
+    return;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Check whether coupled cell-matrix mechanics is enabled
+  // ---------------------------------------------------------------------------
+
+  const bool mechanics_enabled =
+    any_cell_matrix_mechanics_enabled(cells);
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Loop over all simulation obstacles
+  // ---------------------------------------------------------------------------
+
+  for (unsigned int l = 0; l < n_obstacles; l++) {
+
+    const std::string oid = std::to_string(l + 1);
+    const std::string T = std::to_string(time);
+
+    // Define the obstacle pattern.
+    const std::string pattern =
+      params.get<std::string>("simulation_obstacle/" + oid + "/pattern");
+
+    // -------------------------------------------------------------------------
+    // Step 3a: Scaffold obstacles
+    // -------------------------------------------------------------------------
+
+    if ("scaffold" == pattern) {
+
+      std::string fn;
+
+      if (mechanics_enabled) {
+        /*
+         * Coupled mechanics mode:
+         *
+         * The FEM solver writes the deformed lattice into timestep-labelled
+         * folders. The ABM time index is one step ahead of the FEM lattice
+         * index, therefore ABM time `time` loads FEM folder `step_<time-1>`.
+         */
+
+        std::ostringstream filename;
+
+        filename << params.get<std::string>("output_directory")
+                 << "/FEM/step_"
+                 << time - 1
+                 << "/lattice.1d";
+
+        fn = filename.str();
+
+        // Abort immediately if the expected FEM lattice file is missing.
+        std::ifstream test_file(fn);
+
+        ASSERT_(test_file.good(),
+                "could not find expected FEM scaffold file: " + fn);
+
+        test_file.close();
+
+      } else {
+        /*
+         * Non-mechanics mode:
+         *
+         * Preserve the original parameter-based scaffold loading behaviour.
+         */
+
+        const std::string scaffold_param =
+          "simulation_obstacle/" + oid + "/pattern/scaffold/" + T;
+
+        if (!params.have_parameter<std::string>(scaffold_param)) {
+          continue;
+        }
+
+        fn = params.get<std::string>(scaffold_param);
+      }
+
+      // Load the scaffold obstacle.
+      ObstacleScaffold obs;
+      obs.init(pattern, fn);
+
+      // Preserve original behaviour: append rather than clear and replace.
+      obstacles.scaffold.push_back(obs);
+
+      // Save a copy of the scaffold file that was just processed.
+      const std::string cmd =
+        "cp " + fn + "  "
+        + params.get<std::string>("output_directory")
+        + "/in/simulation_obstacle." + oid + ".scaffold." + T;
+
+      ASSERT_(0 == std::system(cmd.c_str()),
+              "could not save a copy of a scaffold data file");
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3b: Box obstacles
+    // -------------------------------------------------------------------------
+
+    else if ("box/inside" == pattern || "box/outside" == pattern) {
+      ;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3c: Sphere obstacles
+    // -------------------------------------------------------------------------
+
+    else if ("sphere/inside" == pattern || "sphere/outside" == pattern) {
+      ;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3d: STL obstacles
+    // -------------------------------------------------------------------------
+
+    else if ("STL" == pattern) {
+
+      if (params.have_parameter<std::string>(
+            "simulation_obstacle/" + oid + "/pattern/STL/" + T)) {
+
+        std::string fn;
+
+        fn = params.get<std::string>(
+          "simulation_obstacle/" + oid + "/pattern/STL/" + T);
+
+        ObstacleSTL obs;
+        obs.init(pattern, fn);
+
+        obstacles.surface.push_back(obs);
+
+        // Create a copy of the STL file just processed.
+        const std::string cmd =
+          "cp " + fn + "  "
+          + params.get<std::string>("output_directory")
+          + "/in/simulation_obstacle." + oid + ".stl." + T;
+
+        ASSERT_(0 == std::system(cmd.c_str()),
+                "could not save a copy of the STL data file");
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3e: Invalid obstacle pattern
+    // -------------------------------------------------------------------------
+
+    else {
+      ABORT_("model parameter \"" + pattern + "\" is initialized wrong");
+    }
+  }
 }
 // =============================================================================
 inline
@@ -3885,7 +4033,7 @@ int simulate(const std::string& fname, const int seed)
       // output data for Paraview visualization
       if (0==time%viz_step) save_snapshot(sim, time);
       // reset the data for the obstacles in the simulation
-      reinit_obstacles(time);
+      reinit_obstacles(sim, cells, time);
       // reset some data for all cells in the simulation
       reinit_cells(sim, cells);
       // reset some data for biochemical species (if dynamic)
