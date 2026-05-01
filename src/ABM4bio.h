@@ -3604,15 +3604,10 @@ void import_fem_cells(bdm::Simulation& sim,
 
     cell->SetKce(k_ce);
 
-    // After a successful FEM import, the cell has received the latest mechanics
-    // data. It is now eligible to contract on the next FEM call if it has at
-    // least two valid attachment nodes and does not move during the ABM step.
-    if (cell->HasValidMechanicsAttachments() &&
-        cell->GetAttachmentNodeIds().size() >= 2) {
-      cell->SetCellState("contract");
-    } else {
-      cell->SetCellState("attach");
-    }
+    // Do not update cell_state here.
+    // cell_state_ represents the last ABM-to-FEM state exported by ABM.
+    // This prevents cells that were just attached by FEM from migrating before
+    // they have completed a dedicated "contract" step.
 
     imported_flags[abm_cell_id] = true;
 
@@ -3778,6 +3773,11 @@ void export_cell_positions(bdm::Simulation& sim,
       attachment_node_ids_text = "[]";
       contractile_force = 0.0;
     }
+
+    // Store the state that ABM is sending to FEM.
+    // CheckMigration() will later use this as the previous FEM-request state.
+    cell->SetCellState(cell_state);
+
 
     fpos << time << ","
          << abm_cell_id << ","
