@@ -3510,9 +3510,6 @@ int run_fem_solver(bdm::Simulation& sim,
     const bool verbose             = params.get<bool>(mech_base + "/verbose");
 
 
-    // This parameter needs work both in ABM4bio and the FEM solver
-    const double bounding_box_size = params.get<double>(CP_name + "/initial_population/pattern/box/point_B/0");
-
      // ---- count cells of THIS phenotype ----
     int cell_count = 0;
     auto* rm = sim.GetResourceManager();
@@ -3541,7 +3538,6 @@ int run_fem_solver(bdm::Simulation& sim,
     cmd += "--contractile_force " + std::to_string(contractile_force) + " ";
     cmd += "--min_cell_radius " + std::to_string(min_cell_radius) + " ";
     cmd += "--max_cell_radius " + std::to_string(max_cell_radius) + " ";
-    cmd += "--bounding_box_size " + std::to_string(bounding_box_size) + " ";
     cmd += "--strut_radius " + std::to_string(strut_radius) + " ";
     cmd += "--delta_F " + std::to_string(delta_F) + " ";
     cmd += "--perturbance_dist " + std::to_string(perturbance_dist) + " ";
