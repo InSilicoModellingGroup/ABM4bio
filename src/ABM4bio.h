@@ -1329,8 +1329,58 @@ void init_cells(bdm::Simulation& sim,
 
       if (params.get<bool>(mech_base + "/enabled")) {
 
-        if (!params.have_parameter<double>(mech_base + "/contractile_force"))
-          params.set<double>(mech_base + "/contractile_force") = 10.0;
+        // Contractile force response parameters
+        if (!params.have_parameter<double>(mech_base + "/max_contractile_force"))
+          params.set<double>(mech_base + "/max_contractile_force") = 30.0;
+
+        if (!params.have_parameter<double>(mech_base + "/min_contractile_force"))
+          params.set<double>(mech_base + "/min_contractile_force") = 0.0;
+
+        if (!params.have_parameter<double>(mech_base + "/contractility_kce_sensitivity"))
+          params.set<double>(mech_base + "/contractility_kce_sensitivity") = 0.1;
+
+        if (!params.have_parameter<double>(mech_base + "/contractility_kce_midpoint"))
+          params.set<double>(mech_base + "/contractility_kce_midpoint") = 50.0;
+
+        // Sanity check contractile force definitions
+        const double max_contractile_force =
+          params.get<double>(mech_base + "/max_contractile_force");
+
+        const double min_contractile_force =
+          params.get<double>(mech_base + "/min_contractile_force");
+
+        const double contractility_kce_sensitivity =
+          params.get<double>(mech_base + "/contractility_kce_sensitivity");
+
+        const double contractility_kce_midpoint =
+          params.get<double>(mech_base + "/contractility_kce_midpoint");
+
+        if (max_contractile_force < 0.0) {
+          ABORT_("model parameter \"" + mech_base +
+                 "/max_contractile_force\" must be >= 0");
+        }
+
+        if (min_contractile_force < 0.0) {
+          ABORT_("model parameter \"" + mech_base +
+                 "/min_contractile_force\" must be >= 0");
+        }
+
+        if (min_contractile_force > max_contractile_force) {
+          ABORT_("model parameter \"" + mech_base +
+                 "/min_contractile_force\" cannot be greater than \"" +
+                 mech_base + "/max_contractile_force\"");
+        }
+
+        if (contractility_kce_sensitivity <= 0.0) {
+          ABORT_("model parameter \"" + mech_base +
+                 "/contractility_kce_sensitivity\" must be > 0");
+        }
+
+        if (contractility_kce_midpoint <= 0.0) {
+          ABORT_("model parameter \"" + mech_base +
+                 "/contractility_kce_midpoint\" must be > 0");
+        }
+        //...end sanity check
 
         if (!params.have_parameter<double>(mech_base + "/min_cell_reach_radius"))
           params.set<double>(mech_base + "/min_cell_reach_radius") = 5.0; 
@@ -1352,6 +1402,9 @@ void init_cells(bdm::Simulation& sim,
 
         if (!params.have_parameter<int>(mech_base + "/num_attachments"))
           params.set<int>(mech_base + "/num_attachments") = 0;
+
+        if (!params.have_parameter<std::string>(mech_base + "/lattice_mesh_path"))
+          ABORT_("model parameter \"" + mech_base + "/lattice_mesh_path\" must be provided");
 
         if (!params.have_parameter<double>(mech_base + "/mechanics_migration_probability"))
           params.set<double>(mech_base + "/mechanics_migration_probability") = 1.0;
@@ -3495,9 +3548,8 @@ int run_fem_solver(bdm::Simulation& sim,
     }
 
     // ---- phenotype-specific mechanics params ----
-    const double contractile_force = params.get<double>(mech_base + "/contractile_force");
     const double min_cell_radius   = params.get<double>(mech_base + "/min_cell_reach_radius");
-    
+    // Safety check
     if ((2*min_cell_radius) < params.get<double>(CP_name+"/diameter/min"))
       ABORT_("Model parameter '" + mech_base + "/min_cell_reach_radius' cannot be less than'" + CP_name +"/diameter/min");
 
@@ -3507,6 +3559,7 @@ int run_fem_solver(bdm::Simulation& sim,
     const double perturbance_dist  = params.get<double>(mech_base + "/perturbance_dist");
     const int random_state         = params.get<int>(mech_base + "/random_state");
     const int num_attachments      = params.get<int>(mech_base + "/num_attachments");
+    const std::string lattice_mesh_path = params.get<std::string>(mech_base + "/lattice_mesh_path");
     const bool verbose             = params.get<bool>(mech_base + "/verbose");
 
 
@@ -3535,7 +3588,6 @@ int run_fem_solver(bdm::Simulation& sim,
     //cmd += "--phenotype \"" + CP_name + "\" ";
     cmd += "--step_num " + std::to_string(time - 1) + " ";
     cmd += "--cell_count " + std::to_string(cell_count) + " ";
-    cmd += "--contractile_force " + std::to_string(contractile_force) + " ";
     cmd += "--min_cell_radius " + std::to_string(min_cell_radius) + " ";
     cmd += "--max_cell_radius " + std::to_string(max_cell_radius) + " ";
     cmd += "--strut_radius " + std::to_string(strut_radius) + " ";
@@ -3543,6 +3595,7 @@ int run_fem_solver(bdm::Simulation& sim,
     cmd += "--perturbance_dist " + std::to_string(perturbance_dist) + " ";
     cmd += "--random_state " + std::to_string(random_state) + " ";
     cmd += "--num_attachments " + std::to_string(num_attachments) + " ";
+    cmd += "--lattice_mesh_path \"" + lattice_mesh_path + "\" ";
     if (verbose) { cmd += "--verbose "; }
 
     // global HPC args (same for every phenotype)
@@ -3574,7 +3627,100 @@ int run_fem_solver(bdm::Simulation& sim,
   return 0;
 
 }
+// =============================================================================
+inline
+double stable_sigmoid(const double x)
+{
+  /*
+   * Numerically stable sigmoid function.
+   *
+   * Function goal
+   * -------------
+   * Return 1 / (1 + exp(-x)) while reducing the risk of overflow for
+   * large positive or negative values of x.
+   */
 
+  if (x >= 0.0) {
+    const double z = std::exp(-x);
+    return 1.0 / (1.0 + z);
+  } else {
+    const double z = std::exp(x);
+    return z / (1.0 + z);
+  }
+}
+// =============================================================================
+inline
+double calculate_contractile_force_from_kce(
+    const double k_ce,
+    const double min_contractile_force,
+    const double max_contractile_force,
+    const double contractility_kce_sensitivity,
+    const double contractility_kce_midpoint)
+{
+  /*
+   * Calculate adaptive cell contractile force from sensed matrix stiffness.
+   *
+   * Function goal
+   * -------------
+   * Convert the cell-specific k_ce value into a contractile force using a
+   * normalised sigmoid response.
+   *
+   * Behaviour
+   * ---------
+   * k_ce <= 0 gives force = 0.
+   * k_ce > 0 gives force between min_contractile_force and
+   * max_contractile_force.
+   * Higher k_ce gives higher force.
+   */
+
+  if (k_ce <= 0.0) {
+    return 0.0;
+  }
+
+  if (max_contractile_force <= 0.0) {
+    return 0.0;
+  }
+
+  if (min_contractile_force == max_contractile_force) {
+    return max_contractile_force;
+  }
+
+  const double raw_at_zero =
+      stable_sigmoid(
+          contractility_kce_sensitivity *
+          (0.0 - contractility_kce_midpoint)
+      );
+
+  const double raw_at_kce =
+      stable_sigmoid(
+          contractility_kce_sensitivity *
+          (k_ce - contractility_kce_midpoint)
+      );
+
+  const double denominator = 1.0 - raw_at_zero;
+
+  double normalised_response = 0.0;
+
+  if (denominator > 0.0) {
+    normalised_response = (raw_at_kce - raw_at_zero) / denominator;
+  }
+
+  // Manual clamp to [0, 1] for compatibility with older C++ standards.
+  if (normalised_response < 0.0) {
+    normalised_response = 0.0;
+  }
+
+  if (normalised_response > 1.0) {
+    normalised_response = 1.0;
+  }
+
+  const double force =
+      min_contractile_force +
+      normalised_response *
+      (max_contractile_force - min_contractile_force);
+
+  return force;
+}
 // =============================================================================
 inline
 void import_fem_cells(bdm::Simulation& sim,
@@ -3618,7 +3764,9 @@ void import_fem_cells(bdm::Simulation& sim,
   // Step 4: Build ABM cell lookup using BioDynaMo UID string
   // ---------------------------------------------------------------------------
 
-  std::unordered_map<std::string, bdm::BiologicalCell*> cell_lookup;
+  // Collect BiologicalCell pointers safely first.
+  std::vector<bdm::BiologicalCell*> biological_cells;
+  std::mutex biological_cells_mutex;
 
   auto* rm = sim.GetResourceManager();
 
@@ -3629,6 +3777,14 @@ void import_fem_cells(bdm::Simulation& sim,
       return;
     }
 
+    std::lock_guard<std::mutex> lock(biological_cells_mutex);
+    biological_cells.push_back(cell);
+  });
+
+  // Build the lookup serially after the agent collection step.
+  std::unordered_map<std::string, bdm::BiologicalCell*> cell_lookup;
+
+  for (auto* cell : biological_cells) {
     std::ostringstream uid_stream;
     uid_stream << cell->GetUid();
 
@@ -3638,7 +3794,7 @@ void import_fem_cells(bdm::Simulation& sim,
             "FEM import: duplicate ABM cell UID found: " + abm_cell_id);
 
     cell_lookup[abm_cell_id] = cell;
-  });
+  }
 
   ASSERT_(n_cells == static_cast<int>(cell_lookup.size()),
           "FEM import: file n_cells does not match number of BiologicalCell agents");
@@ -3748,6 +3904,53 @@ void import_fem_cells(bdm::Simulation& sim,
 
     cell->SetKce(k_ce);
 
+    // -------------------------------------------------------------------------
+    // Step 5e: Update adaptive cell-specific contractile force
+    // -------------------------------------------------------------------------
+
+    double adaptive_contractile_force = 0.0;
+
+    const int phenotype_id = cell->GetPhenotype();
+
+    auto phenotype_it = cells.find(phenotype_id);
+
+    if (phenotype_it != cells.end() && phenotype_id >= 1) {
+
+      const std::string& CP_name = phenotype_it->second;
+      const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+
+      const bool mechanics_enabled =
+          params.have_parameter<bool>(mech_base + "/enabled") &&
+          params.get<bool>(mech_base + "/enabled");
+
+      if (mechanics_enabled) {
+
+        const double min_contractile_force =
+            params.get<double>(mech_base + "/min_contractile_force");
+
+        const double max_contractile_force =
+            params.get<double>(mech_base + "/max_contractile_force");
+
+        const double contractility_kce_sensitivity =
+            params.get<double>(mech_base + "/contractility_kce_sensitivity");
+
+        const double contractility_kce_midpoint =
+            params.get<double>(mech_base + "/contractility_kce_midpoint");
+
+        adaptive_contractile_force =
+            calculate_contractile_force_from_kce(
+                k_ce,
+                min_contractile_force,
+                max_contractile_force,
+                contractility_kce_sensitivity,
+                contractility_kce_midpoint
+            );
+      }
+    }
+
+    cell->SetContractileForce(adaptive_contractile_force);
+
+
     // Do not update cell_state here.
     // cell_state_ represents the last ABM-to-FEM state exported by ABM.
     // This prevents cells that were just attached by FEM from migrating before
@@ -3759,6 +3962,7 @@ void import_fem_cells(bdm::Simulation& sim,
       std::cout << "[FEM IMPORT] abm_cell_id=" << abm_cell_id
                 << " pos=(" << x << ", " << y << ", " << z << ")"
                 << " k_ce=" << k_ce
+                << " contractile_force=" << adaptive_contractile_force
                 << " n_attach=" << n_attach
                 << "\n";
     }
@@ -3862,8 +4066,16 @@ void export_cell_positions(bdm::Simulation& sim,
   fpos << "time,abm_cell_id,x,y,z,cell_state,attachment_node_ids,contractile_force\n";
 
   // ---------------------------------------------------------------------------
-  // Step 3: Loop over BiologicalCell agents and write records
+  // Step 3: Collect BiologicalCell agents safely
   // ---------------------------------------------------------------------------
+
+  // ForEachAgent may be parallel depending on the BioDynaMo execution backend.
+  // Therefore, only collect pointers here, and protect the shared vector with a
+  // mutex. All CSV line construction, file writing, and cell state updates are
+  // performed serially afterwards.
+
+  std::vector<bdm::BiologicalCell*> biological_cells;
+  std::mutex biological_cells_mutex;
 
   auto* rm = sim.GetResourceManager();
 
@@ -3875,26 +4087,40 @@ void export_cell_positions(bdm::Simulation& sim,
       return;
     }
 
+    std::lock_guard<std::mutex> lock(biological_cells_mutex);
+    biological_cells.push_back(cell);
+  });
+
+  // Optional but useful: make output order deterministic.
+  std::sort(
+    biological_cells.begin(),
+    biological_cells.end(),
+    [](bdm::BiologicalCell* a, bdm::BiologicalCell* b) {
+      std::ostringstream uid_a;
+      std::ostringstream uid_b;
+
+      uid_a << a->GetUid();
+      uid_b << b->GetUid();
+
+      return uid_a.str() < uid_b.str();
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Step 4: Build CSV lines serially
+  // ---------------------------------------------------------------------------
+
+  std::vector<std::string> csv_lines;
+  csv_lines.reserve(biological_cells.size());
+
+  for (auto* cell : biological_cells) {
+
     const auto& pos = cell->GetPosition();
 
     std::ostringstream uid_stream;
     uid_stream << cell->GetUid();
 
     const std::string abm_cell_id = uid_stream.str();
-
-    const std::string& CP_name =
-      cell->params()->get<std::string>(
-        "phenotype_ID/" + std::to_string(cell->GetPhenotype())
-      );
-
-    const std::string mech_base = CP_name + "/cell_matrix_mechanics";
-
-    double phenotype_contractile_force = 0.0;
-
-    if (cell->params()->have_parameter<double>(mech_base + "/contractile_force")) {
-      phenotype_contractile_force =
-        cell->params()->get<double>(mech_base + "/contractile_force");
-    }
 
     const bool has_valid_mechanics_attachments =
       cell->HasValidMechanicsAttachments();
@@ -3911,10 +4137,15 @@ void export_cell_positions(bdm::Simulation& sim,
       cell_state = "contract";
       attachment_node_ids_text =
         format_attachment_node_ids_json_like(cell->GetAttachmentNodeIds());
-      contractile_force = phenotype_contractile_force;
+
+      contractile_force = cell->GetContractileForce();
     } else {
       cell_state = "attach";
       attachment_node_ids_text = "[]";
+      contractile_force = 0.0;
+    }
+
+    if (contractile_force < 0.0) {
       contractile_force = 0.0;
     }
 
@@ -3922,8 +4153,12 @@ void export_cell_positions(bdm::Simulation& sim,
     // CheckMigration() will later use this as the previous FEM-request state.
     cell->SetCellState(cell_state);
 
+    // The movement flag has now been communicated to FEM.
+    cell->ClearMovedDueToMechanics();
 
-    fpos << time << ","
+    std::ostringstream line;
+
+    line << time << ","
          << abm_cell_id << ","
          << pos[0] << ","
          << pos[1] << ","
@@ -3932,12 +4167,19 @@ void export_cell_positions(bdm::Simulation& sim,
          << "\"" << attachment_node_ids_text << "\"" << ","
          << contractile_force << "\n";
 
-    // The movement flag has now been communicated to FEM.
-    cell->ClearMovedDueToMechanics();
-  });
+    csv_lines.push_back(line.str());
+  }
 
   // ---------------------------------------------------------------------------
-  // Step 4: Close file
+  // Step 5: Write CSV lines serially
+  // ---------------------------------------------------------------------------
+
+  for (const auto& line : csv_lines) {
+    fpos << line;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 6: Close file
   // ---------------------------------------------------------------------------
 
   fpos.close();
@@ -3997,6 +4239,7 @@ int simulate(const std::string& fname, const int seed)
             viz_step = params.get<int>("visualization_interval");
   const double time_step = params.get<double>("time_step");
   
+  
   for (int time=1; time<=n_time; time++)
     { 
       
@@ -4006,7 +4249,7 @@ int simulate(const std::string& fname, const int seed)
       time_status_bar(std::cout, time, n_time, TIME);
 
       // Export cell positions
-      export_cell_positions(sim, cells, TIME);
+      export_cell_positions(sim, cells, time);
       
       // Run FEM solver using ABM state
       bool ran_any = false;

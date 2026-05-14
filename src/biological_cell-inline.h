@@ -983,14 +983,18 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
           const bool mechanics_probability_allows_migration =
             rg->Uniform(0.0, 1.0) <= mechanics_migration_probability;
 
+          static std::mutex mechanics_debug_mutex;
+
           if (mechanics_enabled &&
               mechanics_state_allows_migration &&
               has_enough_contract_attachments &&
               mechanics_probability_allows_migration)
           {
-            const auto& k_vals = this->GetAttachmentStiffness();
-            const auto& pts = this->GetAttachmentPoints();
-            const auto& node_ids = this->GetAttachmentNodeIds();
+            
+
+            const std::vector<double> k_vals = this->GetAttachmentStiffness();
+            const std::vector<bdm::Double3> pts = this->GetAttachmentPoints();
+            const std::vector<int> node_ids = this->GetAttachmentNodeIds();
 
             if (k_vals.size() != pts.size() || k_vals.size() != node_ids.size()) {
 
@@ -1073,7 +1077,11 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
 
                   if (uid.GetIndex() < 5) {
                     const auto pos = this->GetPosition();
-                    const auto& target = pts[best_idx];
+                    const auto target = pts[best_idx];
+
+                    {
+
+                    std::lock_guard<std::mutex> lock(mechanics_debug_mutex);
 
                     std::cout << "[MECH MIGRATION] UID " << uid.GetIndex()
                               << " state=" << this->GetCellState()
@@ -1086,6 +1094,12 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
                               << " move_dist=" << move_dist
                               << "\n";
 
+                    }
+
+                    {
+
+                    std::lock_guard<std::mutex> lock(mechanics_debug_mutex);
+
                     std::cout << "  pos=("
                               << pos[0] << ","
                               << pos[1] << ","
@@ -1094,6 +1108,8 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
                               << target[0] << ","
                               << target[1] << ","
                               << target[2] << ")\n";
+
+                    }
                   }
 
                   this->active_displacement_ += dir * move_dist;
@@ -1121,6 +1137,9 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
             const auto uid = this->GetUid();
 
             if (uid.GetIndex() < 5) {
+
+              std::lock_guard<std::mutex> lock(mechanics_debug_mutex);
+
               std::cout << "[MECH MIGRATION SKIPPED] UID " << uid.GetIndex()
                         << " state=" << this->GetCellState()
                         << " valid_attachments=" << has_valid_mechanics_attachments

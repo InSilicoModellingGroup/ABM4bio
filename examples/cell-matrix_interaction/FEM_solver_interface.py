@@ -14,7 +14,6 @@ import sys
 parser = argparse.ArgumentParser()
 parser.add_argument("--step_num", type=int, default=0, help="Current increment")
 parser.add_argument("--cell_count", type=int, default=1)
-parser.add_argument("--contractile_force", type=float, default=10.0, help="Maximum contractile force applied by each cell")
 parser.add_argument("--min_cell_radius", type=float, default=5.0, help="Minimum cell radius")
 parser.add_argument("--max_cell_radius", type=float, default=40.0, help="Maximum cell radius")
 parser.add_argument("--strut_radius", type=float, default=2.5, help="Radius of each strut - assumed homogeneous")
@@ -22,6 +21,7 @@ parser.add_argument("--delta_F", type=float, default=0.1, help="Perturbance forc
 parser.add_argument("--perturbance_dist", type=float, default=1000.0, help="Distance between cells being perturbed at the same time")
 parser.add_argument("--random_state", type=int, default=0, help="Randomize the cells or repeat the last run positions and attachments")
 parser.add_argument("--num_attachments", type=int, default=4, help="The maximum number of points a cell can attach to")
+parser.add_argument("--lattice_mesh_path", type=str, default="./COMPLETE SIMULATION FILES/Lattice.k", help="Path to the lattice mesh file on the HPC")
 parser.add_argument("--verbose", action="store_true")
 parser.add_argument("--private_key_path", type=str, required=True, help="Path to private key (.pem)")
 parser.add_argument("--user_name", type=str, required=True, help="HPC username")
@@ -32,7 +32,6 @@ args = parser.parse_args()
 # assign to variables
 step_num = args.step_num
 cell_count = args.cell_count
-contractile_force = args.contractile_force
 min_cell_radius = args.min_cell_radius
 max_cell_radius = args.max_cell_radius
 strut_radius = args.strut_radius
@@ -40,13 +39,14 @@ delta_F = args.delta_F
 perturbance_dist = args.perturbance_dist
 random_state = args.random_state
 num_attachments = args.num_attachments
+lattice_mesh_path = args.lattice_mesh_path
 verbose = args.verbose
 private_key_path = args.private_key_path
 user_name = args.user_name
 host_name = args.host_name
 
 # translate verbose into Slurm flag
-verbose_flag = "--VERBOSE True" if verbose else ""
+verbose_flag = "--verbose" if verbose else ""
 
 # Start by loading private key (.pem extension)
 
@@ -84,7 +84,6 @@ try:
     env_vars = {
         "STEP_NUM": step_num,
         "CELL_COUNT": cell_count,
-        "CONTRACTILE_FORCE": contractile_force,
         "MIN_CELL_RADIUS": min_cell_radius,
         "MAX_CELL_RADIUS": max_cell_radius,
         "STRUT_RADIUS": strut_radius,
@@ -92,6 +91,7 @@ try:
         "PERTURBANCE_DIST": perturbance_dist,
         "RANDOM_STATE": random_state,
         "NUM_ATTACHMENTS": num_attachments,
+        "LATTICE_MESH_PATH": lattice_mesh_path,
         "VERBOSE": verbose_flag,  # either "--VERBOSE True" or ""
     }
 
