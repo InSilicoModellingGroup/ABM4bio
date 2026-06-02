@@ -28,13 +28,14 @@ biodynamo:
 source_biodynamo:
 	/bin/bash -c 'source $(ABM4bio)/libs/$(BIODYNAMO_FOLDER)/bin/thisbdm.sh'
 clean:
-	$(ABM4bio)/libs/$(BIODYNAMO_FOLDER)/bin/biodynamo clean && \
 	rm -rf $(ABM4bio)/build
 fresh:
 	make clean; \
-	mkdir $(ABM4bio)/build; cd $(ABM4bio)/build; \
-	cmake -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_PREFIX_PATH=$(ABM4bio)/libs/$(BIODYNAMO_FOLDER)/share/cmake .. && \
-	make -j 4
+	mkdir $(ABM4bio)/build; \
+	bash -lc 'source $(ABM4bio)/libs/$(BIODYNAMO_FOLDER)/bin/thisbdm.sh && \
+		cd $(ABM4bio)/build && \
+		cmake -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_PREFIX_PATH=$(ABM4bio)/libs/$(BIODYNAMO_FOLDER)/share/cmake .. && \
+		make -j 4'
 %:
 	echo "\n\n *****************"; \
 	echo     " *** Running test: "$@; \

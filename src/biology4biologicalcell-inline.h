@@ -49,6 +49,7 @@ void bdm::Biology4BiologicalCell_10::Run(bdm::Agent* a)
           cell->RemoveFromSimulation();
           return;
         }
+      if (cell->CheckTransformation()) return;
       // now check if cell can migrate
       if (cell->CheckMigration())
         {
@@ -60,8 +61,7 @@ void bdm::Biology4BiologicalCell_10::Run(bdm::Agent* a)
               return;
             }
         }
-      // then, check if cell can transform or if it can polarize
-      if (cell->CheckTransformation()) return;
+      // then, check if cell can polarize
       cell->CheckPolarization();
       cell->CheckProtrusion();
       // check if cell can grow
@@ -134,6 +134,7 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
           cell->SetPhase(bdm::BiologicalCell::Phase::Ap);
           return;
         }
+      if (cell->CheckTransformation()) return;
       // check if cell can polarize
       if (cell->CheckPolarization())
         {

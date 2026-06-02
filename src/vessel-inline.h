@@ -79,16 +79,57 @@ void bdm::Vessel::RunBiochemics()
         // skip following calculations for radiation!!!
         if ( Biochemical::RAD == BC_id ) continue;
         //
+        const double concentration = GetInterpolatedValue(dg, xyz, this->params());
+        //
+        // --- Michaelis-Menten kinetics model (optional, per-substance) ---
+        // When michaelis_menten_model = true, the standard net_balance pathway
+        // is REPLACED by a self-contained concentration-dependent model:
+        //   R = Vmax * C / (Km + C)
+        // The sign of Vmax determines the direction:
+        //   Vmax < 0 → consumption,  Vmax > 0 → production.
+        if (this->params()->have_parameter<bool>("vessel/"+BC_name+"/secretion/michaelis_menten_model") &&
+            this->params()->get<bool>("vessel/"+BC_name+"/secretion/michaelis_menten_model"))
+          {
+            const double Vmax = this->params()->get<double>("vessel/"+BC_name+"/secretion/michaelis_menten/Vmax");
+            const double Km   = this->params()->get<double>("vessel/"+BC_name+"/secretion/michaelis_menten/Km");
+            if (concentration > 0.0 && Km > 0.0)
+              {
+                double mm_rate = Vmax * concentration / (Km + concentration);
+                // apply stochastic variability if defined
+                if (this->params()->have_parameter<double>("vessel/"+BC_name+"/secretion/michaelis_menten/std") &&
+                    this->params()->get<double>("vessel/"+BC_name+"/secretion/michaelis_menten/std") > 0.0)
+                  {
+                    const double mm_std = this->params()->get<double>("vessel/"+BC_name+"/secretion/michaelis_menten/std");
+                    mm_rate *= rg->Uniform(1.0 - mm_std, 1.0 + mm_std);
+                  }
+                // check if vessel is sprout or tip to secrete
+                if ( this->params()->get<bool>("vessel/"+BC_name+"/secretion/sprout_not_tip_secretes") )
+                  { if (this->IsTerminal()) { continue; } }
+                else
+                  { if (! this->IsTerminal()) { continue; } }
+                // apply the rate to the grid
+                if (mm_rate > 0.0)
+                  { dg->ChangeConcentrationBy(xyz, mm_rate); }
+                else
+                  {
+                    if (concentration + mm_rate > 0.0) dg->ChangeConcentrationBy(xyz, mm_rate);
+                    else                               dg->ChangeConcentrationBy(xyz, -concentration);
+                  }
+              }
+            // done with MM — skip net_balance pathway
+            continue;
+          }
+        //
+        // --- Standard net_balance pathway ---
         if (! this->params()->have_parameter<double>("vessel/"+BC_name+"/secretion/net_balance"))
           continue;
         //
-        const double concentration = dg->GetValue(xyz);
         // parameters that modulate biochemical cue secretion (production or consumption)
         const double BC_stdev = this->params()->get<double>("vessel/"+BC_name+"/secretion/net_balance/std")<=0.0 ? 1.0 :
                                 rg->Uniform(1.0-this->params()->get<double>("vessel/"+BC_name+"/secretion/net_balance/std"),
                                             1.0+this->params()->get<double>("vessel/"+BC_name+"/secretion/net_balance/std"));
-        const double saturation = this->params()->get<double>("vessel/"+BC_name+"/secretion/saturation"),
-                     net_balance = this->params()->get<double>("vessel/"+BC_name+"/secretion/net_balance") * BC_stdev;
+        const double saturation = this->params()->get<double>("vessel/"+BC_name+"/secretion/saturation");
+        double net_balance = this->params()->get<double>("vessel/"+BC_name+"/secretion/net_balance") * BC_stdev;
         //
         // skip subsequent calculations if net balance of this biochemical cue secretion is
         // equal to absolute zero!!!
@@ -105,7 +146,7 @@ void bdm::Vessel::RunBiochemics()
           }
         //
         //
-        if (! this->params()->get<bool>("vessel/"+BC_name+"/secretion/dependent"))
+        if (! this->params()->get<bool>("vessel/"+BC_name+"/secretion/dependency"))
           {
             if (net_balance > 0.0)
               {
@@ -130,8 +171,8 @@ void bdm::Vessel::RunBiochemics()
                 }
                 // decreased concentration
               }
-            // ...exit function normally
-            return;
+            // ...continue to next substance
+            continue;
           }
         //
         // check for positive or negative feedback loop from other substances
@@ -145,7 +186,7 @@ void bdm::Vessel::RunBiochemics()
             auto* dg_other = rm->GetDiffusionGrid(*cj);
             const std::string BC_other_name = dg_other->GetContinuumName(); // biochemical name
             //
-            const double concentration_other = dg_other->GetValue(xyz),
+            const double concentration_other = GetInterpolatedValue(dg_other, xyz, this->params()),
                          threshold_other = this->params()->get<double>("vessel/"+BC_name+"/secretion/"+BC_other_name+"/threshold");
             // check if other substances regulate secretion of this substance...
             if ( ( threshold_other > 0.0 && concentration_other > +threshold_other ) ||
@@ -566,7 +607,11 @@ bool bdm::Vessel::CheckGrowth()
       auto* dg = rm->GetDiffusionGrid(*ci);
       const std::string BC_name = dg->GetContinuumName(); // biochemical name
       //
-      const double concentration = dg->GetValue(this->GetPosition()),
+      // skip this substance if no growth threshold is defined for it
+      if (! this->params()->have_parameter<double>("vessel/can_grow/"+BC_name+"/threshold"))
+        continue;
+      //
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                    threshold = this->params()->get<double>("vessel/can_grow/"+BC_name+"/threshold");
       //
       if ( ( threshold > 0.0 && concentration > +threshold ) ||
@@ -630,7 +675,7 @@ bool bdm::Vessel::CheckBranching()
         //
         if (0.0==elongation_length) continue;
         //
-        const double concentration = dg->GetValue(this->GetPosition()),
+        const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                      threshold = this->params()->get<double>("vessel/can_branch/"+BC_name+"/threshold");
         //
         if ( ( threshold > 0.0 && concentration > +threshold ) ||
@@ -779,7 +824,7 @@ bool bdm::Vessel::CheckSprouting()
       //
       if (0.0==elongation_length) continue;
       //
-      const double concentration = dg->GetValue(this->GetPosition()),
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                    threshold = this->params()->get<double>("vessel/can_sprout/"+BC_name+"/threshold");
       //
       if ( ( threshold > 0.0 && concentration > +threshold ) ||

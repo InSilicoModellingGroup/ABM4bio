@@ -1,0 +1,111 @@
+parameter_name,type,parameter_value
+### START,###,###
+output_directory,string,results_inVitro
+simulation_title,string,Oxygen_Gradient
+#,#,#
+number_of_time_steps,int,2000
+time_step,float,0.1
+visualization_interval,int,25
+#,#,#
+min_boundary,float,-120.0
+max_boundary,float,+120.0
+domain_tolerance,float,0.01
+migration_tolerance,float,0.001
+safe_distance_ratio,float,0.01
+simulation_domain_is_2D,bool,false
+simulation_domain_is_polar,bool,false
+simulation_domain_is_bounded,bool,true
+simulation_domain_is_periodic,bool,false
+simulation_models_vessels,bool,false
+simulation_obstacles,int,0
+#,#,#
+cell/phenotypes,string,necrotic_cell cancer_cell
+cell/max_displacement,float,0.2
+diffusion_grid/spatial_resolution,int,80   
+diffusion_grid/trilinear_interpolation,bool,true
+diffusion_grid/biochemicals,string,O2
+#,#,#
+### O2 (Oxygen),###,###
+O2/initial_value/min,float,0.0
+O2/initial_value/max,float,0.0
+O2/initial_value/linear_gradient/enabled,bool,true
+O2/initial_value/linear_gradient/axis,string,x
+O2/initial_value/linear_gradient/min_value1,float,1.0
+O2/initial_value/linear_gradient/max_value1,float,2.5
+O2/initial_value/linear_gradient/axis2,string,y
+O2/initial_value/linear_gradient/min_value2,float,1.0
+O2/initial_value/linear_gradient/max_value2,float,2.5
+O2/initial_value/linear_gradient/axis3,string,z
+O2/initial_value/linear_gradient/min_value3,float,1.0
+O2/initial_value/linear_gradient/max_value3,float,2.5
+#,#,#
+### necrotic_cell (Post-apoptotic debris),###,###
+necrotic_cell/phenotype_ID,int,0
+necrotic_cell/initial_population,int,0
+necrotic_cell/mechanism_order,int,10
+necrotic_cell/diameter/min,float,2.0
+necrotic_cell/diameter/max,float,6.0
+necrotic_cell/can_apoptose,bool,true
+necrotic_cell/can_apoptose/probability,float,1e-5
+necrotic_cell/can_apoptose/time_window,int,150
+necrotic_cell/density,float,0.1
+necrotic_cell/adherence,float,2.0
+#,#,#
+### cancer_cell (Oxygen-seeking cells),###,###
+### Basic Properties,###,###
+cancer_cell/phenotype_ID,int,1
+cancer_cell/initial_population,int,150
+cancer_cell/initial_population/pattern,string,sphere/inside
+cancer_cell/initial_population/pattern/sphere/center/0,float,0.0
+cancer_cell/initial_population/pattern/sphere/center/1,float,0.0
+cancer_cell/initial_population/pattern/sphere/center/2,float,0.0
+cancer_cell/initial_population/pattern/sphere/radius,float,8.0
+cancer_cell/mechanism_order,int,11
+cancer_cell/diameter/min,float,1.0
+cancer_cell/diameter/max,float,4.0
+cancer_cell/principal/0,float,1.00
+cancer_cell/principal/1,float,1.00
+cancer_cell/principal/2,float,1.00
+cancer_cell/principal/min,float,1.0
+cancer_cell/principal/max,float,1.0
+cancer_cell/density,float,1.0
+cancer_cell/adherence,float,0.0
+#,#,#
+### Growth Parameters,###,###
+cancer_cell/can_grow,bool,true
+cancer_cell/can_grow/probability,float,0.5
+cancer_cell/can_grow/diameter_rate,float,0.04
+cancer_cell/can_grow/O2/threshold,float,1.5
+cancer_cell/can_grow/O2/diameter_rate,float,0.03
+#,#,#
+### Division Parameters,###,###
+cancer_cell/can_divide,bool,true
+cancer_cell/can_divide/probability,float,0.5
+cancer_cell/can_divide/probability_increment_with_age,float,0.0
+cancer_cell/can_divide/diameter_cutoff,float,3.8
+cancer_cell/can_divide/max,int,3
+cancer_cell/can_divide/time_window,int,75
+cancer_cell/can_divide/O2/threshold,float,0.95
+#,#,#
+### Transformation Parameters,###,###
+cancer_cell/can_transform,bool,true
+cancer_cell/can_transform/probability,float,1
+cancer_cell/can_transform/threshold,float,-2.5
+cancer_cell/can_transform/time_window_open,int,1
+cancer_cell/can_transform/time_window_close,int,11111111
+cancer_cell/can_transform/new_phenotype,int,0
+#,#,#
+### Migration Parameters,###,###
+cancer_cell/can_migrate,bool,true
+cancer_cell/can_migrate/half_range,float,1e-2
+cancer_cell/can_migrate/probability,float,1e-2
+cancer_cell/can_migrate/chemotaxis,float,3.0
+cancer_cell/can_migrate/chemotaxis/threshold,float,-3.5
+cancer_cell/can_migrate/chemotaxis/normalize_gradient,bool,false
+#,#,#
+### Michaelis-Menten kinetics (O2 consumption),###,###
+cancer_cell/O2/secretion/michaelis_menten_model,bool,true
+cancer_cell/O2/secretion/michaelis_menten/Vmax,float,-0.01
+cancer_cell/O2/secretion/michaelis_menten/Km,float,8.0
+#,#,#
+### END,###,###

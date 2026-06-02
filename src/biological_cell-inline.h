@@ -13,6 +13,8 @@
 #ifndef _BIOLOGICAL_CELL_INLINE_H_
 #define _BIOLOGICAL_CELL_INLINE_H_
 // =============================================================================
+#include "core/environment/uniform_grid_environment.h"
+// =============================================================================
 inline
 void bdm::BiologicalCell::RunBiochemics()
 {
@@ -84,15 +86,55 @@ void bdm::BiologicalCell::RunBiochemics()
       // skip following calculations for radiation!!!
       if ( Biochemical::RAD == BC_id ) continue;
       //
+      const double concentration = GetInterpolatedValue(dg, xyz, this->params());
+      //
+      // --- Michaelis-Menten kinetics model (optional, per-substance) ---
+      // When michaelis_menten_model = true, the standard net_balance pathway
+      // is REPLACED by a concentration-dependent rate:
+      //   R = Vmax * C / (Km + C)
+      // The sign of Vmax determines the direction:
+      //   Vmax < 0 → consumption,  Vmax > 0 → production.
+      // This is a self-contained model: no net_balance, saturation, or
+      // dependency parameters are needed.
+      if (this->params()->have_parameter<bool>(CP_name+"/"+BC_name+"/secretion/michaelis_menten_model") &&
+          this->params()->get<bool>(CP_name+"/"+BC_name+"/secretion/michaelis_menten_model"))
+        {
+          const double Vmax = this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/Vmax");
+          const double Km   = this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/Km");
+          if (concentration > 0.0 && Km > 0.0)
+            {
+              double mm_rate = Vmax * concentration / (Km + concentration);
+              // apply stochastic variability if defined
+              if (this->params()->have_parameter<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/std") &&
+                  this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/std") > 0.0)
+                {
+                  const double mm_std = this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/std");
+                  mm_rate *= rg->Uniform(1.0 - mm_std, 1.0 + mm_std);
+                }
+              // apply the rate to the grid
+              if (mm_rate > 0.0)
+                { // production
+                  dg->ChangeConcentrationBy(xyz, mm_rate);
+                }
+              else
+                { // consumption
+                  if (concentration + mm_rate > 0.0) dg->ChangeConcentrationBy(xyz, mm_rate);
+                  else                               dg->ChangeConcentrationBy(xyz, -concentration);
+                }
+            }
+          // done with MM for this substance — skip the net_balance pathway
+          continue;
+        }
+      //
+      // --- Standard net_balance pathway ---
       if (! this->params()->have_parameter<double>(CP_name+"/"+BC_name+"/secretion/net_balance"))
         continue;
       //
-      const double concentration = dg->GetValue(xyz);
       // parameters that modulate biochemical cue secretion (production or consumption)
       const double BC_stdev = this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/net_balance/std")<=0.0 ? 1.0 :
                               rg->Uniform(1.0-this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/net_balance/std"),
                                           1.0+this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/net_balance/std"));
-      const double net_balance = this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/net_balance") * BC_stdev;
+      double net_balance = this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/net_balance") * BC_stdev;
       //
       // skip subsequent calculations if net balance of this biochemical cue secretion is
       // equal to absolute zero!!!
@@ -126,8 +168,8 @@ void bdm::BiologicalCell::RunBiochemics()
                 }
               // decreased concentration
             }
-          // ...exit function normally
-          return;
+          // ...continue to next substance
+          continue;
         }
       //
       // check for positive or negative feedback loop from other substances
@@ -141,7 +183,7 @@ void bdm::BiologicalCell::RunBiochemics()
           auto* dg_other = rm->GetDiffusionGrid(*cj);
           const std::string BC_other_name = dg_other->GetContinuumName(); // biochemical name
           //
-          const double concentration_other = dg_other->GetValue(xyz),
+          const double concentration_other = GetInterpolatedValue(dg_other, xyz, this->params()),
                        threshold_other = this->params()->get<double>(CP_name+"/"+BC_name+"/secretion/"+BC_other_name+"/threshold");
           // check if other substances regulate secretion of this substance...
           if ( ( threshold_other > 0.0 && concentration_other > +threshold_other ) ||
@@ -214,23 +256,46 @@ void bdm::BiologicalCell::RunIntracellular()
                           ? this->params()->get<double>(CP_name+"/intracellular/damage/k_repair") : 0.0;
   // uptake from extracellular fields (reduce grid accordingly)
   double uptake_h2o2 = 0.0, uptake_no2 = 0.0;
-  if (auto* dg = rm->GetDiffusionGrid("H2O2")) {
-    const double c = dg->GetValue(xyz);
-    uptake_h2o2 = k_uptake_H2O2 * c;
-    if (uptake_h2o2>0.0) dg->ChangeConcentrationBy(xyz, -dt*uptake_h2o2);
+  // only query grids if the substances are present in the input file
+  const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+  if (std::find(substances.begin(), substances.end(), "H2O2") != substances.end()) {
+    if (auto* dg = rm->GetDiffusionGrid("H2O2")) {
+      const double c = GetInterpolatedValue(dg, xyz, this->params());
+      const double desired = dt * std::max(0.0, k_uptake_H2O2 * c);
+      const double removed = std::min(std::max(0.0, c), desired);
+      if (removed > 0.0) dg->ChangeConcentrationBy(xyz, -removed);
+      uptake_h2o2 = removed / dt;
+    }
   }
-  if (auto* dg = rm->GetDiffusionGrid("NO2_")) {
-    const double c = dg->GetValue(xyz);
-    uptake_no2 = k_uptake_NO2 * c;
-    if (uptake_no2>0.0) dg->ChangeConcentrationBy(xyz, -dt*uptake_no2);
+  if (std::find(substances.begin(), substances.end(), "NO2_") != substances.end()) {
+    if (auto* dg = rm->GetDiffusionGrid("NO2_")) {
+      const double c = GetInterpolatedValue(dg, xyz, this->params());
+      const double desired = dt * std::max(0.0, k_uptake_NO2 * c);
+      const double removed = std::min(std::max(0.0, c), desired);
+      if (removed > 0.0) dg->ChangeConcentrationBy(xyz, -removed);
+      uptake_no2 = removed / dt;
+    }
   }
-  // intracellular ROS balance
+  // intracellular ROS balance (semi-implicit: explicit production, exponential decay)
   const double prod = alpha_h2o2*uptake_h2o2 + alpha_no2*uptake_no2;
-  const double loss = k_scavenge * antioxidant_capacity_ * ros_internal_;
-  ros_internal_ += dt * (prod - loss);
+  const double decay_rate = k_scavenge * antioxidant_capacity_; // per hour
+  if (decay_rate > 1.0e-12)
+    {
+      // Exponential integrator: exact solution for linear decay with constant source
+      // [ROS](t+dt) = prod/decay + ([ROS](t) - prod/decay) * exp(-decay*dt)
+      const double steady_state = prod / decay_rate;
+      ros_internal_ = steady_state + (ros_internal_ - steady_state) * std::exp(-decay_rate * dt);
+    }
+  else
+    {
+      // No scavenging: pure accumulation
+      ros_internal_ += dt * prod;
+    }
   if (ros_internal_ < 0.0) ros_internal_ = 0.0;
-  // DNA damage accumulation with repair
-  dna_damage_ += dt * (k_induce*ros_internal_ - k_repair*dna_damage_);
+  // DNA damage accumulation with repair (implicit Euler for stability)
+  // D_new = D_old + dt*(k_ind*ROS - k_rep*D_new)
+  // Rearranged: D_new = (D_old + dt*k_ind*ROS) / (1 + dt*k_rep)
+  dna_damage_ = (dna_damage_ + dt * k_induce * ros_internal_) / (1.0 + dt * k_repair);
   if (dna_damage_ < 0.0) dna_damage_ = 0.0;
 }
 // -----------------------------------------------------------------------------
@@ -835,7 +900,10 @@ bool bdm::BiologicalCell::CheckApoptosis()
       auto* dg = rm->GetDiffusionGrid(*ci);
       const std::string& BC_name = dg->GetContinuumName(); // biochemical name
       //
-      const double concentration = dg->GetValue(this->GetPosition()),
+      if (! this->params()->have_parameter<double>(CP_name+"/can_apoptose/"+BC_name+"/threshold"))
+        continue;
+      //
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                    threshold = this->params()->get<double>(CP_name+"/can_apoptose/"+BC_name+"/threshold");
       //
       if ( ( threshold > 0.0 && concentration > +threshold ) ||
@@ -843,7 +911,8 @@ bool bdm::BiologicalCell::CheckApoptosis()
         {
           // allow cell apoptosis controlled by a combination of two biochemical cues, therefore
           // cell survival is dependent from another substance as well
-          if (this->params()->get<bool>(CP_name+"/can_apoptose/"+BC_name+"/dependency"))
+          if (this->params()->have_parameter<bool>(CP_name+"/can_apoptose/"+BC_name+"/dependency") &&
+              this->params()->get<bool>(CP_name+"/can_apoptose/"+BC_name+"/dependency"))
             {
               // iterate for all OTHER substances
               for ( std::vector<std::string>::const_iterator
@@ -854,7 +923,10 @@ bool bdm::BiologicalCell::CheckApoptosis()
                   auto* dg_other = rm->GetDiffusionGrid(*cj);
                   const std::string& BC_other_name = dg_other->GetContinuumName(); // biochemical name
                   //
-                  const double concentration_other = dg_other->GetValue(this->GetPosition()),
+                  if (! this->params()->have_parameter<double>(CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/threshold"))
+                    continue;
+                  //
+                  const double concentration_other = GetInterpolatedValue(dg_other, this->GetPosition(), this->params()),
                                threshold_other = this->params()->get<double>(CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/threshold");
                   //
                   if ( ( threshold_other > 0.0 && concentration_other > +threshold_other ) ||
@@ -973,7 +1045,7 @@ bool bdm::BiologicalCell::CheckMigration()
           // access the BioDynaMo diffusion grid
           auto* dg = rm->GetDiffusionGrid(name);
           // obtain the convection component
-          const double velocity_comp = dg->GetValue(this->GetPosition());
+          const double velocity_comp = GetInterpolatedValue(dg, this->GetPosition(), this->params());
           // calculate corresponding displacement component
           const double displacement_comp = velocity_comp * time_step;
           //
@@ -1039,10 +1111,50 @@ bool bdm::BiologicalCell::CheckMigration()
                 }
             }
           // chemotactic cell motion
+          // Select the best feasible local move from neighboring positions
+          // instead of following a global normalized gradient direction.
           const std::vector<std::string>& substances =
             this->params()->get<std::vector<std::string>>("substances");
+          const bool simulation_domain_is_2D =
+            this->params()->get<bool>("simulation_domain_is_2D");
+          const bdm::Double3 current_position = this->GetPosition();
+          const double migration_tolerance =
+            this->params()->get<double>("migration_tolerance");
+          const double self_diameter = this->GetDiameter();
+          auto* env = bdm::Simulation::GetActive()->GetEnvironment();
+          const auto* uniform_env =
+            dynamic_cast<bdm::UniformGridEnvironment*>(env);
+          const std::array<int32_t, 6> env_dims =
+            uniform_env ? uniform_env->GetDimensions()
+                        : std::array<int32_t, 6>{0, 0, 0, 0, 0, 0};
+          const double env_box_length =
+            uniform_env ? static_cast<double>(uniform_env->GetBoxLength()) : 0.0;
+          const double neighbor_search_radius =
+            uniform_env ? env_box_length : env->GetLargestAgentSize();
+          auto* ctxt = bdm::Simulation::GetActive()->GetExecutionContext();
+          std::vector<bdm::Double3> local_directions;
+          for (int dx=-1; dx<=1; dx++)
+            for (int dy=-1; dy<=1; dy++)
+              for (int dz=-1; dz<=1; dz++)
+                {
+                  if (simulation_domain_is_2D && dz) continue;
+                  if (!dx && !dy && !dz) continue;
+                  bdm::Double3 direction = {
+                    static_cast<double>(dx),
+                    static_cast<double>(dy),
+                    static_cast<double>(dz)
+                  };
+                  if (!normalize(direction, direction)) continue;
+                  local_directions.push_back(direction);
+                }
+          // shuffle directions to avoid systematic tie-breaking bias
+          for (size_t i = local_directions.size() - 1; i > 0; --i)
+            {
+              const size_t j = static_cast<size_t>(rg->Uniform(0, i + 1));
+              std::swap(local_directions[i], local_directions[j]);
+            }
           // ensure cell is well within the simulation domain!
-          if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+          if (check_agent_position_in_domain(minCOORD, maxCOORD, current_position, tol))
             // iterate for all substances
             for ( std::vector<std::string>::const_iterator
                   ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -1057,56 +1169,83 @@ bool bdm::BiologicalCell::CheckMigration()
                 const double chemotaxis = this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name);
                 if (! chemotaxis) continue;
                 //
-                const double concentration = dg->GetValue(this->GetPosition()),
-                             threshold = this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/threshold");
+                const double concentration = GetInterpolatedValue(dg, current_position, this->params()),
+                             threshold =
+                               this->params()->have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/threshold")
+                               ? this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/threshold")
+                               : 1.0e-12;
                 //
                 if ( ( threshold > 0.0 && concentration > +threshold ) ||
                      ( threshold < 0.0 && concentration < -threshold ) )
                 {
-                  if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability"))
+                  const double probability =
+                    this->params()->have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability")
+                    ? this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability")
+                    : 1.0;
+                  if (rg->Uniform(0.0,1.0) <= probability)
                     {
-                      bdm::Double3 dvec = {0.0, 0.0, 0.0};
-                      int n_random_point = 0;
-                      for (int random_point=0; random_point<20; random_point++)
-                        {
-                          const double radius      = rg->Uniform(0.0,1.5) * this->GetDiameter(),
-                                       inclination = this->params()->get<bool>("simulation_domain_is_2D")
-                                                   ? 0.5*bdm::Math::kPi : rg->Uniform(0.0,bdm::Math::kPi),
-                                       azimuth     = rg->Uniform(0.0,2.0*bdm::Math::kPi);
-                          const double x = radius * sin(inclination) * cos(azimuth),
-                                       y = radius * sin(inclination) * sin(azimuth),
-                                       z = radius * cos(inclination);
-                          bdm::Double3 point = {x,y,z};
-                          point += this->GetPosition();
-                          // check spatial coordinates
-                          if (point[0]<minCOORD||point[1]<minCOORD||point[2]<minCOORD||
-                              point[0]>maxCOORD||point[1]>maxCOORD||point[2]>maxCOORD) continue;
-                          //
-                          bdm::Double3 gradS;
-                          dg->GetGradient(point, &gradS);
-                          //
-                          if (L2norm(gradS)<=1.0e-6) continue;
-                          //
-                          dvec += gradS;
-                          ++n_random_point; // increment this index
-                        }
-                      // average out the space vector
-                      if (n_random_point) dvec /= n_random_point;
+                      const double local_step =
+                        std::min(std::max(fabs(chemotaxis), migration_tolerance), self_diameter);
+                      if (local_step <= migration_tolerance) continue;
                       //
-                      if (this->params()->get<bool>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/normalize_gradient"))
-                        {
-                          auto m = L2norm(dvec);
-                          if (m>1.0e-6) dvec /= m;
-                        }
-                      // scale gradient vector accordingly
-                      dvec *= chemotaxis;
+                      const bdm::Double3 base_position =
+                        current_position + this->GetDisplacement();
+                      const double chemotaxis_sign = (chemotaxis > 0.0 ? +1.0 : -1.0);
+                      const double concentration_epsilon =
+                        1.0e-6 * std::max(1.0, fabs(concentration));
+                      double best_signed_improvement = concentration_epsilon;
+                      bdm::Double3 best_dvec = {0.0, 0.0, 0.0};
+                      bool found_better_candidate = false;
                       //
-                      const double d_magn = L2norm(dvec);
-                      // check if distance covered is above a minimum, else ignore
-                      if (d_magn > this->params()->get<double>("migration_tolerance"))
+                      for (const auto& direction : local_directions)
                         {
+                          bdm::Double3 point = base_position + direction * local_step;
+                          if (simulation_domain_is_2D) point[2] = current_position[2];
+                          if (!check_agent_position_in_domain(minCOORD, maxCOORD, point, tol))
+                            continue;
+                          if (uniform_env)
+                            {
+                              if (point[0] < env_dims[0] + env_box_length ||
+                                  point[0] > env_dims[1] - env_box_length ||
+                                  point[1] < env_dims[2] + env_box_length ||
+                                  point[1] > env_dims[3] - env_box_length ||
+                                  point[2] < env_dims[4] + env_box_length ||
+                                  point[2] > env_dims[5] - env_box_length)
+                                continue;
+                            }
+                          //
+                          bool feasible = true;
+                          auto has_free_space = bdm::L2F([&](bdm::Agent* neighbor, bdm::real_t) {
+                            if (!feasible) return;
+                            if (neighbor->GetUid() == this->GetUid()) return;
+                            auto* other_cell = dynamic_cast<bdm::BiologicalCell*>(neighbor);
+                            if (!other_cell) return;
+                            const double min_distance =
+                              0.5 * (self_diameter + other_cell->GetDiameter()) - 1.0e-6;
+                            if (L2norm(point-other_cell->GetPosition()) < min_distance)
+                              feasible = false;
+                          });
+                          ctxt->ForEachNeighbor(has_free_space, point,
+                                                pow2(neighbor_search_radius));
+                          if (!feasible) continue;
+                          //
+                          const double candidate_concentration = GetInterpolatedValue(dg, point, this->params());
+                          const double signed_improvement =
+                            chemotaxis_sign * (candidate_concentration - concentration);
+                          if (signed_improvement > best_signed_improvement)
+                            {
+                              best_signed_improvement = signed_improvement;
+                              best_dvec = point - base_position;
+                              found_better_candidate = true;
+                            }
+                        }
+                      //
+                      if (found_better_candidate)
+                        {
+                          const double d_magn = L2norm(best_dvec);
+                          if (d_magn <= migration_tolerance) continue;
                           // update the (cell) displacement vector
-                          this->active_displacement_ += dvec;
+                          this->active_displacement_ += best_dvec;
                           // update this flag
                           has_migrated = true;
                           //
@@ -1198,7 +1337,7 @@ bool bdm::BiologicalCell::CheckTransformation()
         if (! this->params()->have_parameter<int>(CP_name+"/can_transform/"+BC_name+"/new_phenotype"))
           continue;
         //
-        const double concentration = dg->GetValue(this->GetPosition()),
+        const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                      threshold = this->params()->get<double>(CP_name+"/can_transform/"+BC_name+"/threshold");
         //
         if ( ( threshold > 0.0 && concentration > +threshold ) ||
@@ -1235,6 +1374,11 @@ bool bdm::BiologicalCell::CheckTransformation()
                     this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
                     this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
                     this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+                    // update adherence and density for the new phenotype
+                    this->SetAdherence(this->params()->have_parameter<double>(CP_new_name+"/adherence")
+                                     ? this->params()->get<double>(CP_new_name+"/adherence") : 0.0);
+                    if (this->params()->have_parameter<double>(CP_new_name+"/density"))
+                      this->SetDensity(this->params()->get<double>(CP_new_name+"/density"));
                     // reset the cell polarization matrix
                     if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
                       this->SetPolarization(diag(p0, p1, p2));
@@ -1374,7 +1518,7 @@ bool bdm::BiologicalCell::CheckPolarization()
         // access the BioDynaMo diffusion grid
         auto* dg = rm->GetDiffusionGrid(*ci);
         const std::string BC_name = dg->GetContinuumName(); // biochemical name
-        const double concentration = dg->GetValue(this->GetPosition()),
+        const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                      threshold = this->params()->get<double>(CP_name+"/can_polarize/"+BC_name+"/threshold");
         //
         if ( ( threshold > 0.0 && concentration > +threshold ) ||
@@ -1470,7 +1614,7 @@ bool bdm::BiologicalCell::CheckProtrusion()
       auto* dg = rm->GetDiffusionGrid(*ci);
       const std::string BC_name = dg->GetContinuumName(); // biochemical name
       //
-      const double concentration = dg->GetValue(this->GetPosition()),
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                    threshold = this->params()->get<double>(CP_name+"/can_protrude/"+BC_name+"/threshold");
       //
       if ( ( threshold > 0.0 && concentration > +threshold ) ||
@@ -1849,17 +1993,25 @@ bool bdm::BiologicalCell::CheckGrowth()
       auto* dg = rm->GetDiffusionGrid(*ci);
       const std::string BC_name = dg->GetContinuumName(); // biochemical name
       //
-      const double concentration = dg->GetValue(this->GetPosition()),
+      // skip this substance if no growth threshold is defined for it
+      if (! this->params()->have_parameter<double>(CP_name+"/can_grow/"+BC_name+"/threshold"))
+        continue;
+      //
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                    threshold = this->params()->get<double>(CP_name+"/can_grow/"+BC_name+"/threshold");
       //
       if ( ( threshold > 0.0 && concentration > +threshold ) ||
            ( threshold < 0.0 && concentration < -threshold ) )
         {
-          const double diameter_rate = this->params()->get<double>(CP_name+"/can_grow/"+BC_name+"/diameter_rate");
+          const double diameter_rate =
+            this->params()->have_parameter<double>(CP_name+"/can_grow/"+BC_name+"/diameter_rate")
+            ? this->params()->get<double>(CP_name+"/can_grow/"+BC_name+"/diameter_rate")
+            : this->params()->get<double>(CP_name+"/can_grow/diameter_rate");
           //
           // allow cell growth controlled by a combination of two biochemical cues, therefore
           // cell development is dependent from another substance as well
-          if (this->params()->get<bool>(CP_name+"/can_grow/"+BC_name+"/dependency"))
+          if (this->params()->have_parameter<bool>(CP_name+"/can_grow/"+BC_name+"/dependency") &&
+              this->params()->get<bool>(CP_name+"/can_grow/"+BC_name+"/dependency"))
             {
               // iterate for all OTHER substances
               for ( std::vector<std::string>::const_iterator
@@ -1870,7 +2022,10 @@ bool bdm::BiologicalCell::CheckGrowth()
                   auto* dg_other = rm->GetDiffusionGrid(*cj);
                   const std::string& BC_other_name = dg_other->GetContinuumName(); // biochemical name
                   //
-                  const double concentration_other = dg_other->GetValue(this->GetPosition()),
+                  if (! this->params()->have_parameter<double>(CP_name+"/can_grow/"+BC_name+"/dependency/"+BC_other_name+"/threshold"))
+                    continue;
+                  //
+                  const double concentration_other = GetInterpolatedValue(dg_other, this->GetPosition(), this->params()),
                                threshold_other = this->params()->get<double>(CP_name+"/can_grow/"+BC_name+"/dependency/"+BC_other_name+"/threshold");
                   //
                   if ( ( threshold_other > 0.0 && concentration_other > +threshold_other ) ||
@@ -1952,18 +2107,33 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
   if (n_div >= this->params()->get<int>(CP_name+"/can_divide/max"))
     return false;
   //
-  if (this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")>0.0)
+  // Compute effective division probability with CAP modulation
+  double p0 = this->params()->get<double>(CP_name+"/can_divide/probability");
+  double p_eff = p0;
+  // Apply CAP-induced modulation if parameters are present and CAP is configured
+  if (this->params()->have_parameter<double>(CP_name+"/can_divide/CAP_sensitivity"))
     {
-      if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
-                                +this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                                *this->GetAge() )
-        return false;
+      double beta_cap = this->params()->get<double>(CP_name+"/can_divide/CAP_sensitivity");
+      if (beta_cap > 0.0 && this->params()->have_parameter<double>("CAP/duration_h"))
+        {
+          double t_cap_h = this->params()->get<double>("CAP/duration_h");
+          double t_cap_s = t_cap_h * 3600.0; // convert hours to seconds
+          double k_cap = 60.0; // default saturation time in seconds
+          if (this->params()->have_parameter<double>(CP_name+"/can_divide/CAP_saturation_time"))
+            k_cap = this->params()->get<double>(CP_name+"/can_divide/CAP_saturation_time");
+          // Apply bounded modulation: p_eff = p0 * [1 + beta * t/(K + t)]
+          double modulation = 1.0 + beta_cap * (t_cap_s / (k_cap + t_cap_s));
+          if (modulation > 2.0) modulation = 2.0; // prevent excessive increase (max 2x)
+          p_eff = p0 * modulation;
+        }
     }
-  else
-    {
-      if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability"))
-        return false;
-    }
+  // Apply age increment if configured
+  double p_age_increment = this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age");
+  if (p_age_increment > 0.0)
+    p_eff = p_eff + p_age_increment * this->GetAge();
+  // Final probability check
+  if (rg->Uniform(0.0,1.0) > p_eff)
+    return false;
   //
   const double diameter = this->GetDiameter(),
                diameter_cutoff = this->params()->get<double>(CP_name+"/can_divide/diameter_cutoff");
@@ -1997,7 +2167,7 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
       if (! this->params()->have_parameter<int>(CP_name+"/can_transform_and_divide/"+BC_name+"/new_phenotype"))
         continue;
       //
-      const double concentration = dg->GetValue(this->GetPosition()),
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                    threshold = this->params()->get<double>(CP_name+"/can_transform_and_divide/"+BC_name+"/threshold");
       //
       if ( ( threshold > 0.0 && concentration > +threshold ) ||
@@ -2105,18 +2275,33 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
   if (n_div >= this->params()->get<int>(CP_name+"/can_divide/max"))
     return false;
   //
-  if (this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")>0.0)
+  // Compute effective division probability with CAP modulation
+  double p0 = this->params()->get<double>(CP_name+"/can_divide/probability");
+  double p_eff = p0;
+  // Apply CAP-induced modulation if parameters are present and CAP is configured
+  if (this->params()->have_parameter<double>(CP_name+"/can_divide/CAP_sensitivity"))
     {
-      if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
-                                +this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                                *this->GetAge() )
-        return false;
+      double beta_cap = this->params()->get<double>(CP_name+"/can_divide/CAP_sensitivity");
+      if (beta_cap > 0.0 && this->params()->have_parameter<double>("CAP/duration_h"))
+        {
+          double t_cap_h = this->params()->get<double>("CAP/duration_h");
+          double t_cap_s = t_cap_h * 3600.0; // convert hours to seconds
+          double k_cap = 60.0; // default saturation time in seconds
+          if (this->params()->have_parameter<double>(CP_name+"/can_divide/CAP_saturation_time"))
+            k_cap = this->params()->get<double>(CP_name+"/can_divide/CAP_saturation_time");
+          // Apply bounded modulation: p_eff = p0 * [1 + beta * t/(K + t)]
+          double modulation = 1.0 + beta_cap * (t_cap_s / (k_cap + t_cap_s));
+          if (modulation > 2.0) modulation = 2.0; // prevent excessive increase (max 2x)
+          p_eff = p0 * modulation;
+        }
     }
-  else
-    {
-      if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability"))
-        return false;
-    }
+  // Apply age increment if configured
+  double p_age_increment = this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age");
+  if (p_age_increment > 0.0)
+    p_eff = p_eff + p_age_increment * this->GetAge();
+  // Final probability check
+  if (rg->Uniform(0.0,1.0) > p_eff)
+    return false;
   //
   const double diameter = this->GetDiameter(),
                diameter_cutoff = this->params()->get<double>(CP_name+"/can_divide/diameter_cutoff");
@@ -2147,7 +2332,10 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
       auto* dg = rm->GetDiffusionGrid(*ci);
       const std::string BC_name = dg->GetContinuumName(); // biochemical name
       //
-      const double concentration = dg->GetValue(this->GetPosition()),
+      if (! this->params()->have_parameter<double>(CP_name+"/can_divide_and_transform/"+BC_name+"/threshold"))
+        continue;
+      //
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                    threshold = this->params()->get<double>(CP_name+"/can_divide_and_transform/"+BC_name+"/threshold");
       //
       if ( ( threshold > 0.0 && concentration > +threshold ) ||
@@ -2253,18 +2441,33 @@ bool bdm::BiologicalCell::CheckDivision() {
   if (n_div >= this->params()->get<int>(CP_name+"/can_divide/max"))
     return false;
   //
-  if (this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")>0.0)
+  // Compute effective division probability with CAP modulation
+  double p0 = this->params()->get<double>(CP_name+"/can_divide/probability");
+  double p_eff = p0;
+  // Apply CAP-induced modulation if parameters are present and CAP is configured
+  if (this->params()->have_parameter<double>(CP_name+"/can_divide/CAP_sensitivity"))
     {
-      if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability")
-                                +this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age")
-                                *this->GetAge() )
-        return false;
+      double beta_cap = this->params()->get<double>(CP_name+"/can_divide/CAP_sensitivity");
+      if (beta_cap > 0.0 && this->params()->have_parameter<double>("CAP/duration_h"))
+        {
+          double t_cap_h = this->params()->get<double>("CAP/duration_h");
+          double t_cap_s = t_cap_h * 3600.0; // convert hours to seconds
+          double k_cap = 60.0; // default saturation time in seconds
+          if (this->params()->have_parameter<double>(CP_name+"/can_divide/CAP_saturation_time"))
+            k_cap = this->params()->get<double>(CP_name+"/can_divide/CAP_saturation_time");
+          // Apply bounded modulation: p_eff = p0 * [1 + beta * t/(K + t)]
+          double modulation = 1.0 + beta_cap * (t_cap_s / (k_cap + t_cap_s));
+          if (modulation > 2.0) modulation = 2.0; // prevent excessive increase (max 2x)
+          p_eff = p0 * modulation;
+        }
     }
-  else
-    {
-      if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_divide/probability"))
-        return false;
-    }
+  // Apply age increment if configured
+  double p_age_increment = this->params()->get<double>(CP_name+"/can_divide/probability_increment_with_age");
+  if (p_age_increment > 0.0)
+    p_eff = p_eff + p_age_increment * this->GetAge();
+  // Final probability check
+  if (rg->Uniform(0.0,1.0) > p_eff)
+    return false;
   //
   const double diameter = this->GetDiameter(),
                diameter_cutoff = this->params()->get<double>(CP_name+"/can_divide/diameter_cutoff");
@@ -2284,6 +2487,28 @@ bool bdm::BiologicalCell::CheckDivision() {
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
   //
+  // Check if any substance-based division thresholds are defined
+  bool any_substance_threshold_defined = false;
+  for ( std::vector<std::string>::const_iterator
+        ci=substances.begin(); ci!=substances.end(); ci++ )
+    {
+      auto* dg = rm->GetDiffusionGrid(*ci);
+      const std::string BC_name = dg->GetContinuumName();
+      if (this->params()->have_parameter<double>(CP_name+"/can_divide/"+BC_name+"/threshold"))
+        {
+          any_substance_threshold_defined = true;
+          break;
+        }
+    }
+  //
+  // If no substance thresholds are defined, allow division based on basic criteria
+  if (! any_substance_threshold_defined)
+    {
+      this->Divide(volume_ratio, axis);
+      return true;
+    }
+  //
+  // Otherwise, check if at least one substance condition is met
   // ensure cell is well within the simulation domain!
   if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
   // iterate for all substances if cell can
@@ -2295,7 +2520,10 @@ bool bdm::BiologicalCell::CheckDivision() {
       auto* dg = rm->GetDiffusionGrid(*ci);
       const std::string BC_name = dg->GetContinuumName(); // biochemical name
       //
-      const double concentration = dg->GetValue(this->GetPosition()),
+      if (! this->params()->have_parameter<double>(CP_name+"/can_divide/"+BC_name+"/threshold"))
+        continue;
+      //
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
                    threshold = this->params()->get<double>(CP_name+"/can_divide/"+BC_name+"/threshold");
       //
       if ( ( threshold > 0.0 && concentration > +threshold ) ||
