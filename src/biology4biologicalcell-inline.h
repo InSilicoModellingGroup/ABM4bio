@@ -40,6 +40,16 @@ void bdm::Biology4BiologicalCell_10::Run(bdm::Agent* a)
       cell->IncrementAge();
       // cell produces/consumes substances
       cell->RunBiochemics();
+      // intracellular ROS and damage dynamics
+      cell->RunIntracellular();
+      if (cell->CheckApoptosisByDamage())
+        {
+          cell->Set2DeleteProtrusions();
+          cell->RemoveBehavior(this);
+          cell->RemoveFromSimulation();
+          return;
+        }
+      if (cell->CheckTransformation()) return;
       // now check if cell can migrate
       if (cell->CheckMigration())
         {
@@ -51,8 +61,7 @@ void bdm::Biology4BiologicalCell_10::Run(bdm::Agent* a)
               return;
             }
         }
-      // then, check if cell can transform or if it can polarize
-      if (cell->CheckTransformation()) return;
+      // then, check if cell can polarize
       cell->CheckPolarization();
       cell->CheckProtrusion();
       // check if cell can grow
@@ -104,6 +113,14 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
       cell->IncrementAge();
       // cell produces/consumes substances
       cell->RunBiochemics();
+      // intracellular ROS and damage dynamics
+      cell->RunIntracellular();
+      if (cell->CheckApoptosisByDamage())
+        {
+          cell->SetAge();
+          cell->SetPhase(bdm::BiologicalCell::Phase::Ap);
+          return;
+        }
       //
       if (bdm::BiologicalCell::Phase::Di==cell->GetPhase())
         {

@@ -3,6 +3,7 @@
 
 # Library/dependencies, compiled code, simulation results
 libs/*
+libs/pagmo-pygmo-source/
 build/*
 examples/*/results/*
 

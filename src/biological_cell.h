@@ -132,6 +132,8 @@ public:
   Parameters* params() const { return params_; }
   //
   void RunBiochemics();
+  void RunIntracellular();
+  bool CheckApoptosisByDamage();
   bool CheckPositionValidity();
   bool CheckApoptosisAging();
   bool CheckApoptosis();
@@ -175,6 +177,10 @@ private:
   // pointer to all simulation parameters
   mutable
   Parameters* params_ = 0;
+  // intracellular states
+  double ros_internal_ = 0.0;
+  double antioxidant_capacity_ = 1.0;
+  double dna_damage_ = 0.0;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
 };

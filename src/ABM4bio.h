@@ -19,6 +19,330 @@
 #include "./biological_cell.h"
 #include "./cell_protrusion.h"
 #include "./vessel.h"
+namespace bdm {
+inline
+double GetInterpolatedValue(const bdm::DiffusionGrid* dg,
+                            const bdm::Double3& position,
+                            const ::Parameters* params)
+{
+  if (!dg) return 0.0;
+  const bool use_trilinear =
+    nullptr != params
+    && (!params->have_parameter<bool>("CAP/enabled")
+        || !params->get<bool>("CAP/enabled"))
+    && params->have_parameter<bool>("diffusion_grid/trilinear_interpolation")
+    && params->get<bool>("diffusion_grid/trilinear_interpolation");
+  if (!use_trilinear)
+    return dg->GetValue(position);
+  const size_t res = dg->GetResolution();
+  if (res<=1)
+    return dg->GetValue(position);
+  const auto dims = dg->GetDimensions();
+  const double grid_min = static_cast<double>(dims[0]),
+               grid_max = static_cast<double>(dims[1]),
+               box_len = dg->GetBoxLength(),
+               center_min = grid_min + 0.5*box_len,
+               center_max = grid_max - 0.5*box_len;
+  auto sample_axis = [=] (const double coord, uint32_t& i0, uint32_t& i1, double& t) {
+    const double clamped = std::clamp(coord, center_min, center_max);
+    const double g = (clamped-center_min)/box_len;
+    int lower = static_cast<int>(std::floor(g));
+    lower = std::clamp(lower, 0, static_cast<int>(res)-2);
+    i0 = static_cast<uint32_t>(lower);
+    i1 = static_cast<uint32_t>(lower+1);
+    t = std::clamp(g-static_cast<double>(lower), 0.0, 1.0);
+  };
+  uint32_t x0=0, x1=0, y0=0, y1=0, z0=0, z1=0;
+  double tx=0.0, ty=0.0, tz=0.0;
+  sample_axis(position[0], x0, x1, tx);
+  sample_axis(position[1], y0, y1, ty);
+  sample_axis(position[2], z0, z1, tz);
+  auto concentration = [&] (const uint32_t x, const uint32_t y, const uint32_t z) {
+    const std::array<uint32_t,3> box = {x, y, z};
+    return dg->GetConcentration(dg->GetBoxIndex(box));
+  };
+  const double c000 = concentration(x0, y0, z0),
+               c100 = concentration(x1, y0, z0),
+               c010 = concentration(x0, y1, z0),
+               c110 = concentration(x1, y1, z0),
+               c001 = concentration(x0, y0, z1),
+               c101 = concentration(x1, y0, z1),
+               c011 = concentration(x0, y1, z1),
+               c111 = concentration(x1, y1, z1);
+  const double c00 = c000*(1.0-tx) + c100*tx,
+               c10 = c010*(1.0-tx) + c110*tx,
+               c01 = c001*(1.0-tx) + c101*tx,
+               c11 = c011*(1.0-tx) + c111*tx;
+  const double c0 = c00*(1.0-ty) + c10*ty,
+               c1 = c01*(1.0-ty) + c11*ty;
+  return c0*(1.0-tz) + c1*tz;
+}
+inline
+double GetNumericParameterFlexible(const ::Parameters& params,
+                                   const std::string& parameter_name,
+                                   const double fallback_value);
+
+inline
+double GetCapInitialFallbackValue(const ::Parameters& params,
+                                  const std::string& biochemical_name)
+{
+  const bool cap_enabled =
+    params.have_parameter<bool>("CAP/enabled")
+    && params.get<bool>("CAP/enabled");
+  if (!cap_enabled)
+    return 0.0;
+
+  const std::string cap_application_mode =
+    params.have_parameter<std::string>("CAP/application_mode")
+    ? params.get<std::string>("CAP/application_mode")
+    : std::string("boundary_faces");
+  const bool uniform_mode =
+    (cap_application_mode == "uniform_grid")
+    || (cap_application_mode == "uniform_domain");
+  if (!uniform_mode)
+    return 0.0;
+
+  const double dt_h =
+    params.have_parameter<double>("time_step")
+    ? params.get<double>("time_step")
+    : 1.0;
+  const int start_step =
+    params.have_parameter<int>("CAP/start_step")
+    ? params.get<int>("CAP/start_step")
+    : 0;
+  const double start_time_h =
+    params.have_parameter<double>("CAP/start_time_h")
+    ? params.get<double>("CAP/start_time_h")
+    : static_cast<double>(start_step) * dt_h;
+  if (start_time_h > 1.0e-12)
+    return 0.0;
+
+  const std::string cap_parameter_name =
+    biochemical_name == "H2O2"
+    ? std::string("CAP/H2O2/concentration")
+    : std::string("CAP/NO2_/concentration");
+  return GetNumericParameterFlexible(params, cap_parameter_name, 0.0);
+}
+
+inline
+double GetInitialValueMin(const ::Parameters& params,
+                          const std::string& biochemical_name)
+{
+  const std::string scalar_name = biochemical_name+"/initial_value";
+  const std::string min_name = biochemical_name+"/initial_value/min";
+  if (params.have_parameter<double>(min_name))
+    return params.get<double>(min_name);
+  if (params.have_parameter<double>(scalar_name))
+    return params.get<double>(scalar_name);
+  if (biochemical_name == "H2O2" || biochemical_name == "NO2_")
+    return GetCapInitialFallbackValue(params, biochemical_name);
+  ABORT_("biochemical \""+biochemical_name+"\" has no initial value configured");
+  return 0.0;
+}
+inline
+double GetInitialValueMax(const ::Parameters& params,
+                          const std::string& biochemical_name)
+{
+  const std::string scalar_name = biochemical_name+"/initial_value";
+  const std::string max_name = biochemical_name+"/initial_value/max";
+  if (params.have_parameter<double>(max_name))
+    return params.get<double>(max_name);
+  if (params.have_parameter<double>(scalar_name))
+    return params.get<double>(scalar_name);
+  if (biochemical_name == "H2O2" || biochemical_name == "NO2_")
+    return GetCapInitialFallbackValue(params, biochemical_name);
+  ABORT_("biochemical \""+biochemical_name+"\" has no initial value configured");
+  return 0.0;
+}
+inline
+double GetNumericParameterFlexible(const ::Parameters& params,
+                                   const std::string& parameter_name,
+                                   const double fallback_value)
+{
+  if (params.have_parameter<double>(parameter_name))
+    return params.get<double>(parameter_name);
+  if (params.have_parameter<std::string>(parameter_name))
+    {
+      const std::string& raw_value = params.get<std::string>(parameter_name);
+      try
+        {
+          size_t parsed = 0;
+          const double value = std::stod(raw_value, &parsed);
+          ASSERT_(parsed == raw_value.size(),
+                  "parameter \""+parameter_name+"\" must be numeric");
+          return value;
+        }
+      catch (...)
+        {
+          ABORT_("parameter \""+parameter_name+"\" must be numeric");
+        }
+    }
+  return fallback_value;
+}
+inline
+void ValidateCapConcentrations(const double cap_h2o2,
+                               const double cap_no2)
+{
+  ASSERT_(cap_h2o2 >= 0.0 && cap_h2o2 <= 1.0,
+          "parameter \"CAP/H2O2/concentration\" must be within [0, 1]");
+  ASSERT_(cap_no2 >= 0.0 && cap_no2 <= 1.0,
+          "parameter \"CAP/NO2_/concentration\" must be within [0, 1]");
+  ASSERT_(cap_h2o2 + cap_no2 <= 1.0 + 1.0e-12,
+          "CAP species concentrations must sum to 1 or less");
+}
+inline
+void ValidateNormalizedConcentrationValue(const double value,
+                                          const std::string& parameter_name)
+{
+  ASSERT_(value >= 0.0 && value <= 1.0,
+          "parameter \""+parameter_name+"\" must be within [0, 1]");
+}
+inline
+void ValidateNormalizedConcentrationRange(const double min_value,
+                                          const double max_value,
+                                          const std::string& parameter_prefix)
+{
+  ASSERT_(min_value >= 0.0 && min_value <= 1.0,
+          "parameter \""+parameter_prefix+"\" minimum must be within [0, 1]");
+  ASSERT_(max_value >= 0.0 && max_value <= 1.0,
+          "parameter \""+parameter_prefix+"\" maximum must be within [0, 1]");
+  ASSERT_(min_value <= max_value,
+          "parameter \""+parameter_prefix+"\" minimum must not exceed maximum");
+}
+inline
+bool IsCapTransportSpecies(const std::string& biochemical_name)
+{
+  return biochemical_name == "H2O2" || biochemical_name == "NO2_";
+}
+inline
+std::string GetCapTransportSolver(const ::Parameters& params)
+{
+  const std::string solver =
+    params.have_parameter<std::string>("CAP/transport_solver")
+    ? params.get<std::string>("CAP/transport_solver")
+    : std::string("explicit");
+  ASSERT_(solver == "explicit" || solver == "implicit",
+          "parameter \"CAP/transport_solver\" must be \"explicit\" or \"implicit\"");
+  return solver;
+}
+inline
+bool UseImplicitCapTransport(const ::Parameters& params,
+                             const std::string& biochemical_name)
+{
+  return params.have_parameter<bool>("CAP/enabled")
+         && params.get<bool>("CAP/enabled")
+         && IsCapTransportSpecies(biochemical_name)
+         && GetCapTransportSolver(params) == "implicit";
+}
+inline
+size_t FlattenGridIndex(const int x, const int y, const int z, const int res)
+{
+  return static_cast<size_t>((z * res + y) * res + x);
+}
+inline
+void ApplyImplicitTransportStep(bdm::DiffusionGrid* dg,
+                                const ::Parameters& params,
+                                const std::string& biochemical_name,
+                                const double dt_h)
+{
+  if (!dg) return;
+  if (dt_h <= 0.0) return;
+  const int res = static_cast<int>(dg->GetResolution());
+  if (res <= 0) return;
+  const double box_length = dg->GetBoxLength();
+  if (box_length <= 0.0) return;
+  const double diffusion_coefficient =
+    params.have_parameter<double>(biochemical_name+"/diffusion_coefficient")
+    ? params.get<double>(biochemical_name+"/diffusion_coefficient")
+    : 0.0;
+  const double dissipation_coefficient =
+    params.have_parameter<double>(biochemical_name+"/dissipation_coefficient")
+    ? params.get<double>(biochemical_name+"/dissipation_coefficient")
+    : 0.0;
+  ASSERT_(diffusion_coefficient >= 0.0,
+          "diffusion coefficient must be non-negative for implicit CAP transport");
+  ASSERT_(dissipation_coefficient >= 0.0,
+          "dissipation coefficient must be non-negative for implicit CAP transport");
+  if (diffusion_coefficient == 0.0 && dissipation_coefficient == 0.0) return;
+  const int iterations =
+    params.have_parameter<int>("CAP/implicit_transport/iterations")
+    ? params.get<int>("CAP/implicit_transport/iterations")
+    : 50;
+  const double tolerance =
+    params.have_parameter<double>("CAP/implicit_transport/tolerance")
+    ? params.get<double>("CAP/implicit_transport/tolerance")
+    : 1.0e-8;
+  const double relaxation =
+    params.have_parameter<double>("CAP/implicit_transport/relaxation")
+    ? params.get<double>("CAP/implicit_transport/relaxation")
+    : 1.0;
+  ASSERT_(iterations > 0,
+          "parameter \"CAP/implicit_transport/iterations\" must be positive");
+  ASSERT_(tolerance >= 0.0,
+          "parameter \"CAP/implicit_transport/tolerance\" must be non-negative");
+  ASSERT_(relaxation > 0.0 && relaxation <= 1.0,
+          "parameter \"CAP/implicit_transport/relaxation\" must be in (0, 1]");
+  const size_t n = static_cast<size_t>(res) * static_cast<size_t>(res) * static_cast<size_t>(res);
+  std::vector<double> previous(n, 0.0);
+  std::vector<double> current(n, 0.0);
+  for (int z=0; z<res; ++z)
+    for (int y=0; y<res; ++y)
+      for (int x=0; x<res; ++x)
+        {
+          const size_t flat = FlattenGridIndex(x, y, z, res);
+          const std::array<uint32_t,3> box = {static_cast<uint32_t>(x),
+                                              static_cast<uint32_t>(y),
+                                              static_cast<uint32_t>(z)};
+          previous[flat] = dg->GetConcentration(dg->GetBoxIndex(box));
+          current[flat] = previous[flat];
+        }
+  const double alpha = diffusion_coefficient * dt_h / (box_length * box_length);
+  const double beta = dissipation_coefficient * dt_h;
+  for (int it=0; it<iterations; ++it)
+    {
+      double max_delta = 0.0;
+      for (int z=0; z<res; ++z)
+        for (int y=0; y<res; ++y)
+          for (int x=0; x<res; ++x)
+            {
+              const size_t flat = FlattenGridIndex(x, y, z, res);
+              double sum = 0.0;
+              int n_neighbors = 0;
+              auto add_neighbor = [&] (const int nx, const int ny, const int nz) {
+                if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res)
+                  return;
+                sum += current[FlattenGridIndex(nx, ny, nz, res)];
+                ++n_neighbors;
+              };
+              add_neighbor(x-1, y, z);
+              add_neighbor(x+1, y, z);
+              add_neighbor(x, y-1, z);
+              add_neighbor(x, y+1, z);
+              add_neighbor(x, y, z-1);
+              add_neighbor(x, y, z+1);
+              const double denominator = 1.0 + beta + alpha * static_cast<double>(n_neighbors);
+              const double candidate = (previous[flat] + alpha * sum) / denominator;
+              const double updated =
+                std::clamp(current[flat] + relaxation * (candidate - current[flat]), 0.0, 1.0);
+              max_delta = std::max(max_delta, std::abs(updated - current[flat]));
+              current[flat] = updated;
+            }
+      if (max_delta <= tolerance) break;
+    }
+  for (int z=0; z<res; ++z)
+    for (int y=0; y<res; ++y)
+      for (int x=0; x<res; ++x)
+        {
+          const size_t flat = FlattenGridIndex(x, y, z, res);
+          const std::array<uint32_t,3> box = {static_cast<uint32_t>(x),
+                                              static_cast<uint32_t>(y),
+                                              static_cast<uint32_t>(z)};
+          const size_t b = dg->GetBoxIndex(box);
+          const double concentration = dg->GetConcentration(b);
+          dg->ChangeConcentrationBy(b, current[flat] - concentration);
+        }
+}
+}
 #include "./biological_cell-inline.h"
 #include "./cell_protrusion-inline.h"
 #include "./vessel-inline.h"
@@ -81,6 +405,10 @@ void save_stats(bdm::Simulation& sim,
     }
   unsigned int n_protrusion = 0;
   //
+  // Variables for tumor volume calculation (length * width^2 / 2)
+  std::vector<bdm::Double3> cancer_positions;
+  double tumor_volume = 0.0;
+  //
   rm->ForEachAgent([&] (bdm::Agent* a) {
     if (auto* protrusion = dynamic_cast<bdm::CellProtrusion*>(a))
       {
@@ -97,6 +425,11 @@ void save_stats(bdm::Simulation& sim,
           static_cast<bdm::BiologicalCell::Phase>( cell->GetPhase() );
         // update this component on the map..
         n_cell_per_phenotype[CP_ID] += 1;
+        //
+        // Store cancer cell positions for volume calculation (exclude necrotic cells with ID=0)
+        if (CP_ID > 0) {
+          cancer_positions.push_back(cell->GetPosition());
+        }
         //
         if      ( bdm::BiologicalCell::Phase::Ap==CP_Ph )
           n_cell_per_phenotype__Ap[CP_ID] += 1;
@@ -121,12 +454,40 @@ void save_stats(bdm::Simulation& sim,
         ++n_soma;
       }
   });
+  
+  // Calculate tumor volume using formula: length * width^2 / 2
+  if (cancer_positions.size() > 1) {
+    // Find bounding box of cancer cells
+    double min_x = cancer_positions[0][0], max_x = cancer_positions[0][0];
+    double min_y = cancer_positions[0][1], max_y = cancer_positions[0][1];
+    double min_z = cancer_positions[0][2], max_z = cancer_positions[0][2];
+    
+    for (const auto& pos : cancer_positions) {
+      min_x = std::min(min_x, pos[0]);
+      max_x = std::max(max_x, pos[0]);
+      min_y = std::min(min_y, pos[1]);
+      max_y = std::max(max_y, pos[1]);
+      min_z = std::min(min_z, pos[2]);
+      max_z = std::max(max_z, pos[2]);
+    }
+    
+    // Calculate dimensions
+    double length = max_x - min_x;  // longest dimension
+    double width_y = max_y - min_y;
+    double width_z = max_z - min_z;
+    
+    // Use the largest width dimension
+    double width = std::max(width_y, width_z);
+    
+    // Calculate volume: length * width^2 / 2 (ellipsoidal approximation)
+    tumor_volume = length * width * width / 2.0;
+  }
   //
   // simulation statistics output data - write the CSV file header
   // only once (@zero time step)
   if ( 0.0 == params.get<double>("current time") )
     {
-      fout << "current_time, N_vessels, N_cells";
+      fout << "current_time, N_vessels, N_cells, tumor_volume_mm3";
       for ( std::map<int, std::string>::const_iterator
             ci=cells.begin(); ci!=cells.end(); ci++ )
         {
@@ -153,6 +514,7 @@ void save_stats(bdm::Simulation& sim,
   fout //<< ',' << n_soma
        << ',' << n_vessel;
   fout << ',' << n_cell;
+  fout << ',' << tumor_volume * 1.0e-9; // Add tumor volume output
   // iterate for all cell phenotypes
   for ( std::map<int, std::string>::const_iterator
         ci=cells.begin(); ci!=cells.end(); ci++ )
@@ -681,7 +1043,15 @@ void set_bdm_params(bdm::Param* p)
   p->calculate_gradients = params.get<bool>("diffusion_grid/save_gradients");
   p->environment = "uniform_grid";
   p->diffusion_method = "euler";
-  p->diffusion_boundary_condition = "open";
+  // Selection of boundaries:
+  // Dirichlet - Fixed concentration at boundaries (continuous O2 supply)
+  // Neumann - Fixed gradient at boundaries
+  // open - Substances can leak out (default)
+  // closed - No flux through boundaries
+  // Periodic - Wrap-around boundaries
+  p->diffusion_boundary_condition = params.have_parameter<std::string>("diffusion_boundary_condition")
+                                   ? params.get<std::string>("diffusion_boundary_condition")
+                                   : "open";
   p->show_simulation_step = false;
   p->export_visualization = false;
   p->output_dir = params.get<std::string>("output_directory");
@@ -883,6 +1253,7 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "NO_"  ) bc = Biochemical::NO_;
         else if ( BC_name == "NO2"  ) bc = Biochemical::NO2;
         else if ( BC_name == "NO3"  ) bc = Biochemical::NO3;
+        else if ( BC_name == "NO2_" ) bc = Biochemical::NO2_; // nitrite ion (NO2-)
         else if ( BC_name == "Gluc" ) bc = Biochemical::Gluc;
         // epidermal-/vessel-related biochemical cues
         else if ( BC_name == "VEGF" ) bc = Biochemical::VEGF;
@@ -896,6 +1267,15 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "bFGF" ) bc = Biochemical::bFGF;
         // cancer-related biochemical cues
         else if ( BC_name == "TNF"  ) bc = Biochemical::TNF;
+        // CAP-specific ICD markers and inflammatory cytokines
+        else if ( BC_name == "CRT"  ) bc = Biochemical::CRT;   // calreticulin
+        else if ( BC_name == "HMGB1") bc = Biochemical::HMGB1; // high mobility group box 1
+        else if ( BC_name == "HSP70") bc = Biochemical::HSP70; // heat shock protein 70
+        else if ( BC_name == "IL1b" ) bc = Biochemical::IL1b;  // interleukin-1 beta
+        else if ( BC_name == "IL6"  ) bc = Biochemical::IL6;   // interleukin-6
+        else if ( BC_name == "IL12" ) bc = Biochemical::IL12;  // interleukin-12
+        else if ( BC_name == "CCL2" ) bc = Biochemical::CCL2;  // C-C motif chemokine ligand 2
+        else if ( BC_name == "CCL4" ) bc = Biochemical::CCL4;  // C-C motif chemokine ligand 4
         // neuron-related biochemical cues
         else if ( BC_name == "NGF"  ) bc = Biochemical::NGF;
         else if ( BC_name == "BDNF" ) bc = Biochemical::BDNF;
@@ -921,12 +1301,19 @@ void init_biochemicals(bdm::Simulation& sim,
       if (!params.have_parameter<double>(BC_name+"/dissipation_coefficient"))
         params.set<double>(BC_name+"/dissipation_coefficient") = 0.0;
       //
+      const bool is_cap_species = bdm::IsCapTransportSpecies(BC_name);
+      const bool implicit_cap_transport = bdm::UseImplicitCapTransport(params, BC_name);
       // diffusion (rate) and dissipation (rate) coefficient
       double dc =0.0, mu =0.0;
       if ( Biochemical::RAD != bc )
         {
           dc = params.get<double>(BC_name+"/diffusion_coefficient");
           mu = params.get<double>(BC_name+"/dissipation_coefficient");
+          if (implicit_cap_transport)
+            {
+              dc = 0.0;
+              mu = 0.0;
+            }
         }
       // insert this biochemical (cue) in the BioDynaMo simulation
       bdm::ModelInitializer::DefineSubstance(bc, BC_name, dc, mu, sr);
@@ -935,11 +1322,80 @@ void init_biochemicals(bdm::Simulation& sim,
       auto* dg = rm->GetDiffusionGrid(BC_name);
       dg->Initialize();
       //
+      // set boundary condition type: closed for CAP species, Dirichlet for others
+      const bool inlet_enabled = params.have_parameter<bool>(BC_name+"/inlet/enabled")
+                               ? params.get<bool>(BC_name+"/inlet/enabled")
+                               : false;
+
+      const bool linear_gradient_enabled =
+        params.have_parameter<bool>(BC_name+"/initial_value/linear_gradient/enabled")
+        ? params.get<bool>(BC_name+"/initial_value/linear_gradient/enabled")
+        : false;
+
+      const std::string cap_application_mode =
+        params.have_parameter<std::string>("CAP/application_mode")
+        ? params.get<std::string>("CAP/application_mode")
+        : std::string("boundary_faces");
+      ASSERT_(cap_application_mode == "boundary_faces"
+              || cap_application_mode == "boundary_dirichlet"
+              || cap_application_mode == "boundary_neumann"
+              || cap_application_mode == "uniform_grid"
+              || cap_application_mode == "uniform_domain",
+              "parameter \"CAP/application_mode\" must be one of: boundary_faces, boundary_dirichlet, boundary_neumann, uniform_grid, uniform_domain");
+
+      if (is_cap_species)
+        {
+          if (cap_application_mode == "boundary_dirichlet")
+            {
+              dg->SetBoundaryConditionType(bdm::BoundaryConditionType::kDirichlet);
+              dg->SetBoundaryCondition(
+                std::make_unique<bdm::ConstantBoundaryCondition>(0.0));
+            }
+          else if (cap_application_mode == "boundary_neumann")
+            {
+              dg->SetBoundaryConditionType(bdm::BoundaryConditionType::kNeumann);
+              dg->SetBoundaryCondition(
+                std::make_unique<bdm::ConstantBoundaryCondition>(0.0));
+            }
+          else
+            {
+              dg->SetBoundaryConditionType(bdm::BoundaryConditionType::kClosedBoundaries);
+            }
+        }
+      else if (inlet_enabled || linear_gradient_enabled)
+        {
+          dg->SetBoundaryConditionType(bdm::BoundaryConditionType::kClosedBoundaries);
+        }
+      else
+        {
+          // Dirichlet boundary: use a single ambient value. If min==max (usual), that
+          // value applies; if a [min,max] range is used for interior initialization,
+          // pin boundaries to the upper end (e.g. normoxic O2 at max of the 0..1 scale).
+          const double min_iv = bdm::GetInitialValueMin(params, BC_name),
+                       max_iv = bdm::GetInitialValueMax(params, BC_name);
+          bdm::ValidateNormalizedConcentrationRange(min_iv, max_iv, BC_name+"/initial_value");
+          const double boundary_value = (min_iv == max_iv) ? min_iv : max_iv;
+          dg->SetBoundaryCondition(
+            std::make_unique<bdm::ConstantBoundaryCondition>(boundary_value));
+        }
+      //
       // set the lower and upper threshold for the diffusion grid value range
+      dg->SetLowerThreshold(0.0);
+      dg->SetUpperThreshold(1.0);
       if (params.have_parameter<double>(BC_name+"/threshold/min"))
-        dg->SetLowerThreshold(params.get<double>(BC_name+"/threshold/min"));
+        {
+          const double threshold_min = params.get<double>(BC_name+"/threshold/min");
+          bdm::ValidateNormalizedConcentrationValue(threshold_min, BC_name+"/threshold/min");
+          dg->SetLowerThreshold(threshold_min);
+        }
       if (params.have_parameter<double>(BC_name+"/threshold/max"))
-        dg->SetUpperThreshold(params.get<double>(BC_name+"/threshold/max"));
+        {
+          const double threshold_max = params.get<double>(BC_name+"/threshold/max");
+          bdm::ValidateNormalizedConcentrationValue(threshold_max, BC_name+"/threshold/max");
+          dg->SetUpperThreshold(threshold_max);
+        }
+      ASSERT_(dg->GetLowerThreshold() <= dg->GetUpperThreshold(),
+              "biochemical \""+BC_name+"\" has erroneous threshold bounds");
       //
       // print-out the diffusion grid properties
       if ( false )
@@ -962,11 +1418,10 @@ void init_biochemicals(bdm::Simulation& sim,
           std::cout << std::endl;
         }
       //
-      const double minBC = params.get<double>(BC_name+"/initial_value/min"),
-                   maxBC = params.get<double>(BC_name+"/initial_value/max");
+      const double minBC = bdm::GetInitialValueMin(params, BC_name),
+                   maxBC = bdm::GetInitialValueMax(params, BC_name);
       // sanity check
-      if ( minBC<0.0 || maxBC<0.0 || minBC>maxBC )
-        ABORT_("biochemical \""+BC_name+"\" has erroneous min/max initial values");
+      bdm::ValidateNormalizedConcentrationRange(minBC, maxBC, BC_name+"/initial_value");
       //
       if ( params.have_parameter<std::string>(BC_name+"/dynamic/from_file") )
         {
@@ -984,24 +1439,162 @@ void init_biochemicals(bdm::Simulation& sim,
         }
       //
       // initialize the concentration before simulation starts
+      // Use AddInitializer + RunInitializers so values populate BOTH c1_ and c2_
       if ( ! params.have_parameter<std::string>(BC_name+"/initial_value/from_file") )
         {
-          if ( minBC == maxBC )
+          // Determine inlet parameters for the initializer lambda
+          const std::string inlet_face = inlet_enabled && params.have_parameter<std::string>(BC_name+"/inlet/face")
+                                       ? params.get<std::string>(BC_name+"/inlet/face")
+                                       : std::string("");
+          const double inlet_value = inlet_enabled && params.have_parameter<double>(BC_name+"/inlet/value")
+                                   ? params.get<double>(BC_name+"/inlet/value")
+                                   : maxBC;
+          if (inlet_enabled)
+            bdm::ValidateNormalizedConcentrationValue(inlet_value, BC_name+"/inlet/value");
+          const double box_len = dg->GetBoxLength();
+          const double grid_max = params.get<double>("max_boundary");
+          const double grid_min = params.get<double>("min_boundary");
+          const double center_min = grid_min + 0.5 * box_len;
+          const double center_max = grid_max - 0.5 * box_len;
+          
+          // Check for linear gradient initialization along an axis
+          const bool linear_gradient_enabled =
+            params.have_parameter<bool>(BC_name+"/initial_value/linear_gradient/enabled")
+            ? params.get<bool>(BC_name+"/initial_value/linear_gradient/enabled")
+            : false;
+          
+          if ( linear_gradient_enabled )
             {
-              for (size_t b=0; b<dg->GetNumBoxes(); b++)
-                {
-                  const double concentration = maxBC;
-                  dg->ChangeConcentrationBy(b, concentration);
+              const std::string grad_axis =
+                params.get<std::string>(BC_name+"/initial_value/linear_gradient/axis");
+              const double grad_min =
+                params.get<double>(BC_name+"/initial_value/linear_gradient/min_value1");
+              const double grad_max =
+                params.get<double>(BC_name+"/initial_value/linear_gradient/max_value1");
+              bdm::ValidateNormalizedConcentrationRange(
+                grad_min, grad_max, BC_name+"/initial_value/linear_gradient");
+              //
+              ASSERT_(grad_axis=="x" || grad_axis=="y" || grad_axis=="z",
+                      "linear_gradient axis must be \"x\", \"y\", or \"z\"");
+              //
+              // check for optional secondary / tertiary gradient axes
+              const bool secondary_enabled =
+                params.have_parameter<std::string>(BC_name+"/initial_value/linear_gradient/axis2");
+              const std::string grad_axis2 = secondary_enabled
+                ? params.get<std::string>(BC_name+"/initial_value/linear_gradient/axis2")
+                : std::string("");
+              const double grad2_min = secondary_enabled
+                ? params.get<double>(BC_name+"/initial_value/linear_gradient/min_value2")
+                : 0.0;
+              const double grad2_max = secondary_enabled
+                ? params.get<double>(BC_name+"/initial_value/linear_gradient/max_value2")
+                : 0.0;
+              if (secondary_enabled)
+                bdm::ValidateNormalizedConcentrationRange(
+                  grad2_min, grad2_max, BC_name+"/initial_value/linear_gradient/axis2");
+              if (secondary_enabled)
+                ASSERT_(grad_axis2=="x" || grad_axis2=="y" || grad_axis2=="z",
+                        "linear_gradient axis2 must be \"x\", \"y\", or \"z\"");
+              const bool tertiary_enabled =
+                params.have_parameter<std::string>(BC_name+"/initial_value/linear_gradient/axis3");
+              const std::string grad_axis3 = tertiary_enabled
+                ? params.get<std::string>(BC_name+"/initial_value/linear_gradient/axis3")
+                : std::string("");
+              const double grad3_min = tertiary_enabled
+                ? params.get<double>(BC_name+"/initial_value/linear_gradient/min_value3")
+                : 0.0;
+              const double grad3_max = tertiary_enabled
+                ? params.get<double>(BC_name+"/initial_value/linear_gradient/max_value3")
+                : 0.0;
+              if (tertiary_enabled)
+                bdm::ValidateNormalizedConcentrationRange(
+                  grad3_min, grad3_max, BC_name+"/initial_value/linear_gradient/axis3");
+              if (tertiary_enabled)
+                ASSERT_(grad_axis3=="x" || grad_axis3=="y" || grad_axis3=="z",
+                        "linear_gradient axis3 must be \"x\", \"y\", or \"z\"");
+              //
+              dg->AddInitializer([=](double x, double y, double z) -> double {
+                auto axis_coord = [&] (const std::string& axis) -> double {
+                  if      (axis == "x") return x;
+                  else if (axis == "y") return y;
+                  else                   return z;
+                };
+                auto axis_value = [&] (const std::string& axis, double vmin, double vmax) -> double {
+                  const double coord = axis_coord(axis);
+                  double t = (coord - center_min) / (center_max - center_min);
+                  t = std::max(0.0, std::min(1.0, t));
+                  return vmin + t * (vmax - vmin);
+                };
+
+                double value = axis_value(grad_axis, grad_min, grad_max);
+                int n_axes = 1;
+                if (secondary_enabled) {
+                  value += axis_value(grad_axis2, grad2_min, grad2_max);
+                  n_axes += 1;
                 }
+                if (tertiary_enabled) {
+                  value += axis_value(grad_axis3, grad3_min, grad3_max);
+                  n_axes += 1;
+                }
+                // Keep the configured value scale independent of number of axes.
+                return value / static_cast<double>(n_axes);
+              });
+            }
+          // Add initializer that sets uniform value (or random if min!=max) plus inlet on selected face
+          else if ( minBC == maxBC )
+            {
+              dg->AddInitializer([=](double x, double y, double z) -> double {
+                // Check if on inlet face
+                if (!inlet_face.empty()) {
+                  if (inlet_face == "z_max" && z >= grid_max - box_len) return inlet_value;
+                  if (inlet_face == "z_min" && z <= grid_min + box_len) return inlet_value;
+                  if (inlet_face == "x_max" && x >= grid_max - box_len) return inlet_value;
+                  if (inlet_face == "x_min" && x <= grid_min + box_len) return inlet_value;
+                  if (inlet_face == "y_max" && y >= grid_max - box_len) return inlet_value;
+                  if (inlet_face == "y_min" && y <= grid_min + box_len) return inlet_value;
+                }
+                return maxBC;
+              });
             }
           else
             {
-              for (size_t b=0; b<dg->GetNumBoxes(); b++)
-                {
-                  const double concentration = rg->Uniform(minBC, maxBC);
-                  dg->ChangeConcentrationBy(b, concentration);
+              const int res = static_cast<int>(dg->GetResolution());
+              const std::string inlet_face_local = inlet_enabled && params.have_parameter<std::string>(BC_name+"/inlet/face")
+                                                 ? params.get<std::string>(BC_name+"/inlet/face")
+                                                 : std::string("z_max");
+              const double inlet_val_local = inlet_enabled && params.have_parameter<double>(BC_name+"/inlet/value")
+                                           ? params.get<double>(BC_name+"/inlet/value")
+                                           : maxBC;
+
+              dg->AddInitializer([=](double x, double y, double z) -> double {
+                const int ix = std::max(0, std::min(res - 1,
+                    static_cast<int>(std::llround((x - center_min) / box_len))));
+                const int iy = std::max(0, std::min(res - 1,
+                    static_cast<int>(std::llround((y - center_min) / box_len))));
+                const int iz = std::max(0, std::min(res - 1,
+                    static_cast<int>(std::llround((z - center_min) / box_len))));
+
+                // Deterministic voxel-wise pseudo-random initialization so c1_/c2_ match.
+                uint64_t h = 1469598103934665603ULL;
+                h ^= static_cast<uint64_t>(ix + 1); h *= 1099511628211ULL;
+                h ^= static_cast<uint64_t>(iy + 1); h *= 1099511628211ULL;
+                h ^= static_cast<uint64_t>(iz + 1); h *= 1099511628211ULL;
+                h ^= static_cast<uint64_t>(icue + 1);
+                const double u01 = static_cast<double>(h & 0xFFFFFFFFULL) / 4294967295.0;
+                double value = minBC + u01 * (maxBC - minBC);
+
+                if (inlet_enabled) {
+                  if (inlet_face_local == "z_max" && z >= center_max) value = inlet_val_local;
+                  else if (inlet_face_local == "z_min" && z <= center_min) value = inlet_val_local;
+                  else if (inlet_face_local == "x_max" && x >= center_max) value = inlet_val_local;
+                  else if (inlet_face_local == "x_min" && x <= center_min) value = inlet_val_local;
+                  else if (inlet_face_local == "y_max" && y >= center_max) value = inlet_val_local;
+                  else if (inlet_face_local == "y_min" && y <= center_min) value = inlet_val_local;
                 }
+                return value;
+              });
             }
+          // Note: RunInitializers() is called by the scheduler, which will populate both c1_ and c2_
         }
       else
         {
@@ -1042,6 +1635,7 @@ void init_biochemicals(bdm::Simulation& sim,
                   "could not save a copy of a data file");
           // ...end of this if-case
         }
+      // Note: inlet values are now set via AddInitializer (for uniform init) or in reinit_biochemicals (per step)
       // ...end of biochemicals (substances) loop
     }
 }
@@ -1209,6 +1803,12 @@ void init_cells(bdm::Simulation& sim,
           // sanity check...
           ASSERT_(params.get<double>(CP_name+"/can_divide/influence_ratio")>=0.0,
                   "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"can_divide/influence_ratio\"");
+        
+          // CAP-induced division probability modulation (default: no effect)
+          if (! params.have_parameter<double>(CP_name+"/can_divide/CAP_sensitivity"))
+            params.set<double>(CP_name+"/can_divide/CAP_sensitivity") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_divide/CAP_saturation_time"))
+            params.set<double>(CP_name+"/can_divide/CAP_saturation_time") = 60.0; // seconds
         }
       // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_transform"))
@@ -1302,13 +1902,104 @@ void init_cells(bdm::Simulation& sim,
             {
               if (! params.have_parameter<double>(CP_name+"/"+BC_name+"/secretion/net_balance/std"))
                 params.set<double>(CP_name+"/"+BC_name+"/secretion/net_balance/std") = 0.0;
-              if (! params.have_parameter<bool>(CP_name+"/"+BC_name+"/secretion/dependent"))
-                params.set<bool>(CP_name+"/"+BC_name+"/secretion/dependent") = true;
+              if (! params.have_parameter<bool>(CP_name+"/"+BC_name+"/secretion/dependency"))
+                params.set<bool>(CP_name+"/"+BC_name+"/secretion/dependency") = true;
               if (! params.have_parameter<double>(CP_name+"/"+BC_name+"/secretion/saturation"))
                 params.set<double>(CP_name+"/"+BC_name+"/secretion/saturation") = 0.0;
             }
+          //
+          // --- Michaelis-Menten kinetics model (optional, per-substance) ---
+          // When michaelis_menten_model = true, the standard net_balance pathway
+          // is REPLACED by a self-contained concentration-dependent model:
+          //   R = Vmax * C / (Km + C)
+          // The sign of Vmax determines the direction:
+          //   Vmax < 0 → consumption,  Vmax > 0 → production.
+          // No net_balance, saturation, or dependency parameters are needed.
+          if (! params.have_parameter<bool>(CP_name+"/"+BC_name+"/secretion/michaelis_menten_model"))
+            params.set<bool>(CP_name+"/"+BC_name+"/secretion/michaelis_menten_model") = false;
+          if (params.get<bool>(CP_name+"/"+BC_name+"/secretion/michaelis_menten_model"))
+            {
+              // Vmax: required — warn if missing, default to -0.001 (consumption)
+              if (! params.have_parameter<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/Vmax"))
+                {
+                  params.set<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/Vmax") = -0.001;
+                  bdm::Log::Warning("ABM4bio",
+                    "Michaelis-Menten Vmax not provided for "+CP_name+"/"+BC_name
+                    +"; defaulting to -0.001 (consumption)");
+                }
+              // Km: default to 1.0 if not provided
+              if (! params.have_parameter<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/Km"))
+                {
+                  params.set<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/Km") = 1.0;
+                  bdm::Log::Warning("ABM4bio",
+                    "Michaelis-Menten Km not provided for "+CP_name+"/"+BC_name
+                    +"; defaulting to 1.0");
+                }
+              //
+              bdm::Log::Info("ABM4bio",
+                "Michaelis-Menten model ENABLED for "+CP_name+"/"+BC_name
+                +" (Vmax="+std::to_string(params.get<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/Vmax"))
+                +", Km="+std::to_string(params.get<double>(CP_name+"/"+BC_name+"/secretion/michaelis_menten/Km"))+")");
+            }
           // ...end of biochemicals (substances) loop
         }
+      //
+      // --- Default-substance chemotaxis shorthand ---
+      // If user defines "CP/can_migrate/chemotaxis" as a double (without substance name),
+      // automatically expand it to the first (default) substance with sensible defaults.
+      // This avoids the need to explicitly specify substance-specific chemotaxis parameters.
+      if (params.get<bool>(CP_name+"/can_migrate"))
+        if (params.have_parameter<double>(CP_name+"/can_migrate/chemotaxis"))
+          {
+            const std::string& default_substance = biochem[0];
+            const double chemo_weight = params.get<double>(CP_name+"/can_migrate/chemotaxis");
+            // map to the first substance if not already explicitly defined
+            if (! params.have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance))
+              params.set<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance) = chemo_weight;
+            // set sensible defaults for sub-parameters if not explicitly provided
+            if (! params.have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/threshold"))
+              params.set<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/threshold") = 1.0e-12;
+            if (! params.have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/probability"))
+              params.set<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/probability") = 1.0;
+            if (! params.have_parameter<bool>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/normalize_gradient"))
+              params.set<bool>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/normalize_gradient") = false;
+            //
+            bdm::Log::Info("ABM4bio",
+              "Chemotaxis shorthand expanded for "+CP_name+": using default substance \""+default_substance
+              +"\" (weight="+std::to_string(chemo_weight)+")");
+          }
+      //
+      // --- Default-substance transformation shorthand ---
+      // If user defines "CP/can_transform/..." without a substance name, automatically
+      // map it to the first (default) substance so single-substance models do not need
+      // to repeat the biochemical name explicitly.
+      if (params.get<bool>(CP_name+"/can_transform"))
+        if (params.have_parameter<int>(CP_name+"/can_transform/new_phenotype"))
+          {
+            const std::string& default_substance = biochem[0];
+            if (! params.have_parameter<int>(CP_name+"/can_transform/"+default_substance+"/new_phenotype"))
+              params.set<int>(CP_name+"/can_transform/"+default_substance+"/new_phenotype") =
+                params.get<int>(CP_name+"/can_transform/new_phenotype");
+            if (params.have_parameter<double>(CP_name+"/can_transform/threshold") &&
+                ! params.have_parameter<double>(CP_name+"/can_transform/"+default_substance+"/threshold"))
+              params.set<double>(CP_name+"/can_transform/"+default_substance+"/threshold") =
+                params.get<double>(CP_name+"/can_transform/threshold");
+            if (params.have_parameter<double>(CP_name+"/can_transform/probability") &&
+                ! params.have_parameter<double>(CP_name+"/can_transform/"+default_substance+"/probability"))
+              params.set<double>(CP_name+"/can_transform/"+default_substance+"/probability") =
+                params.get<double>(CP_name+"/can_transform/probability");
+            if (params.have_parameter<int>(CP_name+"/can_transform/time_window_open") &&
+                ! params.have_parameter<int>(CP_name+"/can_transform/"+default_substance+"/time_window_open"))
+              params.set<int>(CP_name+"/can_transform/"+default_substance+"/time_window_open") =
+                params.get<int>(CP_name+"/can_transform/time_window_open");
+            if (params.have_parameter<int>(CP_name+"/can_transform/time_window_close") &&
+                ! params.have_parameter<int>(CP_name+"/can_transform/"+default_substance+"/time_window_close"))
+              params.set<int>(CP_name+"/can_transform/"+default_substance+"/time_window_close") =
+                params.get<int>(CP_name+"/can_transform/time_window_close");
+            bdm::Log::Info("ABM4bio",
+              "Transformation shorthand expanded for "+CP_name+": using default substance \""+
+              default_substance+"\"");
+          }
       //
       // check if to adapt the cell initial population based on some pattern,
       // based on some random distribution, or based on some used-defined pattern
@@ -1548,7 +2239,8 @@ void init_cells(bdm::Simulation& sim,
               bdm::BiologicalCell* cell = new bdm::BiologicalCell(CP_ID, xyz);
               cell->SetPhase(ccp);
               cell->SetDiameter(dia);
-              cell->SetAdherence(0.0);
+              cell->SetAdherence(params.have_parameter<double>(CP_name+"/adherence")
+                               ? params.get<double>(CP_name+"/adherence") : 0.0);
               if (params.have_parameter<double>(CP_name+"/density"))
                 cell->SetDensity(params.get<double>(CP_name+"/density"));
               cell->SetParametersPointer(&params);
@@ -1690,7 +2382,8 @@ void init_cells(bdm::Simulation& sim,
               bdm::BiologicalCell* cell = new bdm::BiologicalCell(CP_ID, xyz);
               cell->SetPhase(ccp);
               cell->SetDiameter(dia);
-              cell->SetAdherence(0.0);
+              cell->SetAdherence(params.have_parameter<double>(CP_name+"/adherence")
+                               ? params.get<double>(CP_name+"/adherence") : 0.0);
               if (params.have_parameter<double>(CP_name+"/density"))
                 cell->SetDensity(params.get<double>(CP_name+"/density"));
               cell->SetParametersPointer(&params);
@@ -1760,10 +2453,38 @@ void init_vessels(bdm::Simulation& sim,
         {
           if (! params.have_parameter<double>("vessel/"+BC_name+"/secretion/net_balance/std"))
             params.set<double>("vessel/"+BC_name+"/secretion/net_balance/std") = 0.0;
-          if (! params.have_parameter<bool>("vessel/"+BC_name+"/secretion/dependent"))
-            params.set<bool>("vessel/"+BC_name+"/secretion/dependent") = true;
+          if (! params.have_parameter<bool>("vessel/"+BC_name+"/secretion/dependency"))
+            params.set<bool>("vessel/"+BC_name+"/secretion/dependency") = true;
           if (! params.have_parameter<double>("vessel/"+BC_name+"/secretion/saturation"))
             params.set<double>("vessel/"+BC_name+"/secretion/saturation") = 0.0;
+        }
+      //
+      // --- Michaelis-Menten kinetics model (optional for vessels) ---
+      // Self-contained model: R = Vmax * C / (Km + C)
+      // Sign of Vmax determines direction: Vmax < 0 → consumption, Vmax > 0 → production.
+      if (! params.have_parameter<bool>("vessel/"+BC_name+"/secretion/michaelis_menten_model"))
+        params.set<bool>("vessel/"+BC_name+"/secretion/michaelis_menten_model") = false;
+      if (params.get<bool>("vessel/"+BC_name+"/secretion/michaelis_menten_model"))
+        {
+          if (! params.have_parameter<double>("vessel/"+BC_name+"/secretion/michaelis_menten/Vmax"))
+            {
+              params.set<double>("vessel/"+BC_name+"/secretion/michaelis_menten/Vmax") = -0.001;
+              bdm::Log::Warning("ABM4bio",
+                "Michaelis-Menten Vmax not provided for vessel/"+BC_name
+                +"; defaulting to -0.001 (consumption)");
+            }
+          if (! params.have_parameter<double>("vessel/"+BC_name+"/secretion/michaelis_menten/Km"))
+            {
+              params.set<double>("vessel/"+BC_name+"/secretion/michaelis_menten/Km") = 1.0;
+              bdm::Log::Warning("ABM4bio",
+                "Michaelis-Menten Km not provided for vessel/"+BC_name
+                +"; defaulting to 1.0");
+            }
+          //
+          bdm::Log::Info("ABM4bio",
+            "Michaelis-Menten model ENABLED for vessel/"+BC_name
+            +" (Vmax="+std::to_string(params.get<double>("vessel/"+BC_name+"/secretion/michaelis_menten/Vmax"))
+            +", Km="+std::to_string(params.get<double>("vessel/"+BC_name+"/secretion/michaelis_menten/Km"))+")");
         }
       // ...end of biochemicals (substances) loop
     }
@@ -1987,7 +2708,8 @@ void reinit_cells(bdm::Simulation& sim,
               bdm::BiologicalCell* cell = new bdm::BiologicalCell(CP_ID, xyz);
               cell->SetPhase(ccp);
               cell->SetDiameter(dia);
-              cell->SetAdherence(0.0);
+              cell->SetAdherence(params.have_parameter<double>(CP_name+"/adherence")
+                               ? params.get<double>(CP_name+"/adherence") : 0.0);
               if (params.have_parameter<double>(CP_name+"/density"))
                 cell->SetDensity(params.get<double>(CP_name+"/density"));
               cell->SetParametersPointer(&params);
@@ -2581,6 +3303,8 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       //
       // space vectors corresponding to the diffusion grid
       // the size of which in principle is the same for all substances
+      // NOTE: query points are placed at voxel CENTERS (edge + DS/2)
+      //       to match BioDynaMo's floor-based GetBoxIndex mapping
       if ( dg_vec.empty() )
         {
           // check first for type of simulation domain
@@ -2589,13 +3313,13 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
               // iterate for all points of the Cartesian grid
               for (int K=N/2-1; K<=N/2+1; K++)
                 {
-                  const double Z = S_min + DS * K;
-                  for (int J=1; J<N; J++)
+                  const double Z = S_min + DS * K + DS * 0.5;
+                  for (int J=0; J<N; J++)
                     {
-                      const double Y = S_min + DS * J;
-                      for (int I=1; I<N; I++)
+                      const double Y = S_min + DS * J + DS * 0.5;
+                      for (int I=0; I<N; I++)
                         {
-                          const double X = S_min + DS * I;
+                          const double X = S_min + DS * I + DS * 0.5;
                           // upload this point into container
                           dg_vec.push_back( {X, Y, Z} );
                         }
@@ -2605,15 +3329,15 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
           else
             {
               // iterate for all points of the Cartesian grid
-              for (int K=1; K<N; K++)
+              for (int K=0; K<N; K++)
                 {
-                  const double Z = S_min + DS * K;
-                  for (int J=1; J<N; J++)
+                  const double Z = S_min + DS * K + DS * 0.5;
+                  for (int J=0; J<N; J++)
                     {
-                      const double Y = S_min + DS * J;
-                      for (int I=1; I<N; I++)
+                      const double Y = S_min + DS * J + DS * 0.5;
+                      for (int I=0; I<N; I++)
                         {
-                          const double X = S_min + DS * I;
+                          const double X = S_min + DS * I + DS * 0.5;
                           // upload this point into container
                           dg_vec.push_back( {X, Y, Z} );
                         }
@@ -2959,8 +3683,8 @@ void reinit_biochemicals(bdm::Simulation& sim,
       // access the BioDynaMo diffusion grid
       auto* dg = rm->GetDiffusionGrid(BC_name);
       //
-      const double minBC = params.get<double>(BC_name+"/initial_value/min"),
-                   maxBC = params.get<double>(BC_name+"/initial_value/max");
+      const double minBC = bdm::GetInitialValueMin(params, BC_name),
+                   maxBC = bdm::GetInitialValueMax(params, BC_name);
       //
       std::string fn = params.get<std::string>(BC_name+"/dynamic/from_file");
       //
@@ -3008,6 +3732,361 @@ void reinit_biochemicals(bdm::Simulation& sim,
       ASSERT_(0==std::system(cmd.c_str()),
               "could not save a copy of the convection field data file");
       // ...end of biochemical (cue) loop
+    }
+  // ---------------------------------------------------------------------------
+  // CAP scheduler: apply CAP boundary values over an exact physical-time window
+  if ( params.have_parameter<bool>("CAP/enabled") && params.get<bool>("CAP/enabled") )
+    {
+      const int start_step    = params.have_parameter<int>("CAP/start_step")
+                              ? params.get<int>("CAP/start_step") : 0;
+      const int duration_steps = params.have_parameter<int>("CAP/duration_steps")
+                               ? params.get<int>("CAP/duration_steps") : 0;
+      const bool all_faces = params.have_parameter<bool>("CAP/all_faces")
+                           ? params.get<bool>("CAP/all_faces")
+                           : false;
+      const std::string cap_face = params.have_parameter<std::string>("CAP/face")
+                                 ? params.get<std::string>("CAP/face")
+                                 : std::string("z_max");
+      const bool has_start_time_h = params.have_parameter<double>("CAP/start_time_h");
+      const bool has_duration_h = params.have_parameter<double>("CAP/duration_h");
+      const double dt_h = params.get<double>("time_step");
+      ASSERT_(dt_h > 0.0, "parameter \"time_step\" must be positive");
+
+      const bool valid_cap_face = (cap_face == "x_min" || cap_face == "x_max" ||
+                                   cap_face == "y_min" || cap_face == "y_max" ||
+                                   cap_face == "z_min" || cap_face == "z_max");
+      ASSERT_(all_faces || valid_cap_face,
+              "parameter \"CAP/face\" must be one of: x_min, x_max, y_min, y_max, z_min, z_max");
+
+      const std::string cap_application_mode =
+        params.have_parameter<std::string>("CAP/application_mode")
+        ? params.get<std::string>("CAP/application_mode")
+        : std::string("boundary_faces");
+      const std::string cap_post_treatment_mode =
+        params.have_parameter<std::string>("CAP/post_treatment_mode")
+        ? params.get<std::string>("CAP/post_treatment_mode")
+        : std::string("none");
+      ASSERT_(cap_application_mode == "boundary_faces"
+              || cap_application_mode == "boundary_dirichlet"
+              || cap_application_mode == "boundary_neumann"
+              || cap_application_mode == "uniform_grid"
+              || cap_application_mode == "uniform_domain",
+              "parameter \"CAP/application_mode\" must be one of: boundary_faces, boundary_dirichlet, boundary_neumann, uniform_grid, uniform_domain");
+      ASSERT_(cap_post_treatment_mode == "none"
+              || cap_post_treatment_mode == "neumann_zero_gradient",
+              "parameter \"CAP/post_treatment_mode\" must be one of: none, neumann_zero_gradient");
+
+      // Reinit happens before the upcoming BioDynaMo step.
+      // Index `time` represents the start of that step interval [time*dt, (time+1)*dt).
+      const double step_window_start_h = std::max(0.0, static_cast<double>(time) * dt_h);
+      const double step_window_end_h = step_window_start_h + dt_h;
+      const double exposure_start_h = has_start_time_h
+                                    ? params.get<double>("CAP/start_time_h")
+                                    : static_cast<double>(start_step) * dt_h;
+
+      const bool finite_duration = has_duration_h
+                                 ? (params.get<double>("CAP/duration_h") > 0.0)
+                                 : (duration_steps > 0);
+      const double exposure_duration_h = finite_duration
+                                       ? (has_duration_h
+                                          ? params.get<double>("CAP/duration_h")
+                                          : static_cast<double>(duration_steps) * dt_h)
+                                       : 0.0;
+      const double exposure_end_h = exposure_start_h + exposure_duration_h;
+      auto exposure_overlap_h = [&] () -> double {
+        if (!finite_duration)
+          {
+            const double overlap_start = std::max(step_window_start_h, exposure_start_h);
+            return std::max(0.0, step_window_end_h - overlap_start);
+          }
+        return std::max(0.0,
+                        std::min(step_window_end_h, exposure_end_h)
+                      - std::max(step_window_start_h, exposure_start_h));
+      };
+      const double exposure_fraction = std::clamp(exposure_overlap_h() / dt_h, 0.0, 1.0);
+
+      const bool cap_active = exposure_fraction > 0.0;
+      const bool cap_post_treatment_active = finite_duration
+                                           && step_window_start_h >= exposure_end_h
+                                           && cap_post_treatment_mode == "neumann_zero_gradient";
+      auto set_boundary_constant = [] (bdm::DiffusionGrid* dg, const std::string& face, bool use_all_faces, double value) {
+        if (!dg) { return; }
+        const int res = static_cast<int>(dg->GetResolution());
+        if (res <= 1) { return; }
+        auto apply = [&] (auto coord_selector) {
+          for (int x = 0; x < res; ++x)
+            for (int y = 0; y < res; ++y)
+              for (int z = 0; z < res; ++z)
+                {
+                  if (!coord_selector(x,y,z)) continue;
+                  std::array<uint32_t,3> box = {static_cast<uint32_t>(x), static_cast<uint32_t>(y), static_cast<uint32_t>(z)};
+                  size_t b = dg->GetBoxIndex(box);
+                  double current = dg->GetConcentration(b);
+                  dg->ChangeConcentrationBy(b, value - current);
+                }
+        };
+        if (use_all_faces)
+          apply([&](int x, int y, int z){
+            return x == 0 || y == 0 || z == 0 || x == res - 1 || y == res - 1 || z == res - 1;
+          });
+        else if (face == "z_max")
+          apply([&](int, int, int z){ return z == res-1; });
+        else if (face == "z_min")
+          apply([&](int, int, int z){ return z == 0; });
+        else if (face == "x_min")
+          apply([&](int x, int, int){ return x == 0; });
+        else if (face == "x_max")
+          apply([&](int x, int, int){ return x == res-1; });
+        else if (face == "y_min")
+          apply([&](int, int y, int){ return y == 0; });
+        else if (face == "y_max")
+          apply([&](int, int y, int){ return y == res-1; });
+      };
+      auto set_uniform_constant = [] (bdm::DiffusionGrid* dg, double value) {
+        if (!dg) { return; }
+        const int res = static_cast<int>(dg->GetResolution());
+        if (res <= 0) { return; }
+        for (int x = 0; x < res; ++x)
+          for (int y = 0; y < res; ++y)
+            for (int z = 0; z < res; ++z)
+              {
+                std::array<uint32_t,3> box = {static_cast<uint32_t>(x), static_cast<uint32_t>(y), static_cast<uint32_t>(z)};
+                size_t b = dg->GetBoxIndex(box);
+                double current = dg->GetConcentration(b);
+                dg->ChangeConcentrationBy(b, value - current);
+              }
+      };
+      const double cap_h2o2 =
+        bdm::GetNumericParameterFlexible(params,
+                                         "CAP/H2O2/concentration",
+                                         0.0);
+      const double cap_no2 =
+        bdm::GetNumericParameterFlexible(params,
+                                         "CAP/NO2_/concentration",
+                                         0.0);
+      bdm::ValidateCapConcentrations(cap_h2o2, cap_no2);
+      const double cap_h2o2_step = cap_h2o2 * exposure_fraction;
+      const double cap_no2_step = cap_no2 * exposure_fraction;
+      auto apply_cap_boundary_condition = [&] (bdm::DiffusionGrid* dg, bdm::BoundaryConditionType bc_type, double value) {
+        if (!dg) { return; }
+        dg->SetBoundaryConditionType(bc_type);
+        dg->SetBoundaryCondition(
+          std::make_unique<bdm::ConstantBoundaryCondition>(value));
+      };
+
+      if (cap_application_mode == "boundary_dirichlet"
+          || cap_application_mode == "boundary_neumann")
+        {
+          const auto bc_type = cap_post_treatment_active
+                             ? bdm::BoundaryConditionType::kNeumann
+                             : (cap_application_mode == "boundary_dirichlet"
+                                ? bdm::BoundaryConditionType::kDirichlet
+                                : bdm::BoundaryConditionType::kNeumann);
+          apply_cap_boundary_condition(rm->GetDiffusionGrid("H2O2"), bc_type,
+                                       cap_active ? cap_h2o2_step : 0.0);
+          apply_cap_boundary_condition(rm->GetDiffusionGrid("NO2_"), bc_type,
+                                       cap_active ? cap_no2_step : 0.0);
+        }
+      else if (cap_post_treatment_active)
+        {
+          apply_cap_boundary_condition(rm->GetDiffusionGrid("H2O2"),
+                                       bdm::BoundaryConditionType::kNeumann, 0.0);
+          apply_cap_boundary_condition(rm->GetDiffusionGrid("NO2_"),
+                                       bdm::BoundaryConditionType::kNeumann, 0.0);
+        }
+      else if (cap_active)
+        {
+          if (cap_h2o2_step!=0.0)
+            {
+              auto* dgH = rm->GetDiffusionGrid("H2O2");
+              if (cap_application_mode == "uniform_grid"
+                  || cap_application_mode == "uniform_domain")
+                set_uniform_constant(dgH, cap_h2o2_step);
+              else
+                set_boundary_constant(dgH, cap_face, all_faces, cap_h2o2_step);
+            }
+          if (cap_no2_step!=0.0)
+            {
+              auto* dgN = rm->GetDiffusionGrid("NO2_");
+              if (cap_application_mode == "uniform_grid"
+                  || cap_application_mode == "uniform_domain")
+                set_uniform_constant(dgN, cap_no2_step);
+              else
+                set_boundary_constant(dgN, cap_face, all_faces, cap_no2_step);
+            }
+        }
+    }
+
+  // Generic one-sided inlet for any biochemical
+  for (const auto& BC_name : biochem)
+    {
+      const bool inlet_enabled = params.have_parameter<bool>(BC_name+"/inlet/enabled")
+                               ? params.get<bool>(BC_name+"/inlet/enabled")
+                               : false;
+      if (!inlet_enabled) continue;
+
+      const std::string face = params.have_parameter<std::string>(BC_name+"/inlet/face")
+                             ? params.get<std::string>(BC_name+"/inlet/face")
+                             : std::string("z_max");
+      const double value = params.have_parameter<double>(BC_name+"/inlet/value")
+                         ? params.get<double>(BC_name+"/inlet/value")
+                         : bdm::GetInitialValueMax(params, BC_name);
+      bdm::ValidateNormalizedConcentrationValue(value, BC_name+"/inlet/value");
+
+      // set value on the specified face only
+      auto* dg = rm->GetDiffusionGrid(BC_name);
+      if (dg)
+        {
+          const int res = static_cast<int>(dg->GetResolution());
+          if (res > 0)
+            {
+              auto set_face_constant = [&] () {
+                auto apply = [&] (auto coord_selector) {
+                  for (int x = 0; x < res; ++x)
+                    for (int y = 0; y < res; ++y)
+                      for (int z = 0; z < res; ++z)
+                        {
+                          if (!coord_selector(x,y,z)) continue;
+                          std::array<uint32_t,3> box = {static_cast<uint32_t>(x), static_cast<uint32_t>(y), static_cast<uint32_t>(z)};
+                          size_t b = dg->GetBoxIndex(box);
+                          double current = dg->GetConcentration(b);
+                          dg->ChangeConcentrationBy(b, value - current);
+                        }
+                };
+                if (face == "z_max")
+                  apply([&](int, int, int z){ return z == res-1; });
+                else if (face == "z_min")
+                  apply([&](int, int, int z){ return z == 0; });
+                else if (face == "x_min")
+                  apply([&](int x, int, int){ return x == 0; });
+                else if (face == "x_max")
+                  apply([&](int x, int, int){ return x == res-1; });
+                else if (face == "y_min")
+                  apply([&](int, int y, int){ return y == 0; });
+                else if (face == "y_max")
+                  apply([&](int, int y, int){ return y == res-1; });
+              };
+              set_face_constant();
+            }
+        }
+    }
+
+  // Linear gradient boundary enforcement: pin the boundary faces each step
+  for (const auto& BC_name : biochem)
+    {
+      const bool linear_gradient_enabled =
+        params.have_parameter<bool>(BC_name+"/initial_value/linear_gradient/enabled")
+        ? params.get<bool>(BC_name+"/initial_value/linear_gradient/enabled")
+        : false;
+      if (!linear_gradient_enabled) continue;
+
+      const std::string grad_axis =
+        params.get<std::string>(BC_name+"/initial_value/linear_gradient/axis");
+      const double grad_min =
+        params.get<double>(BC_name+"/initial_value/linear_gradient/min_value1");
+      const double grad_max =
+        params.get<double>(BC_name+"/initial_value/linear_gradient/max_value1");
+
+      const bool secondary_enabled =
+        params.have_parameter<std::string>(BC_name+"/initial_value/linear_gradient/axis2");
+      const std::string grad_axis2 = secondary_enabled
+        ? params.get<std::string>(BC_name+"/initial_value/linear_gradient/axis2")
+        : std::string("");
+      const double grad2_min = secondary_enabled
+        ? params.get<double>(BC_name+"/initial_value/linear_gradient/min_value2")
+        : 0.0;
+      const double grad2_max = secondary_enabled
+        ? params.get<double>(BC_name+"/initial_value/linear_gradient/max_value2")
+        : 0.0;
+
+      auto* dg = rm->GetDiffusionGrid(BC_name);
+      if (!dg) continue;
+      const int res = static_cast<int>(dg->GetResolution());
+      if (res <= 0) continue;
+
+      const double domain_min = params.get<double>("min_boundary");
+      const double domain_max = params.get<double>("max_boundary");
+      const double domain_range = domain_max - domain_min;
+
+      // helper: compute the gradient value at a given grid box
+      auto grad_value = [&] (int bx, int by, int bz) -> double {
+        // map box index to normalized coordinate [0,1]
+        double t1 = 0.0;
+        if      (grad_axis == "x") t1 = static_cast<double>(bx) / (res - 1);
+        else if (grad_axis == "y") t1 = static_cast<double>(by) / (res - 1);
+        else                       t1 = static_cast<double>(bz) / (res - 1);
+        double value = grad_min + t1 * (grad_max - grad_min);
+        if (secondary_enabled) {
+          double t2 = 0.0;
+          if      (grad_axis2 == "x") t2 = static_cast<double>(bx) / (res - 1);
+          else if (grad_axis2 == "y") t2 = static_cast<double>(by) / (res - 1);
+          else                        t2 = static_cast<double>(bz) / (res - 1);
+          value += grad2_min + t2 * (grad2_max - grad2_min);
+        }
+        return value;
+      };
+
+      // pin the boundary faces of the primary gradient axis
+      auto pin_face = [&] (auto coord_selector) {
+        for (int x = 0; x < res; ++x)
+          for (int y = 0; y < res; ++y)
+            for (int z = 0; z < res; ++z)
+              {
+                if (!coord_selector(x,y,z)) continue;
+                std::array<uint32_t,3> box = {static_cast<uint32_t>(x),
+                                              static_cast<uint32_t>(y),
+                                              static_cast<uint32_t>(z)};
+                size_t b = dg->GetBoxIndex(box);
+                double val = grad_value(x, y, z);
+                double current = dg->GetConcentration(b);
+                dg->ChangeConcentrationBy(b, val - current);
+              }
+      };
+
+      if (grad_axis == "x")
+        {
+          pin_face([&](int x,int,int){ return x == 0;     });
+          pin_face([&](int x,int,int){ return x == res-1;  });
+        }
+      else if (grad_axis == "y")
+        {
+          pin_face([&](int,int y,int){ return y == 0;     });
+          pin_face([&](int,int y,int){ return y == res-1;  });
+        }
+      else
+        {
+          pin_face([&](int,int,int z){ return z == 0;     });
+          pin_face([&](int,int,int z){ return z == res-1;  });
+        }
+      // pin the boundary faces of the secondary gradient axis
+      if (secondary_enabled)
+        {
+          if (grad_axis2 == "x")
+            {
+              pin_face([&](int x,int,int){ return x == 0;     });
+              pin_face([&](int x,int,int){ return x == res-1;  });
+            }
+          else if (grad_axis2 == "y")
+            {
+              pin_face([&](int,int y,int){ return y == 0;     });
+              pin_face([&](int,int y,int){ return y == res-1;  });
+            }
+          else
+            {
+              pin_face([&](int,int,int z){ return z == 0;     });
+              pin_face([&](int,int,int z){ return z == res-1;  });
+            }
+        }
+    }
+  if ( params.have_parameter<bool>("CAP/enabled") && params.get<bool>("CAP/enabled") )
+    {
+      const double dt_h = params.get<double>("time_step");
+      for (const auto& BC_name : biochem)
+        {
+          if (!bdm::UseImplicitCapTransport(params, BC_name)) continue;
+          bdm::ApplyImplicitTransportStep(rm->GetDiffusionGrid(BC_name),
+                                          params, BC_name, dt_h);
+        }
     }
 }
 // =============================================================================
@@ -3152,7 +4231,8 @@ void ioflux_cells(bdm::Simulation& sim,
               bdm::BiologicalCell* cell = new bdm::BiologicalCell(CP_ID, xyz);
               cell->SetPhase(ccp);
               cell->SetDiameter(dia);
-              cell->SetAdherence(0.0);
+              cell->SetAdherence(params.have_parameter<double>(CP_name+"/adherence")
+                               ? params.get<double>(CP_name+"/adherence") : 0.0);
               if (params.have_parameter<double>(CP_name+"/density"))
                 cell->SetDensity(params.get<double>(CP_name+"/density"));
               cell->SetParametersPointer(&params);
@@ -3241,6 +4321,8 @@ int simulate(const std::string& fname, const int seed)
   init_cells(sim, cells, biochem);
   // load the convection field data in the simulation
   init_convection(sim);
+  // enforce t=0 dynamic boundary conditions before the first simulated step
+  reinit_biochemicals(sim, biochem, 0);
   // check for cells input/output flux to the domain
   ioflux_cells(sim, cells, 0);
   // generate file to save simulation statistics
@@ -3254,25 +4336,50 @@ int simulate(const std::string& fname, const int seed)
             stat_step = params.get<int>("statistics_interval"),
             viz_step = params.get<int>("visualization_interval");
   const double time_step = params.get<double>("time_step");
+  const bool early_stop_on_cell_limit =
+    params.have_parameter<bool>("simulation/early_stop_on_total_cells_exceeded")
+    ? params.get<bool>("simulation/early_stop_on_total_cells_exceeded")
+    : false;
+  const int total_cell_limit =
+    params.have_parameter<int>("simulation/total_cell_limit")
+    ? params.get<int>("simulation/total_cell_limit")
+    : std::numeric_limits<int>::max();
   for (int time=1; time<=n_time; time++)
     {
       params.set<int>("index time") = time;
       const double TIME = time*time_step;
       params.set<double>("current time") = TIME;
       time_status_bar(std::cout, time, n_time, TIME);
+      // t=0 conditions are already applied during initialization.
+      // For later steps, update fields for the upcoming interval before stepping.
+      if (time > 1) reinit_biochemicals(sim, biochem, time-1);
       // run the BioDynaMo simulator for one step
       sim.GetScheduler()->Simulate(1);
       if (1==time) one_off_init(sim);
       // save simulation statistics in a file stream
       if (0==time%stat_step) save_stats(sim, cells, fstat);
-      // output data for Paraview visualization
+      // output data for Paraview visualization (after inlet enforcement)
       if (0==time%viz_step) save_snapshot(sim, time);
+      if (early_stop_on_cell_limit)
+        {
+          int total_cells = 0;
+          auto* rm = sim.GetResourceManager();
+          rm->ForEachAgent([&] (bdm::Agent* a) {
+            if (dynamic_cast<bdm::BiologicalCell*>(a))
+              ++total_cells;
+          });
+          if (total_cells > total_cell_limit)
+            {
+              std::cout << "Simulation early stop: total cell count "
+                        << total_cells << " exceeded limit " << total_cell_limit
+                        << " at time " << TIME << std::endl;
+              break;
+            }
+        }
       // reset the data for the obstacles in the simulation
       reinit_obstacles(time);
       // reset some data for all cells in the simulation
       reinit_cells(sim, cells);
-      // reset some data for biochemical species (if dynamic)
-      reinit_biochemicals(sim, biochem, time);
       // check for cells input/output flux to the domain
       ioflux_cells(sim, cells, time);
       // ...and convection field (if present)
@@ -3285,11 +4392,10 @@ int simulate(const std::string& fname, const int seed)
   obstacles.clear();
   io_flux.clear();
   dg_vec.clear();
+  vessel_map__ID_age.clear();
   // close file for simulation statistics
   fstat.close();
   // exit the function normally
   return 0;
 }
-// =============================================================================
-#endif // _ABM4bio_H_
-// =============================================================================
+#endif

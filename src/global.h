@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <functional>
 #include <random>
+#include <cmath>
 #include <unistd.h>
 #include <cstdlib>
 #include <cstdio>
