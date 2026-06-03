@@ -22,14 +22,14 @@ simulation_obstacles,            int, 3
 #,#,#
 #,#,#
 simulation_obstacle/1/pattern,     string, STL
-simulation_obstacle/1/pattern/STL, string, ./wall-1.stl
+simulation_obstacle/1/pattern/STL, string, obstacles/wall-1.stl
 #,#,#
 simulation_obstacle/2/pattern,     string, STL
-simulation_obstacle/2/pattern/STL, string, ./wall-2.stl
+simulation_obstacle/2/pattern/STL, string, obstacles/wall-2.stl
 #,#,#
 simulation_obstacle/3/pattern,          string, scaffold
-# simulation_obstacle/3/pattern/scaffold, string, ./RVE.1d
-simulation_obstacle/3/pattern/scaffold, string, ./D14-10.0-20.0-45-5-5-4.1d
+simulation_obstacle/3/pattern/scaffold, string, obstacles/RVE/D14-10.0-20.0-45-5-5-4.1d
+#simulation_obstacle/3/pattern/scaffold, string, obstacles/RVE/RVE.1d
 #,#,#
 #,#,#
 cell/phenotypes,                   string, a_cell
@@ -56,10 +56,10 @@ a_cell/mechanism_order, int, 10
 a_cell/can_migrate, bool, true
 a_cell/can_migrate/probability,                     float, 0.9999
 a_cell/can_migrate/half_range,                      float, 1.00
-a_cell/can_migrate/chemotaxis/O2,                   float,-2.00e-14
+a_cell/can_migrate/chemotaxis/O2,                   float,+0.50
 a_cell/can_migrate/chemotaxis/O2/threshold,         float,+1e-12
 a_cell/can_migrate/chemotaxis/O2/probability,       float, 0.9999
-a_cell/can_migrate/chemotaxis/O2/normalize_gradient, bool, false
+a_cell/can_migrate/chemotaxis/O2/normalize_gradient, bool, true
 a_cell/can_polarize, bool, true
 a_cell/can_polarize/probability,         float, 0.9999
 a_cell/can_polarize/migration/dependency, bool, true

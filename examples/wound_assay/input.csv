@@ -47,11 +47,11 @@ cancer_cell/initial_population,     int, 565
 cancer_cell/initial_population/std, int,   0
 cancer_cell/initial_population/pattern, string, box/outside
 cancer_cell/initial_population/pattern/box/point_A/0, float, -490.0
-cancer_cell/initial_population/pattern/box/point_A/1, float, -750.1
-cancer_cell/initial_population/pattern/box/point_A/2, float, -750.1
+cancer_cell/initial_population/pattern/box/point_A/1, float, -1.0
+cancer_cell/initial_population/pattern/box/point_A/2, float, -1.0
 cancer_cell/initial_population/pattern/box/point_B/0, float, +490.0
-cancer_cell/initial_population/pattern/box/point_B/1, float, +750.1
-cancer_cell/initial_population/pattern/box/point_B/2, float, +750.1
+cancer_cell/initial_population/pattern/box/point_B/1, float, +1.0
+cancer_cell/initial_population/pattern/box/point_B/2, float, +1.0
 cancer_cell/mechanism_order, int, 10
 cancer_cell/can_apoptose, bool, true
 cancer_cell/can_apoptose/probability,                    float, 0.0005

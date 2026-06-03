@@ -36,3 +36,7 @@ examples/*/results/*
 *.exe
 *.out
 *.app
+
+# Various uncategorized files
+errors
+

@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstddef>
+#include <ctime>
 #include <typeinfo>
 #include <sys/stat.h>
 // =============================================================================
@@ -124,6 +125,7 @@ inline double pow9(const double& v) { return v*pow8(v); }
 // =============================================================================
 inline int sign(const double r) { return ( r>=0.0 ? +1 : -1 ); }
 inline double Macaulay(double (*f)(double), const double x) { return (f(x)<0.0 ? 0.0 : f(x)); }
+inline int coin_flip() { int result = rand() % 2; return result; }
 // =============================================================================
 inline double degrees_to_radians(const double& d) { return (bdm::Math::kPi*d/180.0); }
 inline double radians_to_degrees(const double& r) { return (180.0*r/bdm::Math::kPi); }
@@ -230,9 +232,19 @@ bdm::Double3x3 add(const bdm::Double3x3& a, const bdm::Double3x3& b)
 }
 // =============================================================================
 inline
+double magnitude_2(const bdm::Double3& v)
+{
+  return pow2(v[0])+pow2(v[1])+pow2(v[2]);
+}
+inline
+double magnitude(const bdm::Double3& v)
+{
+  return sqrt(magnitude_2(v));
+}
+inline
 double L2norm(const bdm::Double3& v)
 {
-  return sqrt(pow2(v[0])+pow2(v[1])+pow2(v[2]));
+  return magnitude(v);
 }
 inline
 bool normalize(const bdm::Double3& v, bdm::Double3& r, double tol = 1.0e-6)

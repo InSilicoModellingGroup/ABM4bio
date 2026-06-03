@@ -72,7 +72,8 @@ void bdm::BiologicalCell::RunBiochemics()
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, xyz, tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, xyz, tol))
+    return;
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -367,8 +368,8 @@ bool bdm::BiologicalCell::CheckPositionValidity()
           if ( updated_xyz )
             this->SetPosition(xyz);
         }
-      else if ( this->params()->get<bool>("simulation_domain_is_polar") &&
-              ! this->params()->get<bool>("simulation_domain_is_2D")    )
+      else if (   this->params()->get<bool>("simulation_domain_is_polar") &&
+                ! this->params()->get<bool>("simulation_domain_is_2D")    )
         {
           const double radius = sqrt(pow2(xyz[0]-meanCOORD)
                                     +pow2(xyz[1]-meanCOORD)
@@ -534,7 +535,7 @@ bool bdm::BiologicalCell::CheckPositionValidity()
     }
   // access the pointer to parameter of the simulation obstacles object
   const SimulationObstacles* obstacles =
-    this->params()->get<SimulationObstacles*>("simulation_obstacles");
+    this->params()->get<SimulationObstacles*>("simulation_obstacles_data");
   // check if cell has reached any of the 'box' simulation obstacles
   for (size_t l=0; l<obstacles->box.size(); l++)
     {
@@ -729,57 +730,56 @@ bool bdm::BiologicalCell::CheckPositionValidity()
       //
       const double safe_distance = 0.75 * this->GetDiameter();
       //
-      std::map<double, std::pair<unsigned int,bdm::Double3>> tri3_proj;
+      std::pair<int, bdm::Double3> tri3__proj{-1, bdm::Double3()};
       //
       const unsigned int n_tri3 = obstacles->surface[l].triangle.size();
       for (unsigned int t=0; t<n_tri3; t++)
         {
           const ObstacleSTL::Triangle& tri3 = obstacles->surface[l].triangle[t];
-          // origin (center) point to triangle
-          const bdm::Double3& origin = tri3.center;
-          // outward unit normal vector to triangle
-          const bdm::Double3& normal = tri3.normal;
-          // internal point wrt the user-defined surface
-          const bdm::Double3& l0 = tri3.inside;
-          // cell position intersection to the user-defined surface
-          bdm::Double3 intx;
-          if (! line_intersects_plane(l0, xyz, normal, origin, intx))
+          // projection of the cell to the (triangular) surface
+          const bdm::Double3 proj = project_to_plane(tri3.normal, tri3.center, xyz);
+          // skip following computations if the projection of this
+          // cell is outside the (surface defining the) triangle
+          if (!is_inside_triangle(tri3.vertex_0, tri3.vertex_1, tri3.vertex_2, proj))
             continue;
-          // skip following computations if projection point is outside triangle
-          if (! is_inside_triangle(tri3.vertex_0, tri3.vertex_1, tri3.vertex_2, intx))
-            continue;
-          // cell position projection to the user-defined surface
-          const bdm::Double3 proj = project_to_plane(normal, origin, xyz);
           //
           const bdm::Double3 xyz_proj = xyz - proj;
-          const double distance = L2norm(xyz_proj);
-          // skip following if cell is well outside the user-defined surface
-          if ((xyz_proj*normal)>0.0 && distance>this->GetDiameter())
-            continue;
-          //
-          auto data = std::make_pair(t, proj);
-          tri3_proj.insert( std::make_pair(distance, data) );
+          // skip following computations if cell is positioned
+          // well outside of the (triangular) surface
+          if (tri3.normal*xyz_proj>0.0)
+            if (L2norm(xyz_proj)>this->GetDiameter())
+              continue;
+          // break following computations if cell is positioned
+          // slightly underneath the (triangular) surface
+          if (tri3.normal*xyz_proj<0.0)
+            if (L2norm(xyz_proj)<=this->GetDiameter())
+              {
+                xyz = proj + tri3.normal * safe_distance;
+                // enforce cell position with respect to the obstacle surface
+                this->SetPosition(xyz);
+                // cell has remained inside the simulation domain, now exit
+                return true;
+              }
+          // save data: index of the triangle (obstacle) and the
+          // projection of the cell
+          tri3__proj = std::make_pair(t, proj);
+          // now exit the loop
+          break;
           // ...end of triangles loop
         }
       //
-      if (!tri3_proj.empty())
+      if (-1 != tri3__proj.first)
         {
-          std::map<double, std::pair<unsigned int,bdm::Double3>>::const_iterator
-            ci = tri3_proj.begin();
           // access the triangle first...
-          const unsigned int t = ci->second.first;
+          const int t = tri3__proj.first;
           const ObstacleSTL::Triangle& tri3 = obstacles->surface[l].triangle[t];
-          // outward unit normal vector to triangle
-          bdm::Double3 normal = tri3.normal;
-          if (!normalize(normal, normal))
-            ABORT_("could not normalize the normal vector");
           // cell position projection to the user-defined surface
-          const bdm::Double3& proj = ci->second.second;
+          const bdm::Double3& proj = tri3__proj.second;
           //
-          xyz = proj + normal * safe_distance;
-          // enforce cell to lie on the (box) obstacle surface
+          xyz = proj + tri3.normal * safe_distance;
+          // enforce cell position with respect to the obstacle surface
           this->SetPosition(xyz);
-          //
+          // calculate the amount of displacement a cell achieves
           displace += xyz;
           this->UpdateTrail(L2norm(displace));
           // cell has remained inside the simulation domain
@@ -797,29 +797,31 @@ bool bdm::BiologicalCell::CheckPositionValidity()
       bdm::Double3 xyz = this->GetPosition();
       bdm::Double3 displace = xyz * (-1.0);
       //
+      const double safe_distance = 0.55 * this->GetDiameter();
+      //
       const unsigned int n_segm = obstacles->scaffold[l].segment.size();
       for (unsigned int s=0; s<n_segm; s++)
         {
           const ObstacleScaffold::Segment& segm = obstacles->scaffold[l].segment[s];
-          //
+          // the two vertices of the segment
           const bdm::Double3 n0 = segm.vertex_0,
                              n1 = segm.vertex_1;
-          // check if cell position is inside this obstacle
+          // skip following computations if the projection of this
+          // cell is outside of the segment
           if (! is_inside_segment(n0, n1, xyz))
             continue;
           // cell position projection to the user-defined segment
           const bdm::Double3 proj = project_to_line(n0, n1, xyz);
-          const double distance = L2norm(bdm::Double3(xyz-proj))
-                                - segm.radius;
           //
-          if (distance>rg->Uniform(0.5,1.0)*this->GetDiameter()) continue;
+          const bdm::Double3 xyz_proj = xyz - proj;
           //
-          bdm::Double3 normal = xyz - proj;
-          if (!normalize(normal, normal))
-            ABORT_("could not normalize the normal vector");
+          if (L2norm(xyz_proj)-segm.radius>safe_distance) continue;
           //
-          const double delta = (rg->Uniform(0.5,1.0)*this->GetDiameter());
-          xyz = proj + normal * delta;
+          bdm::Double3 uvec;
+          ASSERT_(normalize(xyz_proj, uvec),
+                  "could not normalize the space vector");
+          //
+          xyz = proj + uvec * (segm.radius+safe_distance);
           // enforce cell to lie on the (box) obstacle surface
           this->SetPosition(xyz);
           //
@@ -839,6 +841,8 @@ inline
 bool bdm::BiologicalCell::CheckApoptosisAging()
 {
   if (!this->GetCanApoptose()) return false;
+  // by design only viable (non-necrotic) cells could apoptose
+  if (!this->GetPhenotype()) return false;
   //
   // access BioDynaMo's random number generator
   auto* rg = bdm::Simulation::GetActive()->GetRandom();
@@ -849,8 +853,8 @@ bool bdm::BiologicalCell::CheckApoptosisAging()
   if (this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age")>0.0)
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_apoptose/probability")
-                                +this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age")
-                                *this->GetAge() )
+                               + this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age")
+                               * (this->GetAge()-1.0) )
         return false;
     }
   else
@@ -891,7 +895,8 @@ bool bdm::BiologicalCell::CheckApoptosis()
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -1038,39 +1043,40 @@ bool bdm::BiologicalCell::CheckMigration()
       bdm::Double3 dvec = {0.0, 0.0, 0.0};
       // ensure cell is well within the simulation domain!
       if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-      // iterate for all components of the convection (vector) field
-      for (int ispdm=0; ispdm<SpaceDimension; ispdm++)
-        {
-          const std::string name = "convection_" + std::to_string(ispdm);
-          // access the BioDynaMo diffusion grid
-          auto* dg = rm->GetDiffusionGrid(name);
-          // obtain the convection component
-          const double velocity_comp = GetInterpolatedValue(dg, this->GetPosition(), this->params());
-          // calculate corresponding displacement component
-          const double displacement_comp = velocity_comp * time_step;
-          //
-          dvec[ispdm] += displacement_comp;
-        }
+        // iterate for all components of the convection (vector) field
+        for (int ispdm=0; ispdm<SpaceDimension; ispdm++)
+          {
+            const std::string name = "convection_" + std::to_string(ispdm);
+            // access the BioDynaMo diffusion grid
+            auto* dg = rm->GetDiffusionGrid(name);
+            // obtain the convection component
+            const double velocity_comp = GetInterpolatedValue(dg, this->GetPosition(), this->params());
+            // calculate corresponding displacement component
+            const double displacement_comp = velocity_comp * time_step;
+            //
+            dvec[ispdm] += displacement_comp;
+          }
       //
       const double d_magn = L2norm(dvec);
       // check if distance covered is above a minimum, else ignore
       if (d_magn > this->params()->get<double>("migration_tolerance"))
-      // check if convection contribution is significant compared to the cell adhesion property
-      if (d_magn > max_adhesion)
-        {
-          // update the (cell) displacement vector
-          this->passive_displacement_ += dvec;
-          // scale the (cell) displacement vector wrt the adhesion effect
-          this->passive_displacement_ *= ((d_magn-max_adhesion)/d_magn);
-          // update this flag
-          has_migrated = true;
-        }
+        // check if convection contribution is significant compared to the cell adhesion property
+        if (d_magn > max_adhesion)
+          {
+            // update the (cell) displacement vector
+            this->passive_displacement_ += dvec;
+            // scale the (cell) displacement vector wrt the adhesion effect
+            this->passive_displacement_ *= ((d_magn-max_adhesion)/d_magn);
+            // update this flag
+            has_migrated = true;
+          }
     }
   //
   // check if cell migrates actively due to some inherent random-walk or
   // a biochemical stimulus, i.e. chemotaxis
   if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/probability"))
-    {/// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
+    /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
+    {
       //
       const int index_time = this->params()->get<int>("index time");
       const int strength_time = this->params()->have_parameter<int>(CP_name+"/can_migrate/strength_of_time")
@@ -1261,7 +1267,8 @@ bool bdm::BiologicalCell::CheckMigration()
           //
         } //   --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
       //
-    }/// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
+    }
+    /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
   //
   // check if cell has migrated, if so then revise its spatial coordinates and trail
   if ( has_migrated )
@@ -1398,25 +1405,56 @@ bool bdm::BiologicalCell::CheckTransformation()
                       }
                     // reset the cell behavior (mechanisms order) from old to new one
                     {
-                      const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
-                      if (behavior.size()!=1)
+                      p0 = this->params()->get<double>(CP_new_name+"/principal/0");
+                      p1 = this->params()->get<double>(CP_new_name+"/principal/1");
+                      p2 = this->params()->get<double>(CP_new_name+"/principal/2");
+                    }
+                  //
+                  this->SetCanApoptose(this->params()->get<bool>(CP_new_name+"/can_apoptose"));
+                  this->SetCanGrow(this->params()->get<bool>(CP_new_name+"/can_grow"));
+                  this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
+                  this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
+                  this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
+                  this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+                  this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+                  // reset the cell polarization matrix
+                  if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
+                    this->SetPolarization(diag(p0, p1, p2));
+                  // reset the cell protrusion phenotype
+                  if ( this->GetNumberOfProtrusions() )
+                    {
+                      if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
                         ABORT_("an internal error occurred");
                       //
-                      this->RemoveBehavior(behavior[0]);
+                      // iterate for all (existing) protrusions of this cell
+                      for (int p=0; p<this->GetNumberOfProtrusions(); p++)
+                        {
+                          auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
+                          // assign this cell (that is associated with) to the protrusion created
+                          protrusion->SetCell(this);
+                        }
                     }
-                    const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-                    if (10==mo)
-                      this->AddBehavior(new Biology4BiologicalCell_10());
-                    else
-                      ABORT_("an exception is caught");
-                    // cell has transformed, then proceed to check if it can do other things
-                    return true;
+                  // reset the cell behavior (mechanisms order) from old to new one
+                  {
+                    const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
+                    if (behavior.size()!=1)
+                      ABORT_("an internal error occurred");
+                    //
+                    this->RemoveBehavior(behavior[0]);
                   }
-              //
+                  const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
+                  if (10==mo)
+                    this->AddBehavior(new Biology4BiologicalCell_10());
+                  else
+                    ABORT_("an exception is caught");
+                  // cell has transformed, then proceed to check if it can do other things
+                  return true;
+                }
             //
-          }
-        //...end of substances loop
-      }
+          //
+        }
+      //...end of substances loop
+    }
   // cell has not been through any transformation
   return false;
   //...end of cell transformation
@@ -1457,17 +1495,18 @@ bool bdm::BiologicalCell::CheckPolarization()
   const std::vector<int> perm =
     this->params()->get<std::vector<int>>(CP_name+"/principal/permutation");
   const bdm::Double3 principal = { this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[0])) ,
-                              this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[1])) ,
-                              this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[2])) };
+                                   this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[1])) ,
+                                   this->params()->get<double>(CP_name+"/principal/"+std::to_string(perm[2])) };
   //
   if ( this->params()->get<bool>(CP_name+"/can_polarize/migration/dependency") )
     {
       const int pattern = this->params()->have_parameter<int>(CP_name+"/can_polarize/migration/pattern")
                         ? this->params()->get<int>(CP_name+"/can_polarize/migration/pattern") : 0;
+      // retrieve the actie displacement (vector) of the cell
+      const bdm::Double3 v = this->GetActiveDisplacement();
       // check if cell displacement is considerable to allow the cell self-polarization
-      if (L2norm(this->GetDisplacement()) > this->params()->get<double>("migration_tolerance"))
+      if (L2norm(v) > this->params()->get<double>("migration_tolerance"))
         {
-          bdm::Double3 v = this->GetDisplacement(); // cell displacement (vector) field
           // eigenvectors
           bdm::Double3 n0 = this->params()->get<bool>("simulation_domain_is_2D")
                      ? bdm::Double3{v[0], v[1], 0.0}
@@ -1478,20 +1517,32 @@ bool bdm::BiologicalCell::CheckPolarization()
           bdm::Double3 n2 = cross(n0, n1);
           n1 = cross(n2, n0);
           // normalize all vectors
-          n0.Normalize();
-          n1.Normalize();
-          n2.Normalize();
+          {
+            auto m = L2norm(n0);
+            if (m>1.0e-6) n0 /= m;
+            else return false;
+          }
+          {
+            auto m = L2norm(n1);
+            if (m>1.0e-6) n1 /= m;
+            else return false;
+          }
+          {
+            auto m = L2norm(n2);
+            if (m>1.0e-6) n2 /= m;
+            else return false;
+          }
           // eigenvalues
           double p[3];
           if (0==pattern)
             {
-              p[0] = rg->Uniform(principal[0],  principal_max),
+              p[0] = rg->Uniform(principal[0], principal_max),
               p[1] = rg->Uniform(principal[1],  principal[0]),
               p[2] = rg->Uniform(principal_min, principal[2]);
             }
           else if (1==pattern)
             {
-              p[0] = rg->Uniform(principal[0],  principal_max),
+              p[0] = rg->Uniform(principal[0], principal_max),
               p[1] = rg->Uniform(principal[2],  principal[1]),
               p[2] = rg->Uniform(principal_min, principal[2]);
             }
@@ -1509,51 +1560,64 @@ bool bdm::BiologicalCell::CheckPolarization()
     }
   //
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    // iterate for all substances if cell can
-    // re-orient / polarize
-    for ( std::vector<std::string>::const_iterator
-          ci=substances.begin(); ci!=substances.end(); ci++ )
-      {
-        // access the BioDynaMo diffusion grid
-        auto* dg = rm->GetDiffusionGrid(*ci);
-        const std::string BC_name = dg->GetContinuumName(); // biochemical name
-        const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
-                     threshold = this->params()->get<double>(CP_name+"/can_polarize/"+BC_name+"/threshold");
-        //
-        if ( ( threshold > 0.0 && concentration > +threshold ) ||
-             ( threshold < 0.0 && concentration < -threshold ) )
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
+  // iterate for all substances if cell can
+  // re-orient / polarize
+  for ( std::vector<std::string>::const_iterator
+        ci=substances.begin(); ci!=substances.end(); ci++ )
+    {
+      // access the BioDynaMo diffusion grid
+      auto* dg = rm->GetDiffusionGrid(*ci);
+      const std::string BC_name = dg->GetContinuumName(); // biochemical name
+      const double concentration = GetInterpolatedValue(dg, this->GetPosition(), this->params()),
+                   threshold = this->params()->get<double>(CP_name+"/can_polarize/"+BC_name+"/threshold");
+      //
+      if ( ( threshold > 0.0 && concentration > +threshold ) ||
+           ( threshold < 0.0 && concentration < -threshold ) )
+        {
+          bdm::Double3 v; // substance gradient (vector) field
+          dg->GetGradient(this->GetPosition(), &v);
+          // eigenvectors
+          bdm::Double3 n0 = this->params()->get<bool>("simulation_domain_is_2D")
+                     ? bdm::Double3{v[0], v[1], 0.0}
+                     : bdm::Double3{v[0], v[1], v[2]};
+          bdm::Double3 n1 = this->params()->get<bool>("simulation_domain_is_2D")
+                     ? bdm::Double3{rg->Uniform(-1.,1.), rg->Uniform(-1.,1.), 0.0}
+                     : bdm::Double3{rg->Uniform(-1.,1.), rg->Uniform(-1.,1.), rg->Uniform(-1.,1.)};
+          bdm::Double3 n2 = cross(n0, n1);
+          n1 = cross(n2, n0);
+          // normalize all direction vectors
           {
-            bdm::Double3 v; // substance gradient (vector) field
-            dg->GetGradient(this->GetPosition(), &v);
-            // eigenvectors
-            bdm::Double3 n0 = this->params()->get<bool>("simulation_domain_is_2D")
-                       ? bdm::Double3{v[0], v[1], 0.0}
-                       : bdm::Double3{v[0], v[1], v[2]};
-            bdm::Double3 n1 = this->params()->get<bool>("simulation_domain_is_2D")
-                       ? bdm::Double3{rg->Uniform(-1.,1.), rg->Uniform(-1.,1.), 0.0}
-                       : bdm::Double3{rg->Uniform(-1.,1.), rg->Uniform(-1.,1.), rg->Uniform(-1.,1.)};
-            bdm::Double3 n2 = cross(n0, n1);
-            n1 = cross(n2, n0);
-            // normalize all direction vectors
-            n0.Normalize();
-            n1.Normalize();
-            n2.Normalize();
-            // eigenvalues
-            const double p0 = rg->Uniform(principal[0],  principal_max),
-                         p1 = rg->Uniform(principal[1],  p0),
-                         p2 = rg->Uniform(principal_min, principal[2]);
-            // tensor products of eigenvectors, scaled by respective eigenvalues
-            const bdm::Double3x3 n0Xn0_p0 = tensor(n0, n0, p0),
-                                 n1Xn1_p1 = tensor(n1, n1, p1),
-                                 n2Xn2_p2 = tensor(n2, n2, p2);
-            // update the cell polarization matrix
-            this->polarize_ = n0Xn0_p0 + n1Xn1_p1 + n2Xn2_p2;
-            // cell has polarized, then proceed to check if it can do other things
-            return true;
+            auto m = L2norm(n0);
+            if (m>1.0e-6) n0 /= m;
+            else return false;
           }
-        //...end of substances loop
-      }
+          {
+            auto m = L2norm(n1);
+            if (m>1.0e-6) n1 /= m;
+            else return false;
+          }
+          {
+            auto m = L2norm(n2);
+            if (m>1.0e-6) n2 /= m;
+            else return false;
+          }
+          // eigenvalues
+          const double p0 = rg->Uniform(principal[0], principal_max),
+                       p1 = rg->Uniform(principal[1],  principal[0]),
+                       p2 = rg->Uniform(principal_min, principal[2]);
+          // tensor products of eigenvectors, scaled by respective eigenvalues
+          const bdm::Double3x3 n0Xn0_p0 = tensor(n0, n0, p0),
+                               n1Xn1_p1 = tensor(n1, n1, p1),
+                               n2Xn2_p2 = tensor(n2, n2, p2);
+          // update the cell polarization matrix
+          this->polarize_ = n0Xn0_p0 + n1Xn1_p1 + n2Xn2_p2;
+          // cell has polarized, then proceed to check if it can do other things
+          return true;
+        }
+      //...end of substances loop
+    }
   // cell has not been through any polarization
   return false;
   //...end of cell polarization
@@ -1630,7 +1694,8 @@ bool bdm::BiologicalCell::CheckProtrusion()
   const double protrusion_tol =
     ! this->params()->have_parameter<double>(CP_name+"/can_protrude/tolerance")
     ? tol :      this->params()->get<double>(CP_name+"/can_protrude/tolerance");
-  if (!check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), protrusion_tol))
+  //
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), protrusion_tol))
     return false;
   //
   CellProtrusion c_p;
@@ -2154,7 +2219,8 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
     this->params()->get<std::vector<std::string>>("substances");
   //
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances if cell can
   // transform and then divide (symmetrically)
   for ( std::vector<std::string>::const_iterator
@@ -2322,7 +2388,8 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
     this->params()->get<std::vector<std::string>>("substances");
   //
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances if cell can
   // divide and then transform
   for ( std::vector<std::string>::const_iterator
@@ -2476,11 +2543,75 @@ bool bdm::BiologicalCell::CheckDivision() {
   if ( diameter < diameter_cutoff || this->GetAge() < cell_maturity )
     return false;
   //
+  if (this->params()->get<double>(CP_name+"/can_divide/influence_ratio"))
+    {
+      // the "domain of influence" of a cell to check overlapping...
+      const real_t R = this->GetDiameter()
+                     * this->params()->get<double>(CP_name+"/can_divide/influence_ratio");
+      //
+      if (this->params()->get<bool>("simulation_domain_is_2D"))
+        {
+          const real_t A = bdm::Math::kPi * pow2(R);
+          real_t area(0.0);
+          //
+          rm->ForEachAgent([&] (bdm::Agent* a) {
+            if (auto* other = dynamic_cast<const BiologicalCell*>(a))
+              if (other != this)
+                {
+                  const real_t r = 0.5 * other->GetDiameter();
+                  //
+                  real_t d = L2norm(this->GetPosition()-other->GetPosition());
+                  // https://mathworld.wolfram.com/Circle-CircleIntersection.html
+                  if (d > (R+r))
+                    ;
+                  else if (d <= abs(R-r))
+                    area += bdm::Math::kPi*pow2(r);
+                  else
+                    area += pow2(r)*acos((pow2(d)+pow2(r)-pow2(R))/(2*d*r))
+                          + pow2(R)*acos((pow2(d)-pow2(r)+pow2(R))/(2*d*R))
+                          - 0.5*sqrt((-d+r+R)*(d+r-R)*(d-r+R)*(d+r+R));
+                }
+          });
+          //
+          if (A<=area) return false;
+        }
+      else
+        {
+          const real_t V = bdm::Math::kPi * pow3(R) * (4.0/3.0);
+          real_t volume(0.0);
+          //
+          rm->ForEachAgent([&] (bdm::Agent* a) {
+            if (auto* other = dynamic_cast<const BiologicalCell*>(a))
+              if (other != this)
+                {
+                  const real_t r = 0.5 * other->GetDiameter();
+                  //
+                  real_t d = L2norm(this->GetPosition()-other->GetPosition());
+                  // https://mathworld.wolfram.com/Sphere-SphereIntersection.html
+                  if (d > (R+r))
+                    ;
+                  else if (d <= abs(R-r))
+                    volume += bdm::Math::kPi*pow3(r)*(4.0/3.0);
+                  else
+                    volume += bdm::Math::kPi*pow2(R+r-d)/(12.0*d)
+                            * (d*d+2*d*r-3*r*r+2*d*R-3*R*R+6*r*R);
+                }
+          });
+          //
+          if (V<=volume) return false;
+        }
+      // finished all the check whether there is "vacant" room
+      // so that the cell can further divide
+    }
+  //
   // produce the separation vector
-  const bdm::Double3 axis =
-    { rg->Uniform(-1.0,+1.0) ,
-      rg->Uniform(-1.0,+1.0) ,
-      (this->params()->get<bool>("simulation_domain_is_2D") ? 0.0 : rg->Uniform(-1.0,+1.0)) };
+  bdm::Double3 axis =
+    { coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) ,
+      coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) ,
+      coin_flip() ? rg->Uniform(-1.0,0.0) : rg->Uniform(0.0,+1.0) };
+  if (this->params()->get<bool>("simulation_domain_is_2D"))
+    axis[2] = 0.0;
+  normalize(axis, axis);
   //
   const double volume_ratio = rg->Uniform(0.9,1.1);
   //
@@ -2510,7 +2641,8 @@ bool bdm::BiologicalCell::CheckDivision() {
   //
   // Otherwise, check if at least one substance condition is met
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances if cell can
   // divide (symmetrically)
   for ( std::vector<std::string>::const_iterator
@@ -2575,16 +2707,14 @@ bool bdm::BiologicalCell::CheckProtrusionAxis(bdm::Double3 axis)
   ASSERT_(normalize(axis, axis),"could not normalize the axis vector");
   //
   if (!this->protrusions_.empty())
-    {
-      for (unsigned int l=0; l<this->protrusions_.size(); l++)
-        {
-          const bdm::Double3& current_axis = this->protrusions_[l];
-          const double angle = radians_to_degrees( acos(axis*current_axis) );
-          // check if relative angle is within user-defined range
-          if (angle<rel_angle_min || angle>rel_angle_max)
-            return false;
-        }
-    }
+    for (unsigned int l=0; l<this->protrusions_.size(); l++)
+      {
+        const bdm::Double3& current_axis = this->protrusions_[l];
+        const double angle = radians_to_degrees( acos(axis*current_axis) );
+        // check if relative angle is within user-defined range
+        if (angle<rel_angle_min || angle>rel_angle_max)
+          return false;
+      }
   //
   this->protrusions_.push_back(axis);
   return true;

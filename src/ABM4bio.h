@@ -646,7 +646,7 @@ void read_csv_file(const std::string& fn,
     if (params.get<int>("visualization_interval")<1)
       ABORT_("model parameter \"visualization_interval\" is initialized wrong");
     //
-    if (params.get<double>("max_boundary")+params.get<double>("min_boundary")!=0.0)
+    if (params.get<double>("max_boundary")<=params.get<double>("min_boundary"))
       ABORT_("model parameters \"min_boundary\", \"max_boundary\" are initialized wrong");
     //
     if (!params.have_parameter<int>("diffusion_grid/spatial_resolution"))
@@ -689,13 +689,26 @@ void read_csv_file(const std::string& fn,
       params.set<int>("simulation_obstacles") = 0;
     if (params.get<int>("simulation_obstacles")<0)
       ABORT_("model parameter \"simulation_obstacles\" is initialized wrong");
+    if (!params.have_parameter<bool>("simulation_obstacles/update"))
+      params.set<bool>("simulation_obstacles/update") = false;
+    // produce a pointer to parameter of the simulation obstacles object
+    params.set<SimulationObstacles*>("simulation_obstacles_data") = &obstacles;
     //
     if (!params.have_parameter<double>("safe_distance_ratio"))
       params.set<double>("safe_distance_ratio") = 0.5;
-    if (params.get<double>("safe_distance_ratio")<1.0e-2)
-      ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong");
-    if (params.get<double>("safe_distance_ratio")>2.0e+0)
-      ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong");
+    else
+      {
+        if (params.get<double>("safe_distance_ratio")==0.0e+0)
+          { ; }
+        else if (params.get<double>("safe_distance_ratio")<1.0e-2)
+          { ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong"); }
+        else if (params.get<double>("safe_distance_ratio")>2.0e+0)
+          { ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong"); }
+        else if (params.get<double>("safe_distance_ratio")<0.0e+0)
+          { ABORT_("model parameter \"safe_distance_ratio\" is initialized wrong"); }
+        else
+          { ; }
+      }
     //
     if (params.get<bool>("simulation_domain_is_periodic"))
       {
@@ -727,114 +740,6 @@ void read_csv_file(const std::string& fn,
       if (!params.have_parameter<double>("max_vessel_length"))
         params.set<double>("max_vessel_length") = 100.0;
     }
-  // initialize any obstacles the simulation might have
-  if ( params.get<int>("simulation_obstacles") )
-    {
-      const unsigned int n_obstacles = params.get<int>("simulation_obstacles");
-      // iterate for all simulation obstacles
-      for (unsigned int l=0; l<n_obstacles; l++)
-        {
-          const std::string oid = std::to_string(l+1);
-          // define the pattern of the simulation obstacle (use template, or load from STL file)
-          const std::string pattern = params.get<std::string>("simulation_obstacle/"+oid+"/pattern");
-          //
-          if ("scaffold"==pattern)
-            {
-              //
-              std::string scaff;
-              scaff = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold");
-              //
-              ObstacleScaffold obs;
-              obs.init(pattern, scaff);
-              //
-              obstacles.scaffold.push_back(obs);
-              //
-              // create a copy of the file just processed
-              const std::string cmd = "cp " + scaff + "  "
-                                    + params.get<std::string>("output_directory")
-                                    + "/in/simulation_obstacle." + oid + ".scaffold";
-              ASSERT_(0==std::system(cmd.c_str()),
-                      "could not save a copy of a data file");
-              //
-            }
-          else if ("box/inside"==pattern || "box/outside"==pattern)
-            {
-              //
-              std::vector<bdm::Double3> vertex(8);
-              vertex[0] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/2") };
-              vertex[1] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/2") };
-              vertex[2] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/2") };
-              vertex[3] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/2") };
-              vertex[4] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/2") };
-              vertex[5] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/2") };
-              vertex[6] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/2") };
-              vertex[7] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/0") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/1") ,
-                            params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/2") };
-              //
-              ObstacleBox obs;
-              obs.init(pattern, vertex);
-              //
-              obstacles.box.push_back(obs);
-              //
-            }
-          else if ("sphere/inside"==pattern || "sphere/outside"==pattern)
-            {
-              //
-              bdm::Double3 center;
-              center = { params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/0") ,
-                         params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/1") ,
-                         params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/2") };
-              //
-              double radius;
-              radius = params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/radius");
-              //
-              ObstacleSphere obs;
-              obs.init(pattern, center, radius);
-              //
-              obstacles.sphere.push_back(obs);
-              //
-            }
-          else if ("STL"==pattern)
-            {
-              //
-              std::string stl;
-              stl = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/STL");
-              //
-              ObstacleSTL obs;
-              obs.init(pattern, stl);
-              //
-              obstacles.surface.push_back(obs);
-              //
-              // create a copy of the file just processed
-              const std::string cmd = "cp " + stl + "  "
-                                    + params.get<std::string>("output_directory")
-                                    + "/in/simulation_obstacle." + oid + ".stl";
-              ASSERT_(0==std::system(cmd.c_str()),
-                      "could not save a copy of the data file");
-              //
-            }
-          else
-            ABORT_("model parameter \""+pattern+"\" is initialized wrong");
-          // ...end of simulation obstacles loop
-        }
-    }
-  // produce a pointer to parameter of the simulation obstacles object
-  params.set<SimulationObstacles*>("simulation_obstacles") = &obstacles;
   // biochemical (cues) and cell phenotypes identifiction
   if ( true )
     {
@@ -935,6 +840,189 @@ void read_csv_file(const std::string& fn,
 }
 // =============================================================================
 inline
+void init_obstacles()
+{
+  const unsigned int n_obstacles = params.get<int>("simulation_obstacles");
+  // if there are no obstacles in the simulation, then exit normally
+  if (0==n_obstacles) return;
+  // iterate for all simulation obstacles
+  for (unsigned int l=0; l<n_obstacles; l++)
+    {
+      const std::string oid = std::to_string(l+1);
+      // define the pattern of the simulation obstacle (use template, or load from STL file)
+      const std::string pattern = params.get<std::string>("simulation_obstacle/"+oid+"/pattern");
+      //
+      if ("scaffold"==pattern)
+        {
+          //
+          std::string fn;
+          fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold");
+          //
+          ObstacleScaffold obs;
+          obs.init(pattern, fn);
+          //
+          obstacles.scaffold.push_back(obs);
+          //
+          // create a copy of the file just processed
+          const std::string cmd = "cp " + fn + "  "
+                                + params.get<std::string>("output_directory")
+                                + "/in/simulation_obstacle." + oid + ".scaffold";
+          ASSERT_(0==std::system(cmd.c_str()),
+                  "could not save a copy of a data file");
+          //
+        }
+      else if ("box/inside"==pattern || "box/outside"==pattern)
+        {
+          //
+          std::vector<bdm::Double3> vertex(8);
+          vertex[0] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_A/2") };
+          vertex[1] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_B/2") };
+          vertex[2] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_C/2") };
+          vertex[3] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_D/2") };
+          vertex[4] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_E/2") };
+          vertex[5] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_F/2") };
+          vertex[6] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_G/2") };
+          vertex[7] = { params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/0") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/1") ,
+                        params.get<double>("simulation_obstacle/"+oid+"/pattern/box/point_H/2") };
+          //
+          ObstacleBox obs;
+          obs.init(pattern, vertex);
+          //
+          obstacles.box.push_back(obs);
+          //
+        }
+      else if ("sphere/inside"==pattern || "sphere/outside"==pattern)
+        {
+          //
+          bdm::Double3 center;
+          center = { params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/0") ,
+                     params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/1") ,
+                     params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/center/2") };
+          //
+          double radius;
+          radius = params.get<double>("simulation_obstacle/"+oid+"/pattern/sphere/radius");
+          //
+          ObstacleSphere obs;
+          obs.init(pattern, center, radius);
+          //
+          obstacles.sphere.push_back(obs);
+          //
+        }
+      else if ("STL"==pattern)
+        {
+          //
+          std::string fn;
+          fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/STL");
+          //
+          ObstacleSTL obs;
+          obs.init(pattern, fn);
+          //
+          obstacles.surface.push_back(obs);
+          //
+          // create a copy of the file just processed
+          const std::string cmd = "cp " + fn + "  "
+                                + params.get<std::string>("output_directory")
+                                + "/in/simulation_obstacle." + oid + ".stl";
+          ASSERT_(0==std::system(cmd.c_str()),
+                  "could not save a copy of the data file");
+          //
+        }
+      else
+        ABORT_("model parameter \""+pattern+"\" is initialized wrong");
+      // ...end of simulation obstacles loop
+    }
+}
+// =============================================================================
+inline
+void reinit_obstacles(const int time)
+{
+  const unsigned int n_obstacles = params.get<int>("simulation_obstacles");
+  // if there are no obstacles in the simulation, then exit normally
+  if (0==n_obstacles) return;
+  // if there is no need to update the obstacles in the simulation, then again
+  // exit normally
+  if (!params.get<bool>("simulation_obstacles/update")) return;
+  // iterate for all simulation obstacles
+  for (unsigned int l=0; l<n_obstacles; l++)
+    {
+      const std::string oid = std::to_string(l+1);
+      const std::string T = std::to_string(time);
+      // define the pattern of the simulation obstacle (use template, or load from STL file)
+      const std::string pattern = params.get<std::string>("simulation_obstacle/"+oid+"/pattern");
+      //
+      if ("scaffold"==pattern)
+        {
+          if (params.have_parameter<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold/"+T))
+            {
+              //
+              std::string fn;
+              fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/scaffold/"+T);
+              //
+              ObstacleScaffold obs;
+              obs.init(pattern, fn);
+              //
+              obstacles.scaffold.push_back(obs);
+              //
+              // create a copy of the file just processed
+              const std::string cmd = "cp " + fn + "  "
+                                    + params.get<std::string>("output_directory")
+                                    + "/in/simulation_obstacle." + oid + ".scaffold." + T;
+              ASSERT_(0==std::system(cmd.c_str()),
+                      "could not save a copy of a data file");
+              //
+            }
+        }
+      else if ("box/inside"==pattern || "box/outside"==pattern)
+        {
+          ;
+        }
+      else if ("sphere/inside"==pattern || "sphere/outside"==pattern)
+        {
+          ;
+        }
+      else if ("STL"==pattern)
+        {
+          if (params.have_parameter<std::string>("simulation_obstacle/"+oid+"/pattern/STL/"+T))
+            {
+              //
+              std::string fn;
+              fn = params.get<std::string>("simulation_obstacle/"+oid+"/pattern/STL/"+T);
+              //
+              ObstacleSTL obs;
+              obs.init(pattern, fn);
+              //
+              obstacles.surface.push_back(obs);
+              //
+              // create a copy of the file just processed
+              const std::string cmd = "cp " + fn + "  "
+                                    + params.get<std::string>("output_directory")
+                                    + "/in/simulation_obstacle." + oid + ".stl." + T;
+              ASSERT_(0==std::system(cmd.c_str()),
+                      "could not save a copy of the data file");
+              //
+            }
+        }
+      else
+        ABORT_("model parameter \""+pattern+"\" is initialized wrong");
+    }
+}
+// =============================================================================
+inline
 void set_bdm_params(bdm::Param* p)
 {
   // simulation data to output
@@ -953,6 +1041,7 @@ void set_bdm_params(bdm::Param* p)
   p->simulation_max_displacement = params.get<double>("cell/max_displacement");
   p->detect_static_agents = params.get<double>("cell/max_displacement") ? true : false;
   p->calculate_gradients = params.get<bool>("diffusion_grid/save_gradients");
+  p->environment = "uniform_grid";
   p->diffusion_method = "euler";
   // Selection of boundaries:
   // Dirichlet - Fixed concentration at boundaries (continuous O2 supply)
@@ -1589,6 +1678,8 @@ void init_cells(bdm::Simulation& sim,
   auto* rm = sim.GetResourceManager();
   // access BioDynaMo's random number generator
   auto* rg = sim.GetRandom();
+  // initialize the random number generator
+  srand(static_cast<int>(time(0)));
   // min and max boundaries of the BioDynaMo simulation 3D/2D domain
   const double minCOORD = params.get<double>("min_boundary"),
                maxCOORD = params.get<double>("max_boundary"),
@@ -1687,37 +1778,77 @@ void init_cells(bdm::Simulation& sim,
       if (! params.have_parameter<bool>(CP_name+"/can_protrude"))
         params.set<bool>(CP_name+"/can_protrude") = false;
       // default parameter(s) value
-      if (! params.have_parameter<double>(CP_name+"/can_apoptose/probability"))
-        params.set<double>(CP_name+"/can_apoptose/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_apoptose/probability_increment_with_age"))
-        params.set<double>(CP_name+"/can_apoptose/probability_increment_with_age") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_grow/probability"))
-        params.set<double>(CP_name+"/can_grow/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_divide/probability"))
-        params.set<double>(CP_name+"/can_divide/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_divide/probability_increment_with_age"))
-        params.set<double>(CP_name+"/can_divide/probability_increment_with_age") = 0.0;
-      // CAP-induced division probability modulation (default: no effect)
-      if (! params.have_parameter<double>(CP_name+"/can_divide/CAP_sensitivity"))
-        params.set<double>(CP_name+"/can_divide/CAP_sensitivity") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_divide/CAP_saturation_time"))
-        params.set<double>(CP_name+"/can_divide/CAP_saturation_time") = 60.0; // seconds
-      if (! params.have_parameter<double>(CP_name+"/can_migrate/probability"))
-        params.set<double>(CP_name+"/can_migrate/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_transform/probability"))
-        params.set<double>(CP_name+"/can_transform/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_polarize/probability"))
-        params.set<double>(CP_name+"/can_polarize/probability") = 0.0;
-      if (! params.have_parameter<double>(CP_name+"/can_protrude/probability"))
-        params.set<double>(CP_name+"/can_protrude/probability") = 0.0;
+      if (params.get<bool>(CP_name+"/can_apoptose"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_apoptose/probability"))
+            params.set<double>(CP_name+"/can_apoptose/probability") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_apoptose/probability_increment_with_age"))
+            params.set<double>(CP_name+"/can_apoptose/probability_increment_with_age") = 0.0;
+        }
+      // default parameter(s) value
+      if (params.get<bool>(CP_name+"/can_grow"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_grow/probability"))
+            params.set<double>(CP_name+"/can_grow/probability") = 0.0;
+        }
+      // default parameter(s) value
+      if (params.get<bool>(CP_name+"/can_divide"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_divide/probability"))
+            params.set<double>(CP_name+"/can_divide/probability") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_divide/probability_increment_with_age"))
+            params.set<double>(CP_name+"/can_divide/probability_increment_with_age") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_divide/influence_ratio"))
+            params.set<double>(CP_name+"/can_divide/influence_ratio") = 0.0;
+          // sanity check...
+          ASSERT_(params.get<double>(CP_name+"/can_divide/influence_ratio")>=0.0,
+                  "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"can_divide/influence_ratio\"");
+        
+          // CAP-induced division probability modulation (default: no effect)
+          if (! params.have_parameter<double>(CP_name+"/can_divide/CAP_sensitivity"))
+            params.set<double>(CP_name+"/can_divide/CAP_sensitivity") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_divide/CAP_saturation_time"))
+            params.set<double>(CP_name+"/can_divide/CAP_saturation_time") = 60.0; // seconds
+        }
+      // default parameter(s) value
+      if (params.get<bool>(CP_name+"/can_transform"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_transform/probability"))
+            params.set<double>(CP_name+"/can_transform/probability") = 0.0;
+        }
+      // default parameter(s) value
+      if (params.get<bool>(CP_name+"/can_polarize"))
+        {
+          if (! params.have_parameter<double>(CP_name+"/can_polarize/probability"))
+            params.set<double>(CP_name+"/can_polarize/probability") = 0.0;
+        }
       // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_migrate"))
         {
+          if (! params.have_parameter<double>(CP_name+"/can_migrate/probability"))
+            params.set<double>(CP_name+"/can_migrate/probability") = 0.0;
           if (! params.have_parameter<bool>(CP_name+"/can_migrate/accumulate_path"))
             params.set<bool>(CP_name+"/can_migrate/accumulate_path") = true;
+          // encompass the effect of adhesion for the migratory cell to the ECM
+          // by modulating the convection field respectively
+          // ...default value for non-migratory cells
+          params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
+          //
+          if (! params.have_parameter<std::string>("convection/dynamic/from_file"))
+            params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
+          // sanity check...
+          ASSERT_(params.get<double>(CP_name+"/can_migrate/max_adhesion/convection")>=0.0,
+                  "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"max_adhesion/convection\"");
+          //
+          params.set<double>(CP_name+"/can_migrate/max_adhesion/displacement") =
+              params.get<double>("time_step") *
+              params.get<double>(CP_name+"/can_migrate/max_adhesion/convection");
         }
+      // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_protrude"))
         {
+          if (! params.have_parameter<double>(CP_name+"/can_protrude/probability"))
+            params.set<double>(CP_name+"/can_protrude/probability") = 0.0;
           if (! params.have_parameter<int>(CP_name+"/can_protrude/time_repeats"))
             params.set<int>(CP_name+"/can_protrude/time_repeats") = 1;
           if (! params.have_parameter<double>(CP_name+"/can_protrude/sprout/probability"))
@@ -1729,32 +1860,33 @@ void init_cells(bdm::Simulation& sim,
         }
       //
       if (CP_ID>0) // ignore necrotic cell whose default phenotype ID = 0
-        // identify the principal directions' order
-        if (! params.have_parameter<double>(CP_name+"/principal/0") &&
-            ! params.have_parameter<double>(CP_name+"/principal/1") &&
-            ! params.have_parameter<double>(CP_name+"/principal/2") )
-          params.set<double>(CP_name+"/principal/0") =
-          params.set<double>(CP_name+"/principal/1") =
-          params.set<double>(CP_name+"/principal/2") = 1.0;
-          {
-            // principal directions of the cell polarization matrix
-            const double pd0 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/0")),
-                         pd1 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/1")),
-                         pd2 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/2"));
-            //
-            std::vector<int> permutation(3);
-            if      ( pd0 >= pd1 && pd1 >= pd2 ) permutation = { 0, 1, 2 };
-            else if ( pd0 >= pd2 && pd2 >= pd1 ) permutation = { 0, 2, 1 };
-            else if ( pd1 >= pd2 && pd2 >= pd0 ) permutation = { 1, 2, 0 };
-            else if ( pd1 >= pd0 && pd0 >= pd2 ) permutation = { 1, 0, 2 };
-            else if ( pd2 >= pd0 && pd0 >= pd1 ) permutation = { 2, 0, 1 };
-            else if ( pd2 >= pd1 && pd1 >= pd0 ) permutation = { 2, 1, 0 };
-            // ...and exception is caught
-            else
-              ABORT_("unrecognized order to put cell principal directions in order");
-            //
-            params.set<std::vector<int>>(CP_name+"/principal/permutation") = permutation;
-          }
+        {
+          // identify the principal directions' order
+          if (! params.have_parameter<double>(CP_name+"/principal/0") &&
+              ! params.have_parameter<double>(CP_name+"/principal/1") &&
+              ! params.have_parameter<double>(CP_name+"/principal/2") )
+            params.set<double>(CP_name+"/principal/0") =
+            params.set<double>(CP_name+"/principal/1") =
+            params.set<double>(CP_name+"/principal/2") = 1.0;
+          //
+          // principal directions of the cell polarization matrix
+          const double pd0 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/0")),
+                       pd1 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/1")),
+                       pd2 = (CP_ID==0 ? 1.0 : params.get<double>(CP_name+"/principal/2"));
+          //
+          std::vector<int> permutation(3);
+          if      ( pd0 >= pd1 && pd1 >= pd2 ) permutation = { 0, 1, 2 };
+          else if ( pd0 >= pd2 && pd2 >= pd1 ) permutation = { 0, 2, 1 };
+          else if ( pd1 >= pd2 && pd2 >= pd0 ) permutation = { 1, 2, 0 };
+          else if ( pd1 >= pd0 && pd0 >= pd2 ) permutation = { 1, 0, 2 };
+          else if ( pd2 >= pd0 && pd0 >= pd1 ) permutation = { 2, 0, 1 };
+          else if ( pd2 >= pd1 && pd1 >= pd0 ) permutation = { 2, 1, 0 };
+          // ...and exception is caught
+          else
+            ABORT_("unrecognized order to put cell principal directions in order");
+          //
+          params.set<std::vector<int>>(CP_name+"/principal/permutation") = permutation;
+        }
       // iterate for all biochemicals (substances)
       for (unsigned int icue=0; icue<biochem.size(); icue++)
         {
@@ -1811,23 +1943,6 @@ void init_cells(bdm::Simulation& sim,
             }
           // ...end of biochemicals (substances) loop
         }
-      //
-      // encompass the effect of adhesion for the migratory cell to the ECM
-      // by modulating the convection field respectively
-      // ...default value for non-migratory cells
-      params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
-      // ...now check if cell can migrate or not
-      if (params.get<bool>(CP_name+"/can_migrate"))
-        {
-          if (! params.have_parameter<std::string>("convection/dynamic/from_file"))
-            params.set<double>(CP_name+"/can_migrate/max_adhesion/convection") = 0.0;
-          // sanity check...
-          if (params.get<double>(CP_name+"/can_migrate/max_adhesion/convection")<0.0)
-            ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous value for \"max_adhesion/convection\"");
-        }
-      params.set<double>(CP_name+"/can_migrate/max_adhesion/displacement") =
-        params.get<double>("time_step") *
-        params.get<double>(CP_name+"/can_migrate/max_adhesion/convection");
       //
       // --- Default-substance chemotaxis shorthand ---
       // If user defines "CP/can_migrate/chemotaxis" as a double (without substance name),
@@ -1897,6 +2012,7 @@ void init_cells(bdm::Simulation& sim,
       if (! params.have_parameter<std::string>(CP_name+"/initial_population/from_file"))
         {
           int number_of_cells = params.get<int>(CP_name+"/initial_population");
+          // sanity check...
           ASSERT_(number_of_cells>=0,
                   "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous initial population");
           // check if to consider simulation varying initial cell population
@@ -1904,8 +2020,9 @@ void init_cells(bdm::Simulation& sim,
             if ( params.have_parameter<int>(CP_name+"/initial_population/std") )
               {
                 const int noc_std = params.get<int>(CP_name+"/initial_population/std");
-                if (noc_std>number_of_cells)
-                  ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous deviation from mean initial population");
+                // sanity check...
+                ASSERT_(noc_std<=number_of_cells,
+                        "\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has erroneous deviation from mean initial population");
                 number_of_cells = uniform_distro(number_of_cells-noc_std, number_of_cells+noc_std);
               }
           //
@@ -1924,7 +2041,7 @@ void init_cells(bdm::Simulation& sim,
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized pattern");
             }
           bdm::Double3 pntA, pntB;
-          bdm::Double3 cntr; double rad = 0.0;
+          bdm::Double3 cntr; bdm::real_t rad = 0.0;
           if ( params.get<bool>(CP_name+"/initial_population/pattern/box/inside")  ||
                params.get<bool>(CP_name+"/initial_population/pattern/box/outside") )
             {
@@ -1949,42 +2066,76 @@ void init_cells(bdm::Simulation& sim,
           for (int i=0; i<number_of_cells; i++)
             {
               // cell coordinates (must fall within simulation domain)
-              double x_min = minCOORD+tol, x_max = maxCOORD-tol;
-              double y_min = minCOORD+tol, y_max = maxCOORD-tol;
-              double z_min = minCOORD+tol, z_max = maxCOORD-tol;
-              
-              if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/inside") ||
-                   params.get<bool>(CP_name+"/initial_population/pattern/sphere/outside") )
+              bdm::Double3 xyz{0.0, 0.0, 0.0};
+              // check if a cell should follow any user-defined (spatial)
+              // restrictions (wrt primitive shapes: box, sphere, cylinder)
+              if      ( params.get<bool>(CP_name+"/initial_population/pattern/box/inside") )
                 {
-                  x_min = std::max(minCOORD+tol, cntr[0]-rad);
-                  x_max = std::min(maxCOORD-tol, cntr[0]+rad);
-                  y_min = std::max(minCOORD+tol, cntr[1]-rad);
-                  y_max = std::min(maxCOORD-tol, cntr[1]+rad);
-                  z_min = std::max(minCOORD+tol, cntr[2]-rad);
-                  z_max = std::min(maxCOORD-tol, cntr[2]+rad);
+                  xyz = { rg->Uniform(pntA[0], pntB[0]) ,
+                          rg->Uniform(pntA[1], pntB[1]) ,
+                          rg->Uniform(pntA[2], pntB[2]) };
                 }
-              
-              bdm::Double3 xyz = { rg->Uniform(x_min, x_max) ,
-                                   rg->Uniform(y_min, y_max) ,
-                                   rg->Uniform(z_min, z_max) };
-              if ( params.get<bool>("simulation_domain_is_2D") ) xyz[2] = meanCOORD;
-              // in case of polar domain, check if initial cell position
-              // is within a 3D sphere or 2D circle
+              else if ( params.get<bool>(CP_name+"/initial_population/pattern/box/outside") )
+                {
+                  xyz = { coin_flip() ? rg->Uniform(minCOORD+tol, pntA[0]) : rg->Uniform(pntB[0], maxCOORD-tol) ,
+                          coin_flip() ? rg->Uniform(minCOORD+tol, pntA[1]) : rg->Uniform(pntB[1], maxCOORD-tol) ,
+                          coin_flip() ? rg->Uniform(minCOORD+tol, pntA[2]) : rg->Uniform(pntB[2], maxCOORD-tol) };
+                }
+              else if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/inside") )
+                {
+                  bdm::real_t r = rg->Uniform(0.0, rad);
+                  bdm::real_t theta = rg->Uniform(0.0, 2.0*bdm::Math::kPi);
+                  bdm::real_t u = rg->Uniform(-1.0, 1.0);
+                  // https://mathworld.wolfram.com/SpherePointPicking.html
+                  xyz = { cntr[0]+r*sqrt(1-u*u)*cos(theta) ,
+                          cntr[1]+r*sqrt(1-u*u)*sin(theta) ,
+                          cntr[2]+r*u                      };
+                }
+              else if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/outside") )
+                {
+                  bdm::real_t r = rg->Uniform(rad, maxCOORD-tol);
+                  bdm::real_t theta = rg->Uniform(0.0, 2.0*bdm::Math::kPi);
+                  bdm::real_t u = rg->Uniform(-1.0, 1.0);
+                  // https://mathworld.wolfram.com/SpherePointPicking.html
+                  xyz = { cntr[0]+r*sqrt(1-u*u)*cos(theta) ,
+                          cntr[1]+r*sqrt(1-u*u)*sin(theta) ,
+                          cntr[2]+r*u                      };
+                }
+              else
+                {
+                  xyz = { rg->Uniform(minCOORD+tol, maxCOORD-tol) ,
+                          rg->Uniform(minCOORD+tol, maxCOORD-tol) ,
+                          rg->Uniform(minCOORD+tol, maxCOORD-tol) };
+                }
+              // in case the simulation is in 2D then ensure that all
+              // cells are positioned on a X-Y plane
+              if ( params.get<bool>("simulation_domain_is_2D") )
+                xyz[2] = meanCOORD;
+              // in case of polar domain simulation, then check if
+              // cell position is within a 3D sphere or a 2D circle
               if ( params.get<bool>("simulation_domain_is_polar") )
                 {
                   const bdm::Double3 vec = { xyz[0]-meanCOORD ,
                                              xyz[1]-meanCOORD ,
                                              xyz[2]-meanCOORD };
                   // check radial distance (from the domain center)
-                  if ( L2norm(vec) > deltaCOORD )
+                  if ( magnitude(vec) > deltaCOORD )
                     {
                       i -= 1;
                       continue;
                     }
                 }
+              // check if cell is positioned withing simulations bounds
+              if ( xyz[0]<(minCOORD+tol) || xyz[0]>(maxCOORD-tol) ||
+                   xyz[1]<(minCOORD+tol) || xyz[1]>(maxCOORD-tol) ||
+                   xyz[2]<(minCOORD+tol) || xyz[2]>(maxCOORD-tol) )
+                {
+                  i -= 1;
+                  continue;
+                }
               // check also if cell position is suffiently apart to the rest
               // (recently created) of the cells
-              bool too_close = false;
+              bool is_valid = true;
               for (unsigned int c=0; c<all_agents.size(); c++)
                 {
                   const bdm::Double3 vec = { xyz[0]-all_agents[c][0] ,
@@ -1993,47 +2144,11 @@ void init_cells(bdm::Simulation& sim,
                   // check distance with respect to other cells
                   if ( L2norm(vec) < safe_distance )
                     {
-                      too_close = true;
+                      is_valid = false;
                       break;
                     }
                 }
-              //
-              if ( too_close )
-                {
-                  i -= 1;
-                  continue;
-                }
-              // check if a cell should follow any user-defined (spatial)
-              // restrictions (wrt primitive shapes: box, sphere, cylinder)
-              bool is_valid = true;
-              if      ( params.get<bool>(CP_name+"/initial_population/pattern/box/inside") )
-                {
-                  is_valid = true;
-                  if ( xyz[0]<pntA[0] || xyz[0]>pntB[0] ) is_valid = false;
-                  if ( xyz[1]<pntA[1] || xyz[1]>pntB[1] ) is_valid = false;
-                  if ( xyz[2]<pntA[2] || xyz[2]>pntB[2] ) is_valid = false;
-                }
-              else if ( params.get<bool>(CP_name+"/initial_population/pattern/box/outside") )
-                {
-                  is_valid = false;
-                  if ( xyz[0]<pntA[0] || xyz[0]>pntB[0] ) is_valid = true;
-                  if ( xyz[1]<pntA[1] || xyz[1]>pntB[1] ) is_valid = true;
-                  if ( xyz[2]<pntA[2] || xyz[2]>pntB[2] ) is_valid = true;
-                }
-              else if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/inside") )
-                {
-                  const bdm::Double3 diff = xyz - cntr;
-                  is_valid = true;
-                  if ( L2norm(diff)>rad ) is_valid = false;
-                }
-              else if ( params.get<bool>(CP_name+"/initial_population/pattern/sphere/outside") )
-                {
-                  const bdm::Double3 diff = xyz - cntr;
-                  is_valid = false;
-                  if ( L2norm(diff)>rad ) is_valid = true;
-                }
-              //
-              if ( ! is_valid )
+              if ( ! is_valid ) // now do what you must
                 {
                   i -= 1;
                   continue;
@@ -2653,7 +2768,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       fout << "<?xml version=\"1.0\"?>" << std::endl;
       fout << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << std::endl;
       fout << "<Collection>" << std::endl;
-      for (int t=1; t<=n_time; t++)
+      for (int t=0; t<=n_time; t++)
         {
           if (0!=t%viz_step) continue;
           const double timestep = t * time_step;
@@ -2667,7 +2782,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
     }
   // create a VTU file for this time-step
   // for the cells
-  if ( 0 != time )
+  ////if ( 0 != time )
     {
       unsigned int n_VTK_points = 0;
       unsigned int n_VTK_cells = 1;
@@ -2930,7 +3045,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       fout << "<?xml version=\"1.0\"?>" << std::endl;
       fout << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << std::endl;
       fout << "<Collection>" << std::endl;
-      for (int t=1; t<=n_time; t++)
+      for (int t=0; t<=n_time; t++)
         {
           if (0!=t%viz_step) continue;
           const double timestep = t * time_step;
@@ -2944,7 +3059,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
     }
   // create a VTU file for this time-step
   // for the cell protrusions
-  if ( 0 != time )
+  ////if ( 0 != time )
     {
       unsigned int n_VTK_points = 0;
       unsigned int n_VTK_cells = 0;
@@ -3165,7 +3280,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       fout << "<?xml version=\"1.0\"?>" << std::endl;
       fout << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << std::endl;
       fout << "<Collection>" << std::endl;
-      for (int t=1; t<=n_time; t++)
+      for (int t=0; t<=n_time; t++)
         {
           if (0!=t%viz_step) continue;
           const double timestep = t * time_step;
@@ -3179,7 +3294,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
     }
   // create a VTU file for this time-step
   // for the reaction-diffusion simulator
-  if ( 0 != time )
+  ////if ( 0 != time )
     {
       const int N = params.get<int>("diffusion_grid/spatial_resolution");
       const double S_min = params.get<double>("min_boundary"),
@@ -3356,7 +3471,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       fout << "<?xml version=\"1.0\"?>" << std::endl;
       fout << "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">" << std::endl;
       fout << "<Collection>" << std::endl;
-      for (int t=1; t<=n_time; t++)
+      for (int t=0; t<=n_time; t++)
         {
           if (0!=t%viz_step) continue;
           const double timestep = t * time_step;
@@ -3372,7 +3487,7 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
   if ( params.get<bool>("simulation_models_vessels") )
   // create a VTU file for this time-step
   // for the vessels
-  if ( 0 != time )
+  ////if ( 0 != time )
     {
       unsigned int n_VTK_points = 0;
       unsigned int n_VTK_cells = 0;
@@ -4196,6 +4311,8 @@ int simulate(const std::string& fname, const int seed)
   ASSERT_(0==std::system(cmd.c_str()), "could not save a copy of \"input.csv\"");
   // now let's start with the simulation initializations
   std::cout << "Simulation initializes..." << std::endl;
+  // load the data for the obstacles in the simulation
+  init_obstacles();
   // load all biochemicals in the simulation
   init_biochemicals(sim, biochem);
   // load all vessels in the simulation
@@ -4259,6 +4376,8 @@ int simulate(const std::string& fname, const int seed)
               break;
             }
         }
+      // reset the data for the obstacles in the simulation
+      reinit_obstacles(time);
       // reset some data for all cells in the simulation
       reinit_cells(sim, cells);
       // check for cells input/output flux to the domain
