@@ -122,7 +122,8 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
           return;
         }
       //
-      if (bdm::BiologicalCell::Phase::Di==cell->GetPhase())
+      // post-division quiescence is modeled as an early G1 arrest
+      if (bdm::BiologicalCell::Phase::G1==cell->GetPhase())
         {
           if (cell->CheckQuiescenceAfterDivision())
             return;
@@ -157,27 +158,26 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
               return;
             }
         }
-      // check if cell can divide (summetrically or unsymmetrically)
-      if (bdm::BiologicalCell::Phase::G1==cell->GetPhase()||
-          bdm::BiologicalCell::Phase::Sy==cell->GetPhase())
+      // mitosis-like stage: only Di can divide
+      if (bdm::BiologicalCell::Phase::Di==cell->GetPhase())
         if (cell->CheckDivision() || cell->CheckAsymmetricDivision())
           {
             cell->SetAge(); // reset age (time) counter
-            cell->SetPhase(bdm::BiologicalCell::Phase::Di);
+            // after successful division, continue from early-cycle state
+            cell->SetPhase(bdm::BiologicalCell::Phase::G1);
             return;
           }
-      // check if cell can grow
-      if (bdm::BiologicalCell::Phase::G1==cell->GetPhase()||
-          bdm::BiologicalCell::Phase::Sy==cell->GetPhase())
+      // biomass growth is restricted to G1
+      if (bdm::BiologicalCell::Phase::G1==cell->GetPhase())
         if (cell->CheckGrowth())
           {
-            cell->SetPhase(bdm::BiologicalCell::Phase::G1);
             return;
           }
       // finally, we check for cell apoptosis due to aging
       if (bdm::BiologicalCell::Phase::G1==cell->GetPhase()||
           bdm::BiologicalCell::Phase::Sy==cell->GetPhase()||
-          bdm::BiologicalCell::Phase::G2==cell->GetPhase())
+          bdm::BiologicalCell::Phase::G2==cell->GetPhase()||
+          bdm::BiologicalCell::Phase::Di==cell->GetPhase())
         if (cell->CheckApoptosisAging())
           {
             cell->SetAge(); // reset age (time) counter
@@ -185,7 +185,16 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
             return;
           }
       //
-      cell->SetPhase(bdm::BiologicalCell::Phase::Sy);
+      // default phase progression: G1 -> Sy -> G2 -> Di
+      if (bdm::BiologicalCell::Phase::I0==cell->GetPhase() ||
+          bdm::BiologicalCell::Phase::Tr==cell->GetPhase())
+        cell->SetPhase(bdm::BiologicalCell::Phase::G1);
+      else if (bdm::BiologicalCell::Phase::G1==cell->GetPhase())
+        cell->SetPhase(bdm::BiologicalCell::Phase::Sy);
+      else if (bdm::BiologicalCell::Phase::Sy==cell->GetPhase())
+        cell->SetPhase(bdm::BiologicalCell::Phase::G2);
+      else if (bdm::BiologicalCell::Phase::G2==cell->GetPhase())
+        cell->SetPhase(bdm::BiologicalCell::Phase::Di);
     }
   else
     ABORT_("an exception is caught");
