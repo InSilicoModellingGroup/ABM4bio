@@ -166,6 +166,12 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
       // ================================================================
       cell->RunIntracellular();
       // ================================================================
+      // STEP 7b — Intracellular regulation module (optional GRN backend)
+      //   Mechanism consumes only RegulatoryOutput; backend remains modular.
+      // ================================================================
+      cell->UpdateRegulatoryModel(env);
+      const bdm::regulatory::RegulatoryOutput& grn = cell->GetRegulatoryOutput();
+      // ================================================================
       // STEP 8 — Apoptosis / necrosis / quiescence hazard evaluation
       //   Uses rate-to-probability: P(event) = 1 - exp(-hazard * dt)
       //   Biological context: stochastic threshold-crossing events driven
@@ -176,6 +182,20 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
         cell->params()->get<std::string>(
           "phenotype_ID/"+std::to_string(cell->GetPhenotype()));
       auto* rg = bdm::Simulation::GetActive()->GetRandom();
+      // GRN-driven apoptosis hazard (optional layer)
+      if (cell->IsRegulatoryModelActive() && cell->GetCanApoptose()
+          && grn.apoptosis_hazard > 0.0)
+        {
+          const double P_grn_ap = 1.0 - std::exp(-std::max(0.0, grn.apoptosis_hazard) * dt);
+          if (rg->Uniform(0.0, 1.0) < P_grn_ap)
+            {
+              cell->SetAge();
+              cell->ResetPhaseAge();
+              cell->ResetArrestTime();
+              cell->SetPhase(bdm::BiologicalCell::Phase::Ap);
+              return;
+            }
+        }
       //
       // 7a: DNA-damage / intracellular ROS → apoptosis (hard deterministic stop)
       //    Committed when p53 activity exceeds the apoptosis threshold or
@@ -290,7 +310,8 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
             const bool stressed_env =
               (env.local_crowding >= crowd_entry)
               || (o2_quies  >= 0.0 && env.local_O2       < o2_quies)
-              || (nut_quies >= 0.0 && env.local_nutrient  < nut_quies);
+              || (nut_quies >= 0.0 && env.local_nutrient  < nut_quies)
+              || (cell->IsRegulatoryModelActive() && grn.quiescence_hazard > 0.05);
             //
             if (!cell->IsQuiescent() && stressed_env)
               {
@@ -587,7 +608,10 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
           }
         if (!ecm_blocks_migration)
           {
-            if (cell->CheckMigration())
+            const double mig_gate =
+              cell->IsRegulatoryModelActive()
+              ? std::clamp(grn.migration_modifier, 0.0, 1.0) : 1.0;
+            if (rg->Uniform(0.0, 1.0) <= mig_gate && cell->CheckMigration())
               {
                 if (!cell->CheckPositionValidity())
                   {
@@ -618,9 +642,13 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
           if (ckpt.can_grow)
             {
               const double f_env = cell->ComputeGrowthModulation(env);
+              const double grn_growth =
+                cell->IsRegulatoryModelActive()
+                ? std::clamp(grn.proliferation_signal, 0.0, 1.0) : 1.0;
+              const double f_total = std::clamp(f_env * grn_growth, 0.0, 1.0);
               // Microenvironment modulation gate: skip growth if environment
               // is too poor. When f_env = 1.0 (defaults), gate always passes.
-              if (f_env > 0.0 && rg->Uniform(0.0, 1.0) <= f_env)
+              if (f_total > 0.0 && rg->Uniform(0.0, 1.0) <= f_total)
                 {
                   if (cell->CheckGrowth())
                     return; // cell grew; exit to avoid double-acting this step
@@ -859,6 +887,11 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
       // ================================================================
       cell->UpdateCAPIntracellular();
       // ================================================================
+      // STEP 7b — Intracellular regulation module (optional GRN backend)
+      // ================================================================
+      cell->UpdateRegulatoryModel(env);
+      const bdm::regulatory::RegulatoryOutput& grn = cell->GetRegulatoryOutput();
+      // ================================================================
       // STEP 8 — Evaluate CAP checkpoint controller
       //   Returns CAPCheckpointState encoding:
       //     can_enter_S:     G1/S gate cleared
@@ -876,6 +909,21 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
       const std::string& CP_name =
         cell->params()->get<std::string>("phenotype_ID/"+std::to_string(cell->GetPhenotype()));
       auto* rg = bdm::Simulation::GetActive()->GetRandom();
+      // Optional GRN-driven apoptosis hazard
+      if (cell->IsRegulatoryModelActive() && cell->GetCanApoptose()
+          && grn.apoptosis_hazard > 0.0)
+        {
+          const double P_grn_ap = 1.0 - std::exp(-std::max(0.0, grn.apoptosis_hazard) * dt);
+          if (rg->Uniform(0.0, 1.0) < P_grn_ap)
+            {
+              cell->SetAge();
+              cell->ResetPhaseAge();
+              cell->ResetArrestTime();
+              cell->SetCapArrestPhase(0);
+              cell->SetPhase(bdm::BiologicalCell::Phase::Ap);
+              return;
+            }
+        }
       // ================================================================
       // STEP 9 — ECM interaction (anoikis / ECM remodelling)
       //   Low ECM adhesion → anoikis (BIM/BAD via integrin/FAK loss).
@@ -1025,7 +1073,8 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
             const bool stressed_env =
               (env.local_crowding >= crowd_entry)
               || (o2_quies  >= 0.0 && env.local_O2      < o2_quies)
-              || (nut_quies >= 0.0 && env.local_nutrient < nut_quies);
+              || (nut_quies >= 0.0 && env.local_nutrient < nut_quies)
+              || (cell->IsRegulatoryModelActive() && grn.quiescence_hazard > 0.05);
             if (!cell->IsQuiescent() && stressed_env)
               {
                 bool enter_quies = false;
@@ -1289,7 +1338,10 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
           }
         if (!ecm_blocks_migration)
           {
-            if (cell->CheckMigration())
+            const double mig_gate =
+              cell->IsRegulatoryModelActive()
+              ? std::clamp(grn.migration_modifier, 0.0, 1.0) : 1.0;
+            if (rg->Uniform(0.0, 1.0) <= mig_gate && cell->CheckMigration())
               {
                 if (!cell->CheckPositionValidity())
                   {
@@ -1336,7 +1388,11 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
               if (!damage_blocks_growth)
                 {
                   const double f_env = cell->ComputeGrowthModulation(env);
-                  if (f_env > 0.0 && rg->Uniform(0.0, 1.0) <= f_env)
+                  const double grn_growth =
+                    cell->IsRegulatoryModelActive()
+                    ? std::clamp(grn.proliferation_signal, 0.0, 1.0) : 1.0;
+                  const double f_total = std::clamp(f_env * grn_growth, 0.0, 1.0);
+                  if (f_total > 0.0 && rg->Uniform(0.0, 1.0) <= f_total)
                     {
                       if (cell->CheckGrowth())
                         return;

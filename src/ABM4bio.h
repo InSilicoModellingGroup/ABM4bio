@@ -335,6 +335,21 @@ void save_stats(bdm::Simulation& sim,
   std::map<int, unsigned int> n_cell_per_phenotype__Di;
   std::map<int, unsigned int> n_cell_per_phenotype__Tr;
   std::map<int, unsigned int> n_cell_per_phenotype__G0;
+  // GRN debug statistics (for phenotypes with intracellular/model_type != none)
+  std::map<int, bool>         phenotype_has_grn;
+  std::map<int, unsigned int> grn_n_cells;
+  std::map<int, double>       grn_sum_proliferation;
+  std::map<int, double>       grn_sum_can_enter_S;
+  std::map<int, double>       grn_sum_can_enter_M;
+  std::map<int, double>       grn_sum_apoptosis_hazard;
+  std::map<int, double>       grn_sum_necrosis_hazard;
+  std::map<int, double>       grn_sum_quiescence_hazard;
+  std::map<int, double>       grn_sum_migration_modifier;
+  std::map<int, double>       grn_sum_repair_capacity;
+  std::map<int, double>       grn_sum_antioxidant_capacity;
+  std::map<int, double>       grn_sum_node_p53;
+  std::map<int, double>       grn_sum_node_nrf2;
+  std::map<int, double>       grn_sum_node_caspase3;
   // CAP/Mechanism-12 statistics (accumulated only for mechanism_order==12 phenotypes)
   std::map<int, double>       cap_sum_ros;               // mean intracellular ROS
   std::map<int, double>       cap_sum_rns;               // mean intracellular RNS
@@ -401,7 +416,25 @@ void save_stats(bdm::Simulation& sim,
                      ? params.get<int>(CP_name+"/mechanism_order") : 0;
         phenotype_is_cap[CP_ID] = (12 == mo);
         has_mechanism12 = has_mechanism12 || phenotype_is_cap[CP_ID];
+        const std::string grn_type =
+          params.have_parameter<std::string>(CP_name+"/intracellular/model_type")
+          ? params.get<std::string>(CP_name+"/intracellular/model_type")
+          : std::string("none");
+        phenotype_has_grn[CP_ID] = (grn_type != "none");
       }
+      grn_n_cells[CP_ID]                 = 0;
+      grn_sum_proliferation[CP_ID]       = 0.0;
+      grn_sum_can_enter_S[CP_ID]         = 0.0;
+      grn_sum_can_enter_M[CP_ID]         = 0.0;
+      grn_sum_apoptosis_hazard[CP_ID]    = 0.0;
+      grn_sum_necrosis_hazard[CP_ID]     = 0.0;
+      grn_sum_quiescence_hazard[CP_ID]   = 0.0;
+      grn_sum_migration_modifier[CP_ID]  = 0.0;
+      grn_sum_repair_capacity[CP_ID]     = 0.0;
+      grn_sum_antioxidant_capacity[CP_ID]= 0.0;
+      grn_sum_node_p53[CP_ID]            = 0.0;
+      grn_sum_node_nrf2[CP_ID]           = 0.0;
+      grn_sum_node_caspase3[CP_ID]       = 0.0;
       cap_sum_ros[CP_ID]          = 0.0;
       cap_sum_rns[CP_ID]          = 0.0;
       cap_sum_dna_damage[CP_ID]   = 0.0;
@@ -461,6 +494,24 @@ void save_stats(bdm::Simulation& sim,
           n_cell_per_phenotype__Tr[CP_ID] += 1;
         if (CP_ID && cell->IsQuiescent())
           n_cell_per_phenotype__G0[CP_ID] += 1;
+        // GRN debug outputs and node activities
+        if (phenotype_has_grn.count(CP_ID) && phenotype_has_grn.at(CP_ID))
+          {
+            ++grn_n_cells[CP_ID];
+            const bdm::regulatory::RegulatoryOutput& grn = cell->GetRegulatoryOutput();
+            grn_sum_proliferation[CP_ID]        += grn.proliferation_signal;
+            grn_sum_can_enter_S[CP_ID]          += grn.can_enter_S;
+            grn_sum_can_enter_M[CP_ID]          += grn.can_enter_M;
+            grn_sum_apoptosis_hazard[CP_ID]     += grn.apoptosis_hazard;
+            grn_sum_necrosis_hazard[CP_ID]      += grn.necrosis_hazard;
+            grn_sum_quiescence_hazard[CP_ID]    += grn.quiescence_hazard;
+            grn_sum_migration_modifier[CP_ID]   += grn.migration_modifier;
+            grn_sum_repair_capacity[CP_ID]      += grn.repair_capacity;
+            grn_sum_antioxidant_capacity[CP_ID] += grn.antioxidant_capacity;
+            grn_sum_node_p53[CP_ID]             += cell->GetRegulatoryNodeActivity("p53");
+            grn_sum_node_nrf2[CP_ID]            += cell->GetRegulatoryNodeActivity("NRF2");
+            grn_sum_node_caspase3[CP_ID]        += cell->GetRegulatoryNodeActivity("Caspase3");
+          }
         // Global necrotic accounting for CAP summary output.
         if (0 == CP_ID)
           {
@@ -611,6 +662,22 @@ void save_stats(bdm::Simulation& sim,
                   fout << ", cap_N_G2M_arrest_"    << p;
                   fout << ", cap_N_recovered_"     << p;
                 }
+              if (phenotype_has_grn.count(CP_ID) && phenotype_has_grn.at(CP_ID))
+                {
+                  const std::string p = std::to_string(CP_ID);
+                  fout << ", grn_mean_proliferation_"     << p;
+                  fout << ", grn_mean_can_enter_S_"       << p;
+                  fout << ", grn_mean_can_enter_M_"       << p;
+                  fout << ", grn_mean_apoptosis_hazard_"  << p;
+                  fout << ", grn_mean_necrosis_hazard_"   << p;
+                  fout << ", grn_mean_quiescence_hazard_" << p;
+                  fout << ", grn_mean_migration_mod_"     << p;
+                  fout << ", grn_mean_repair_capacity_"   << p;
+                  fout << ", grn_mean_antioxidant_"       << p;
+                  fout << ", grn_node_p53_"               << p;
+                  fout << ", grn_node_NRF2_"              << p;
+                  fout << ", grn_node_Caspase3_"          << p;
+                }
             }
         }
       if (has_mechanism12)
@@ -688,6 +755,23 @@ void save_stats(bdm::Simulation& sim,
               fout << ',' << cap_n_arrest_IntraS[CP_ID];
               fout << ',' << cap_n_arrest_G2M[CP_ID];
               fout << ',' << cap_n_recovered[CP_ID];
+            }
+          if (phenotype_has_grn.count(CP_ID) && phenotype_has_grn.at(CP_ID))
+            {
+              const double norm_grn = (grn_n_cells[CP_ID] > 0)
+                ? static_cast<double>(grn_n_cells[CP_ID]) : 1.0;
+              fout << ',' << grn_sum_proliferation[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_can_enter_S[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_can_enter_M[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_apoptosis_hazard[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_necrosis_hazard[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_quiescence_hazard[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_migration_modifier[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_repair_capacity[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_antioxidant_capacity[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_node_p53[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_node_nrf2[CP_ID] / norm_grn;
+              fout << ',' << grn_sum_node_caspase3[CP_ID] / norm_grn;
             }
         }
     }
@@ -1900,6 +1984,15 @@ void init_cells(bdm::Simulation& sim,
         params.set<double>(CP_name+"/can_polarize/probability") = 0.0;
       if (! params.have_parameter<double>(CP_name+"/can_protrude/probability"))
         params.set<double>(CP_name+"/can_protrude/probability") = 0.0;
+      // Modular intracellular regulatory backend defaults (GRN layer)
+      if (! params.have_parameter<std::string>(CP_name+"/intracellular/model_type"))
+        params.set<std::string>(CP_name+"/intracellular/model_type") = "none";
+      if (! params.have_parameter<int>(CP_name+"/intracellular/grn_update_interval"))
+        params.set<int>(CP_name+"/intracellular/grn_update_interval") = 1;
+      if (! params.have_parameter<bool>(CP_name+"/intracellular/grn_noise"))
+        params.set<bool>(CP_name+"/intracellular/grn_noise") = false;
+      if (! params.have_parameter<double>(CP_name+"/intracellular/grn_relaxation"))
+        params.set<double>(CP_name+"/intracellular/grn_relaxation") = 0.5;
       // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_migrate"))
         {

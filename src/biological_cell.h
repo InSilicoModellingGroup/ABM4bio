@@ -19,6 +19,7 @@
 #include "./cell_protrusion.h"
 #include "./obstacles.h"
 #include "./io_flux.h"
+#include "./regulatory/regulatory_model-inline.h"
 namespace bdm { void UpdateDdrPathway(BiologicalCell* cell); }
 // =============================================================================
 namespace bdm {
@@ -153,6 +154,14 @@ public:
             phase_age_ = 0;
             arrest_time_ = 0;
             is_quiescent_ = false;
+            regulatory_backend_id_ = mother->regulatory_backend_id_;
+            regulatory_model_phenotype_id_ = mother->regulatory_model_phenotype_id_;
+            regulatory_update_interval_ = mother->regulatory_update_interval_;
+            regulatory_update_counter_ = 0;
+            regulatory_model_type_ = mother->regulatory_model_type_;
+            regulatory_parameters_ = mother->regulatory_parameters_;
+            regulatory_state_ = mother->regulatory_state_;
+            regulatory_output_ = mother->regulatory_output_;
             // Inherit a configurable fraction of parent's intracellular ROS and DNA damage.
             // Biologically, daughter cells can receive some oxidative burden and unrepaired
             // lesions from the parent. Default 0.0 = daughters start clean (backward-compatible).
@@ -197,6 +206,8 @@ public:
               cap_arrest_phase_         = 0;
               cap_recovered_from_arrest_count_ = 0;
             }
+            // Rebuild backend selection for the daughter phenotype and parameters.
+            ConfigureRegulatoryModel();
             CheckAndFixDiameter(); mother->CheckAndFixDiameter();
           }
         else
@@ -236,6 +247,12 @@ public:
   double GetP21Level() const { return p21_level_; }
   double GetCdc25Active() const { return cdc25_active_; }
   double GetCdkActivity() const { return cdk_activity_; }
+  const regulatory::RegulatoryOutput& GetRegulatoryOutput() const {
+    return regulatory_output_;
+  }
+  double GetRegulatoryNodeActivity(const std::string& node_name) const;
+  bool IsRegulatoryModelActive() const { return regulatory_backend_id_ != 0; }
+  std::string GetRegulatoryModelType() const { return regulatory_model_type_; }
   // Mechanism 12 — CAP/PAM-specific state getters
   double GetRNSInternal() const { return rns_internal_; }
   double GetCapDoseIntegral() const { return cap_dose_integral_; }
@@ -247,6 +264,12 @@ public:
   double GetApoptosisCommitmentState() const { return apoptosis_commitment_state_; }
   double GetMembranePermeability() const { return membrane_permeability_; }
   double GetRepairCapacity() const { return repair_capacity_; }
+  void   SetAntioxidantCapacity(double value) {
+    antioxidant_capacity_ = std::max(0.0, value);
+  }
+  void   SetRepairCapacity(double value) {
+    repair_capacity_ = std::clamp(value, 0.0, 1.0);
+  }
   void   SetCapArrestPhase(int phase) { cap_arrest_phase_ = phase; }
   int    GetCapArrestPhase() const { return cap_arrest_phase_; }
   void   IncrementCapRecoveredCount() { ++cap_recovered_from_arrest_count_; }
@@ -380,6 +403,13 @@ public:
   /// Distinct from EvaluateCellCycleCheckpoints() (Mechanism 11).
   CAPCheckpointState EvaluateCAPCheckpointState(
       const MicroenvironmentState& env);
+  // -----------------------------------------------------------------------
+  // Modular intracellular regulation interface (Boolean / stochastic Boolean)
+  // -----------------------------------------------------------------------
+  void ConfigureRegulatoryModel();
+  void UpdateRegulatoryModel(const MicroenvironmentState& env);
+  regulatory::RegulatoryInput BuildRegulatoryInput(
+      const MicroenvironmentState& env) const;
   //
 //
 private:
@@ -495,6 +525,20 @@ private:
   // cap_recovered_from_arrest_count_: number of successful recoveries where a
   // checkpoint-arrested cell repaired sufficiently and re-entered progression.
   int cap_recovered_from_arrest_count_ = 0;
+  // -----------------------------------------------------------------------
+  // Modular intracellular regulatory layer (GRN)
+  // -----------------------------------------------------------------------
+  int regulatory_backend_id_ = 0;  // 0 none, 1 boolean, 2 stochastic_boolean
+  int regulatory_model_phenotype_id_ = -1;
+  int regulatory_update_interval_ = 1;
+  int regulatory_update_counter_ = 0;
+  std::string regulatory_model_type_ = "none";
+  regulatory::RegulatoryParameters regulatory_parameters_;
+  regulatory::RegulatoryState regulatory_state_;
+  regulatory::RegulatoryOutput regulatory_output_;
+  regulatory::NullRegulatoryModel regulatory_model_null_;
+  regulatory::BooleanRegulatoryModel regulatory_model_boolean_;
+  regulatory::StochasticBooleanRegulatoryModel regulatory_model_stochastic_;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
 };

@@ -3023,6 +3023,163 @@ void bdm::BiologicalCell::Set2DeleteProtrusions()
       protrusion->Set2Delete();
     }
 }
+// -----------------------------------------------------------------------------
+inline
+double bdm::BiologicalCell::GetRegulatoryNodeActivity(
+    const std::string& node_name) const
+{
+  auto it = regulatory_state_.node_activity.find(node_name);
+  return (it == regulatory_state_.node_activity.end()) ? 0.0 : it->second;
+}
+// -----------------------------------------------------------------------------
+inline
+void bdm::BiologicalCell::ConfigureRegulatoryModel()
+{
+  regulatory_backend_id_ = 0;
+  regulatory_model_type_ = "none";
+  regulatory_update_interval_ = 1;
+  regulatory_update_counter_ = 0;
+  regulatory_model_phenotype_id_ = this->GetPhenotype();
+  regulatory_state_.node_activity.clear();
+  regulatory_state_.time_since_last_update = 0.0;
+  regulatory_state_.last_phase = this->GetPhase();
+  regulatory_output_ = bdm::regulatory::RegulatoryOutput();
+  regulatory_parameters_ = bdm::regulatory::RegulatoryParameters();
+  if (!params_ || !this->GetPhenotype()) return;
+  // phenotype namespace
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  // model selection
+  std::string model_type = "none";
+  if (this->params()->have_parameter<std::string>(CP_name+"/intracellular/model_type")) {
+    model_type = this->params()->get<std::string>(CP_name+"/intracellular/model_type");
+  }
+  if (model_type == "deterministic_boolean") model_type = "boolean";
+  if (model_type != "none" && model_type != "boolean" &&
+      model_type != "stochastic_boolean") {
+    model_type = "none";
+  }
+  regulatory_model_type_ = model_type;
+  if (model_type == "none") return;
+  // update interval
+  if (this->params()->have_parameter<int>(CP_name+"/intracellular/grn_update_interval")) {
+    regulatory_update_interval_ =
+      std::max(1, this->params()->get<int>(CP_name+"/intracellular/grn_update_interval"));
+  }
+  regulatory_parameters_.backend = model_type;
+  regulatory_parameters_.update_interval = regulatory_update_interval_;
+  regulatory_parameters_.boolean["noise"] =
+    this->params()->have_parameter<bool>(CP_name+"/intracellular/grn_noise")
+    ? this->params()->get<bool>(CP_name+"/intracellular/grn_noise") : false;
+  // compact helper for per-phenotype GRN parameters
+  auto read_grn = [&] (const std::string& key, double fallback) -> double {
+    const std::string pname = CP_name + "/grn/" + key;
+    return this->params()->have_parameter<double>(pname)
+      ? this->params()->get<double>(pname) : fallback;
+  };
+  // thresholds / scales
+  regulatory_parameters_.numeric["ros_high_threshold"] = read_grn("ros_high_threshold", 0.35);
+  regulatory_parameters_.numeric["dna_damage_high_threshold"] = read_grn("dna_damage_high_threshold", 0.35);
+  regulatory_parameters_.numeric["hypoxia_threshold"] = read_grn("hypoxia_threshold", 0.15);
+  regulatory_parameters_.numeric["nutrient_low_threshold"] = read_grn("nutrient_low_threshold", 0.25);
+  regulatory_parameters_.numeric["ecm_stiffness_high_threshold"] = read_grn("ecm_stiffness_high_threshold", 1.2);
+  regulatory_parameters_.numeric["crowding_high_threshold"] = read_grn("crowding_high_threshold", 0.6);
+  regulatory_parameters_.numeric["tgfb_high_threshold"] = read_grn("tgfb_high_threshold", 0.4);
+  regulatory_parameters_.numeric["adhesion_low_threshold"] = read_grn("adhesion_low_threshold", 0.2);
+  regulatory_parameters_.numeric["apoptosis_hazard_scale"] = read_grn("apoptosis_hazard_scale", 0.15);
+  regulatory_parameters_.numeric["necrosis_hazard_scale"] = read_grn("necrosis_hazard_scale", 0.05);
+  regulatory_parameters_.numeric["quiescence_hazard_scale"] = read_grn("quiescence_hazard_scale", 0.08);
+  regulatory_parameters_.numeric["apoptosis_hazard_base"] = read_grn("apoptosis_hazard_base", 0.0);
+  regulatory_parameters_.numeric["necrosis_hazard_base"] = read_grn("necrosis_hazard_base", 0.0);
+  regulatory_parameters_.numeric["quiescence_hazard_base"] = read_grn("quiescence_hazard_base", 0.0);
+  // stochastic transition rates
+  regulatory_parameters_.numeric["rate_on_p53"] = read_grn("p53_on_rate", 1.2);
+  regulatory_parameters_.numeric["rate_off_p53"] = read_grn("p53_off_rate", 0.4);
+  regulatory_parameters_.numeric["rate_on_NRF2"] = read_grn("nrf2_on_rate", 1.0);
+  regulatory_parameters_.numeric["rate_off_NRF2"] = read_grn("nrf2_off_rate", 0.5);
+  regulatory_parameters_.numeric["rate_on_Caspase3"] = read_grn("caspase_on_rate", 1.0);
+  regulatory_parameters_.numeric["rate_off_Caspase3"] = read_grn("caspase_off_rate", 0.4);
+  // initialize selected backend
+  if (model_type == "boolean") {
+    regulatory_backend_id_ = 1;
+    regulatory_model_boolean_.Initialize(regulatory_parameters_);
+  } else if (model_type == "stochastic_boolean") {
+    regulatory_backend_id_ = 2;
+    regulatory_model_stochastic_.Initialize(regulatory_parameters_);
+  }
+}
+// -----------------------------------------------------------------------------
+inline
+bdm::regulatory::RegulatoryInput
+bdm::BiologicalCell::BuildRegulatoryInput(
+    const bdm::BiologicalCell::MicroenvironmentState& env) const
+{
+  bdm::regulatory::RegulatoryInput in;
+  in.oxygen = env.local_O2;
+  in.nutrient = env.local_nutrient;
+  in.extracellular_rons = env.local_rons;
+  in.intracellular_ros = ros_internal_;
+  in.dna_damage = dna_damage_;
+  in.ecm_density = env.ecm_density;
+  in.ecm_stiffness = env.ecm_stiffness;
+  in.adhesion_signal = env.ecm_adhesion;
+  in.crowding = env.local_crowding;
+  in.phase = this->GetPhase();
+  in.phenotype_id = this->GetPhenotype();
+  // Optional external cues
+  if (params_ && this->params()->have_parameter<std::vector<std::string>>("substances")) {
+    auto* rm = bdm::Simulation::GetActive()->GetResourceManager();
+    const bdm::Double3 xyz = this->GetPosition();
+    const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+    if (std::find(substances.begin(), substances.end(), "TGFb") != substances.end())
+      if (auto* dg = rm->GetDiffusionGrid("TGFb"))
+        in.tgfb = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+    if (std::find(substances.begin(), substances.end(), "IL6") != substances.end())
+      if (auto* dg = rm->GetDiffusionGrid("IL6"))
+        in.inflammatory_signal = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+    if (std::find(substances.begin(), substances.end(), "EGF") != substances.end())
+      if (auto* dg = rm->GetDiffusionGrid("EGF"))
+        in.growth_factor = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+  }
+  return in;
+}
+// -----------------------------------------------------------------------------
+inline
+void bdm::BiologicalCell::UpdateRegulatoryModel(
+    const bdm::BiologicalCell::MicroenvironmentState& env)
+{
+  if (!this->GetPhenotype() || !params_) return;
+  if (regulatory_model_phenotype_id_ != this->GetPhenotype()) {
+    ConfigureRegulatoryModel();
+  }
+  if (regulatory_backend_id_ == 0) return;
+  const double dt = this->params()->get<double>("time_step");
+  ++regulatory_update_counter_;
+  const bool phase_changed = (regulatory_state_.last_phase != this->GetPhase());
+  const bool due_update = (regulatory_update_counter_ % regulatory_update_interval_) == 0;
+  if (!phase_changed && !due_update) {
+    return;
+  }
+  const bdm::regulatory::RegulatoryInput in = BuildRegulatoryInput(env);
+  if (regulatory_backend_id_ == 1) {
+    regulatory_model_boolean_.Update(in, &regulatory_state_, &regulatory_output_, dt);
+  } else if (regulatory_backend_id_ == 2) {
+    regulatory_model_stochastic_.Update(in, &regulatory_state_, &regulatory_output_, dt);
+  } else {
+    regulatory_model_null_.Update(in, &regulatory_state_, &regulatory_output_, dt);
+  }
+  regulatory_state_.last_phase = this->GetPhase();
+  // Map GRN outputs to intracellular capacities (smoothed to avoid abrupt jumps)
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const double alpha = this->params()->have_parameter<double>(CP_name+"/intracellular/grn_relaxation")
+    ? std::clamp(this->params()->get<double>(CP_name+"/intracellular/grn_relaxation"), 0.0, 1.0)
+    : 0.5;
+  SetAntioxidantCapacity((1.0 - alpha) * antioxidant_capacity_
+                         + alpha * std::max(0.0, regulatory_output_.antioxidant_capacity));
+  SetRepairCapacity((1.0 - alpha) * repair_capacity_
+                    + alpha * std::clamp(regulatory_output_.repair_capacity, 0.0, 1.0));
+}
 // =============================================================================
 // Mechanism 11 supporting methods — added for biologically stricter control
 // =============================================================================
@@ -3288,6 +3445,22 @@ bdm::BiologicalCell::EvaluateCellCycleCheckpoints(
     if (env.local_O2 < o2_rep || env.local_nutrient < nut_rep)
       st.repair_allowed = false;
   }
+  // ================================================================
+  // GRN output fusion (optional)
+  // ================================================================
+  if (regulatory_backend_id_ != 0)
+    {
+      st.can_enter_S = st.can_enter_S && (regulatory_output_.can_enter_S > 0.5);
+      st.can_enter_M = st.can_enter_M && (regulatory_output_.can_enter_M > 0.5);
+      st.can_grow = st.can_grow && (regulatory_output_.proliferation_signal > 0.25);
+      if (regulatory_output_.quiescence_hazard > 0.05)
+        st.should_enter_G0 = true;
+      if (this->GetCanApoptose() && regulatory_output_.apoptosis_hazard > 0.2)
+        st.should_enter_Ap = true;
+      if (regulatory_output_.necrosis_hazard > 0.2)
+        st.should_enter_Nec = true;
+      st.repair_allowed = st.repair_allowed && (regulatory_output_.repair_capacity > 0.1);
+    }
   return st;
 }
 // -----------------------------------------------------------------------------
@@ -3849,6 +4022,21 @@ bdm::BiologicalCell::EvaluateCAPCheckpointState(
     if (o2_nec_thr >= 0.0 && env.local_O2 <= o2_nec_thr)
       st.must_enter_Nec = true;
   }
+  // ================================================================
+  // GRN output fusion (optional)
+  // ================================================================
+  if (regulatory_backend_id_ != 0)
+    {
+      st.can_enter_S = st.can_enter_S && (regulatory_output_.can_enter_S > 0.5);
+      st.can_enter_M = st.can_enter_M && (regulatory_output_.can_enter_M > 0.5);
+      st.must_arrest = st.must_arrest || (regulatory_output_.can_enter_S <= 0.5)
+                      || (regulatory_output_.can_enter_M <= 0.5);
+      st.repair_allowed = st.repair_allowed && (regulatory_output_.repair_capacity > 0.1);
+      if (this->GetCanApoptose() && regulatory_output_.apoptosis_hazard > 0.2)
+        st.must_enter_Ap = true;
+      if (regulatory_output_.necrosis_hazard > 0.2)
+        st.must_enter_Nec = true;
+    }
   return st;
 }
 // =============================================================================
