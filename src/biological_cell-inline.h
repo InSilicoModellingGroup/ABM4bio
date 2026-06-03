@@ -1232,9 +1232,25 @@ bool bdm::BiologicalCell::CheckMigration()
                           const double candidate_concentration = GetInterpolatedValue(dg, point, this->params());
                           const double signed_improvement =
                             chemotaxis_sign * (candidate_concentration - concentration);
-                          if (signed_improvement > best_signed_improvement)
+                          //
+                          // crowding penalty: lower score for overcrowded candidate positions
+                          double crowding_adjustment = 0.0;
+                          if (this->params()->get<bool>(CP_name+"/can_migrate/use_crowding"))
                             {
-                              best_signed_improvement = signed_improvement;
+                              const double cr = this->params()->get<double>(CP_name+"/can_migrate/crowding_influence_ratio");
+                              if (cr > 0.0)
+                                {
+                                  const double occupancy = ComputeLocalOccupancyRatio(point, cr);
+                                  const double max_occ = this->params()->get<double>(CP_name+"/can_migrate/max_candidate_occupancy");
+                                  if (occupancy >= max_occ) continue; // reject overcrowded candidate
+                                  const double penalty = this->params()->get<double>(CP_name+"/can_migrate/crowding_penalty");
+                                  crowding_adjustment = -penalty * occupancy;
+                                }
+                            }
+                          //
+                          if (signed_improvement + crowding_adjustment > best_signed_improvement)
+                            {
+                              best_signed_improvement = signed_improvement + crowding_adjustment;
                               best_dvec = point - base_position;
                               found_better_candidate = true;
                             }
@@ -2411,6 +2427,59 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
 }
 // -----------------------------------------------------------------------------
 inline
+double bdm::BiologicalCell::ComputeLocalOccupancyRatio(
+  const bdm::Double3& position, double influence_ratio) const
+{
+  if (influence_ratio <= 0.0) return 0.0;
+  //
+  auto* rm = bdm::Simulation::GetActive()->GetResourceManager();
+  const bool is_2D = this->params()->get<bool>("simulation_domain_is_2D");
+  const real_t R = this->GetDiameter() * static_cast<real_t>(influence_ratio);
+  //
+  if (is_2D)
+    {
+      const real_t A = bdm::Math::kPi * pow2(R);
+      if (A <= 0.0) return 0.0;
+      real_t area(0.0);
+      rm->ForEachAgent([&] (bdm::Agent* a) {
+        if (auto* other = dynamic_cast<const BiologicalCell*>(a))
+          if (other != this)
+            {
+              const real_t r = 0.5 * other->GetDiameter();
+              const real_t d = L2norm(position - other->GetPosition());
+              if      (d > (R+r))      ;
+              else if (d <= abs(R-r))  area += bdm::Math::kPi * pow2(r);
+              else
+                area += pow2(r)*acos((pow2(d)+pow2(r)-pow2(R))/(2*d*r))
+                      + pow2(R)*acos((pow2(d)-pow2(r)+pow2(R))/(2*d*R))
+                      - 0.5*sqrt((-d+r+R)*(d+r-R)*(d-r+R)*(d+r+R));
+            }
+      });
+      return static_cast<double>(area / A);
+    }
+  else
+    {
+      const real_t V = bdm::Math::kPi * pow3(R) * (4.0/3.0);
+      if (V <= 0.0) return 0.0;
+      real_t volume(0.0);
+      rm->ForEachAgent([&] (bdm::Agent* a) {
+        if (auto* other = dynamic_cast<const BiologicalCell*>(a))
+          if (other != this)
+            {
+              const real_t r = 0.5 * other->GetDiameter();
+              const real_t d = L2norm(position - other->GetPosition());
+              if      (d > (R+r))      ;
+              else if (d <= abs(R-r))  volume += bdm::Math::kPi * pow3(r) * (4.0/3.0);
+              else
+                volume += bdm::Math::kPi * pow2(R+r-d) / (12.0*d)
+                        * (d*d + 2*d*r - 3*r*r + 2*d*R - 3*R*R + 6*r*R);
+            }
+      });
+      return static_cast<double>(volume / V);
+    }
+}
+// -----------------------------------------------------------------------------
+inline
 bool bdm::BiologicalCell::CheckDivision() {
   if (!this->GetCanDivide()) return false;
   // by design only viable (non-necrotic) cells could divide
@@ -2475,6 +2544,17 @@ bool bdm::BiologicalCell::CheckDivision() {
   //
   if ( diameter < diameter_cutoff || this->GetAge() < cell_maturity )
     return false;
+  //
+  // local-crowding inhibition of division
+  {
+    const double influence_ratio = this->params()->get<double>(CP_name+"/can_divide/influence_ratio");
+    if (influence_ratio > 0.0)
+      {
+        const double max_occupancy = this->params()->get<double>(CP_name+"/can_divide/max_occupancy");
+        if (ComputeLocalOccupancyRatio(this->GetPosition(), influence_ratio) >= max_occupancy)
+          return false;
+      }
+  }
   //
   // produce the separation vector
   const bdm::Double3 axis =

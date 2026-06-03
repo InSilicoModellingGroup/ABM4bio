@@ -147,6 +147,10 @@ public:
   bool CheckTransformationAndDivision();
   bool CheckAsymmetricDivision();
   bool CheckDivision();
+  // Returns phi = occupied_area_or_volume / influence_area_or_volume in [0, inf).
+  // influence_ratio scales the cell diameter to define the local search radius.
+  // Returns 0.0 if influence_ratio <= 0.
+  double ComputeLocalOccupancyRatio(const bdm::Double3& position, double influence_ratio) const;
   void Set2DeleteProtrusions();
   //
 //

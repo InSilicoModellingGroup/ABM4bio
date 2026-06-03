@@ -1702,6 +1702,11 @@ void init_cells(bdm::Simulation& sim,
         params.set<double>(CP_name+"/can_divide/CAP_sensitivity") = 0.0;
       if (! params.have_parameter<double>(CP_name+"/can_divide/CAP_saturation_time"))
         params.set<double>(CP_name+"/can_divide/CAP_saturation_time") = 60.0; // seconds
+      // local-crowding inhibition of division (default: disabled)
+      if (! params.have_parameter<double>(CP_name+"/can_divide/influence_ratio"))
+        params.set<double>(CP_name+"/can_divide/influence_ratio") = 0.0;
+      if (! params.have_parameter<double>(CP_name+"/can_divide/max_occupancy"))
+        params.set<double>(CP_name+"/can_divide/max_occupancy") = 1.0;
       if (! params.have_parameter<double>(CP_name+"/can_migrate/probability"))
         params.set<double>(CP_name+"/can_migrate/probability") = 0.0;
       if (! params.have_parameter<double>(CP_name+"/can_transform/probability"))
@@ -1715,6 +1720,15 @@ void init_cells(bdm::Simulation& sim,
         {
           if (! params.have_parameter<bool>(CP_name+"/can_migrate/accumulate_path"))
             params.set<bool>(CP_name+"/can_migrate/accumulate_path") = true;
+          // local-crowding penalty during candidate migration (default: disabled)
+          if (! params.have_parameter<bool>(CP_name+"/can_migrate/use_crowding"))
+            params.set<bool>(CP_name+"/can_migrate/use_crowding") = false;
+          if (! params.have_parameter<double>(CP_name+"/can_migrate/crowding_influence_ratio"))
+            params.set<double>(CP_name+"/can_migrate/crowding_influence_ratio") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_migrate/max_candidate_occupancy"))
+            params.set<double>(CP_name+"/can_migrate/max_candidate_occupancy") = 1.0;
+          if (! params.have_parameter<double>(CP_name+"/can_migrate/crowding_penalty"))
+            params.set<double>(CP_name+"/can_migrate/crowding_penalty") = 1.0;
         }
       if (params.get<bool>(CP_name+"/can_protrude"))
         {
