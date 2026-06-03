@@ -1,7 +1,7 @@
 parameter_name,type,parameter_value
 ### START,###,###
-output_directory,string,results_inVitro
-simulation_title,string,Oxygen_Gradient
+output_directory,string,results_ECM
+simulation_title,string,ECM_GradientDriven_Invasion
 #,#,#
 number_of_time_steps,int,2000
 time_step,float,0.1
@@ -21,11 +21,11 @@ simulation_obstacles,int,0
 #,#,#
 cell/phenotypes,string,necrotic_cell cancer_cell
 cell/max_displacement,float,0.2
-diffusion_grid/spatial_resolution,int,80   
+diffusion_grid/spatial_resolution,int,80
 diffusion_grid/trilinear_interpolation,bool,true
-diffusion_grid/biochemicals,string,O2
+diffusion_grid/biochemicals,string,O2 ECM
 #,#,#
-### O2 (Oxygen),###,###
+### O2 (Oxygen) - diffusion-driven anisotropic gradient (Ferraro 2022),###,###
 O2/initial_value/min,float,0.0
 O2/initial_value/max,float,0.0
 O2/initial_value/linear_gradient/enabled,bool,true
@@ -39,7 +39,14 @@ O2/initial_value/linear_gradient/axis3,string,z
 O2/initial_value/linear_gradient/min_value3,float,1.0
 O2/initial_value/linear_gradient/max_value3,float,2.5
 #,#,#
-### necrotic_cell (Post-apoptotic debris),###,###
+### ECM (Extracellular Matrix) - structural field, near-zero diffusion,###,###
+### Uniform initial density; remodelled by cells via degrade/deposit rules.
+ECM/initial_value/min,float,1.0
+ECM/initial_value/max,float,1.0
+ECM/diffusion_coefficient,float,1e-6
+ECM/dissipation_rate,float,0.0
+#,#,#
+### necrotic_cell (Post-apoptotic debris / necrotic core),###,###
 necrotic_cell/phenotype_ID,int,0
 necrotic_cell/initial_population,int,0
 necrotic_cell/mechanism_order,int,10
@@ -51,7 +58,7 @@ necrotic_cell/can_apoptose/time_window,int,150
 necrotic_cell/density,float,0.1
 necrotic_cell/adherence,float,2.0
 #,#,#
-### cancer_cell (Oxygen-seeking cells),###,###
+### cancer_cell (Ferraro 2022 in-vitro tumor-spheroid cells),###,###
 ### Basic Properties,###,###
 cancer_cell/phenotype_ID,int,1
 cancer_cell/initial_population,int,150
@@ -71,6 +78,20 @@ cancer_cell/principal/max,float,1.0
 cancer_cell/density,float,1.0
 cancer_cell/adherence,float,0.0
 #,#,#
+### Phase-cycle dwell times (in simulation time steps at dt=0.1 h),###,###
+### G1~8h -> 80 steps; S~7h -> 70 steps; G2~4h -> 40 steps
+cancer_cell/phase_dwell/G1,int,80
+cancer_cell/phase_dwell/Sy,int,70
+cancer_cell/phase_dwell/G2,int,40
+#,#,#
+### G1/S Checkpoint (blocks G1->S under stress),###,###
+cancer_cell/checkpoint/G1S/O2_threshold,float,0.8
+cancer_cell/checkpoint/G1S/ECM_threshold,float,0.2
+cancer_cell/checkpoint/G1S/crowding_threshold,float,0.85
+#,#,#
+### G2/M Checkpoint (blocks G2->Di under stress),###,###
+cancer_cell/checkpoint/G2M/O2_threshold,float,0.5
+#,#,#
 ### Growth Parameters,###,###
 cancer_cell/can_grow,bool,true
 cancer_cell/can_grow/probability,float,0.5
@@ -86,8 +107,9 @@ cancer_cell/can_divide/diameter_cutoff,float,3.8
 cancer_cell/can_divide/max,int,3
 cancer_cell/can_divide/time_window,int,75
 cancer_cell/can_divide/O2/threshold,float,0.95
+cancer_cell/can_divide/influence_ratio,float,2.0
 #,#,#
-### Transformation Parameters,###,###
+### Transformation Parameters (cancer -> necrotic on hypoxia),###,###
 cancer_cell/can_transform,bool,true
 cancer_cell/can_transform/probability,float,1
 cancer_cell/can_transform/threshold,float,-2.5
@@ -95,15 +117,52 @@ cancer_cell/can_transform/time_window_open,int,1
 cancer_cell/can_transform/time_window_close,int,11111111
 cancer_cell/can_transform/new_phenotype,int,0
 #,#,#
-### Migration Parameters,###,###
+### Migration Parameters (O2 chemotaxis + ECM haptotaxis),###,###
+### Biological parameters: speed, probability, sensing
 cancer_cell/can_migrate,bool,true
 cancer_cell/can_migrate/speed,float,30.0
 cancer_cell/can_migrate/persistence_time,float,0.0
 cancer_cell/can_migrate/half_range,float,1e-2
 cancer_cell/can_migrate/probability,float,1e-2
+### O2 chemotaxis: stochastic_local for biologically realistic biased motility
 cancer_cell/can_migrate/chemotaxis,float,3.0
 cancer_cell/can_migrate/chemotaxis/threshold,float,-3.5
 cancer_cell/can_migrate/chemotaxis/normalize_gradient,bool,false
+### Explicit mode: stochastic_local gives biased but not deterministic migration.
+### Compare with local_best or gradient to validate chemotactic sensitivity.
+cancer_cell/can_migrate/chemotaxis/O2/mode,string,stochastic_local
+### Inverse temperature β for Boltzmann selection (higher = more deterministic)
+cancer_cell/can_migrate/chemotaxis/O2/beta,float,10.0
+### Tie-breaking epsilon suppresses movement on numerical noise (local_best only)
+cancer_cell/can_migrate/chemotaxis/O2/tie_epsilon,float,1e-6
+### ECM haptotaxis: cells preferentially move along ECM density gradients
+cancer_cell/can_migrate/chemotaxis/ECM,float,0.05
+cancer_cell/can_migrate/chemotaxis/ECM/threshold,float,0.1
+### ECM haptotaxis uses local_best: deterministic sensing of structural gradient
+cancer_cell/can_migrate/chemotaxis/ECM/mode,string,local_best
+#,#,#
+### ECM Interaction (adhesion, remodelling, anoikis),###,###
+### integrin_sensitivity: weight of ECM adhesion signal per unit ECM density
+cancer_cell/ecm/integrin_sensitivity,float,1.0
+### anoikis_threshold: ECM adhesion signal below which anoikis is triggered
+cancer_cell/ecm/anoikis_threshold,float,0.05
+### anoikis_probability: per-step probability of anoikis once threshold crossed
+cancer_cell/ecm/anoikis_probability,float,0.02
+### k_degrade: ECM degradation rate per step (MMP-mediated proteolysis)
+cancer_cell/ecm/k_degrade,float,0.005
+### k_deposit: ECM deposition rate per step (fibronectin/collagen secretion)
+cancer_cell/ecm/k_deposit,float,0.002
+### ecm_saturation: maximum ECM density (logistic cap on deposition)
+cancer_cell/ecm/ecm_saturation,float,2.0
+#,#,#
+### G0 Quiescence (crowding-induced reversible arrest),###,###
+cancer_cell/quiescence/crowding_threshold,float,0.80
+cancer_cell/quiescence/crowding_exit,float,0.60
+#,#,#
+### Necrosis Pathway (hypoxia + prolonged arrest -> necrotic transformation),###,###
+cancer_cell/can_necrose/O2_threshold,float,0.30
+cancer_cell/can_necrose/min_arrest_time,int,20
+cancer_cell/can_necrose/probability,float,0.30
 #,#,#
 ### Michaelis-Menten kinetics (O2 consumption),###,###
 cancer_cell/O2/secretion/michaelis_menten_model,bool,true

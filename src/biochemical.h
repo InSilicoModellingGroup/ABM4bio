@@ -30,6 +30,18 @@ enum Biochemical {
   Drug_1 = 101, Drug_2 = 102, Drug_3 = 103,
   ECM = 999
 };
+// -----------------------------------------------------------------------------
+// Intracellular DDR nodes (not extracellular diffusion substances; tracked per cell).
+enum class DdrSignallingNode {
+  ATM = 0,
+  ATR = 1,
+  CHK1 = 2,
+  CHK2 = 3,
+  P53 = 4,
+  P21 = 5,
+  CDC25 = 6,
+  CDK = 7
+};
 // =============================================================================
 #endif // _BIOCHEMICAL_H_
 // =============================================================================

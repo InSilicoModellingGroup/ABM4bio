@@ -13,8 +13,7 @@
 #ifndef _BIOLOGICAL_CELL_INLINE_H_
 #define _BIOLOGICAL_CELL_INLINE_H_
 // =============================================================================
-#include "core/environment/uniform_grid_environment.h"
-// =============================================================================
+#include "intracellular/ddr_pathway.h"
 inline
 void bdm::BiologicalCell::RunBiochemics()
 {
@@ -258,10 +257,31 @@ void bdm::BiologicalCell::RunIntracellular()
   double uptake_h2o2 = 0.0, uptake_no2 = 0.0;
   // only query grids if the substances are present in the input file
   const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+  // Optional ECM barrier: dense ECM attenuates RONS penetration to cells.
+  // Relevant for desmoplastic tumours (PDAC/BTC) where collagen-rich stroma
+  // restricts diffusion and uptake of reactive species. Parameterised as
+  // exponential attenuation: penetration = exp(-k_barrier * ECM_density).
+  // Only active when intracellular/ecm_barrier/k_barrier is defined.
+  double ecm_penetration_factor = 1.0;
+  if (this->params()->have_parameter<double>(CP_name+"/intracellular/ecm_barrier/k_barrier"))
+    {
+      const double k_bar = this->params()->get<double>(CP_name+"/intracellular/ecm_barrier/k_barrier");
+      if (k_bar > 0.0 &&
+          std::find(substances.begin(), substances.end(), "ECM") != substances.end())
+        {
+          if (auto* dg_ecm = rm->GetDiffusionGrid("ECM"))
+            {
+              const double ecm = GetInterpolatedValue(dg_ecm, xyz, this->params());
+              ecm_penetration_factor = std::exp(-k_bar * std::max(0.0, ecm));
+              if (ecm_penetration_factor < 0.0) ecm_penetration_factor = 0.0;
+              if (ecm_penetration_factor > 1.0) ecm_penetration_factor = 1.0;
+            }
+        }
+    }
   if (std::find(substances.begin(), substances.end(), "H2O2") != substances.end()) {
     if (auto* dg = rm->GetDiffusionGrid("H2O2")) {
       const double c = GetInterpolatedValue(dg, xyz, this->params());
-      const double desired = dt * std::max(0.0, k_uptake_H2O2 * c);
+      const double desired = dt * std::max(0.0, k_uptake_H2O2 * c * ecm_penetration_factor);
       const double removed = std::min(std::max(0.0, c), desired);
       if (removed > 0.0) dg->ChangeConcentrationBy(xyz, -removed);
       uptake_h2o2 = removed / dt;
@@ -270,7 +290,7 @@ void bdm::BiologicalCell::RunIntracellular()
   if (std::find(substances.begin(), substances.end(), "NO2_") != substances.end()) {
     if (auto* dg = rm->GetDiffusionGrid("NO2_")) {
       const double c = GetInterpolatedValue(dg, xyz, this->params());
-      const double desired = dt * std::max(0.0, k_uptake_NO2 * c);
+      const double desired = dt * std::max(0.0, k_uptake_NO2 * c * ecm_penetration_factor);
       const double removed = std::min(std::max(0.0, c), desired);
       if (removed > 0.0) dg->ChangeConcentrationBy(xyz, -removed);
       uptake_no2 = removed / dt;
@@ -297,6 +317,286 @@ void bdm::BiologicalCell::RunIntracellular()
   // Rearranged: D_new = (D_old + dt*k_ind*ROS) / (1 + dt*k_rep)
   dna_damage_ = (dna_damage_ + dt * k_induce * ros_internal_) / (1.0 + dt * k_repair);
   if (dna_damage_ < 0.0) dna_damage_ = 0.0;
+  UpdateDdrPathway(this);
+}
+// -----------------------------------------------------------------------------
+inline
+bool bdm::BiologicalCell::RunECMInteraction()
+{
+  // Only viable cells interact with ECM
+  if (!this->GetPhenotype()) return false;
+  //
+  auto* rm  = bdm::Simulation::GetActive()->GetResourceManager();
+  auto* rg  = bdm::Simulation::GetActive()->GetRandom();
+  const double dt = this->params()->get<double>("time_step");
+  //
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const bdm::Double3 xyz = this->GetPosition();
+  //
+  // Check if ECM field is present in this simulation
+  const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+  const bool has_ecm = (std::find(substances.begin(), substances.end(), "ECM") != substances.end());
+  if (!has_ecm) return false;
+  //
+  auto* dg_ecm = rm->GetDiffusionGrid("ECM");
+  if (!dg_ecm) return false;
+  //
+  const double ecm_conc = GetInterpolatedValue(dg_ecm, xyz, this->params());
+  //
+  // --- ECM adhesion signal (integrin-mediated) ---
+  const double integrin_sensitivity =
+    this->params()->have_parameter<double>(CP_name+"/ecm/integrin_sensitivity")
+    ? this->params()->get<double>(CP_name+"/ecm/integrin_sensitivity") : 1.0;
+  const double adhesion_signal = ecm_conc * integrin_sensitivity;
+  //
+  // --- Anoikis check: low adhesion => stochastic apoptosis ---
+  if (this->GetCanApoptose() &&
+      this->params()->have_parameter<double>(CP_name+"/ecm/anoikis_threshold"))
+    {
+      const double anoikis_thr = this->params()->get<double>(CP_name+"/ecm/anoikis_threshold");
+      if (adhesion_signal < anoikis_thr)
+        {
+          const double anoikis_prob =
+            this->params()->have_parameter<double>(CP_name+"/ecm/anoikis_probability")
+            ? this->params()->get<double>(CP_name+"/ecm/anoikis_probability") : 0.01;
+          // Probability scales with dt to remain rate-consistent
+          if (rg->Uniform(0.0, 1.0) < anoikis_prob * dt)
+            return true; // anoikis: caller should trigger Ap phase
+        }
+    }
+  //
+  // --- ECM degradation by cell (MMP/protease-like activity) ---
+  if (this->params()->have_parameter<double>(CP_name+"/ecm/k_degrade"))
+    {
+      const double k_deg = this->params()->get<double>(CP_name+"/ecm/k_degrade");
+      if (k_deg > 0.0 && ecm_conc > 0.0)
+        {
+          const double deg_amount = dt * k_deg * ecm_conc;
+          const double actual_deg = std::min(ecm_conc, deg_amount);
+          if (actual_deg > 0.0)
+            dg_ecm->ChangeConcentrationBy(xyz, -actual_deg);
+        }
+    }
+  //
+  // --- ECM deposition by cell (matrix synthesis) ---
+  if (this->params()->have_parameter<double>(CP_name+"/ecm/k_deposit"))
+    {
+      const double k_dep = this->params()->get<double>(CP_name+"/ecm/k_deposit");
+      if (k_dep > 0.0)
+        {
+          const double max_ecm =
+            this->params()->have_parameter<double>(CP_name+"/ecm/ecm_saturation")
+            ? this->params()->get<double>(CP_name+"/ecm/ecm_saturation") : 2.0;
+          if (ecm_conc < max_ecm)
+            {
+              // Logistic deposition: rate decreases as ECM approaches saturation
+              const double dep_amount = dt * k_dep * (1.0 - ecm_conc / max_ecm);
+              dg_ecm->ChangeConcentrationBy(xyz, dep_amount);
+            }
+        }
+    }
+  //
+  return false; // no anoikis
+}
+// -----------------------------------------------------------------------------
+inline
+bool bdm::BiologicalCell::EvaluateG1SCheckpoint()
+{
+  // G1/S checkpoint: returns true if the G1->S transition should be BLOCKED.
+  // Conditions checked: DNA damage, hypoxia, sparse ECM, local crowding.
+  if (!this->GetPhenotype()) return false;
+  //
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  // --- DNA damage checkpoint (molecular DDR or legacy aggregate damage) ---
+  if (bdm::IsMolecularG1SCheckpointBlocked(this))
+    return true;
+  if (this->params()->have_parameter<double>(CP_name+"/checkpoint/G1S/damage_threshold")
+      && (!this->params()->have_parameter<bool>(CP_name+"/intracellular/ddr/enabled")
+          || !this->params()->get<bool>(CP_name+"/intracellular/ddr/enabled")))
+    {
+      const double thr = this->params()->get<double>(CP_name+"/checkpoint/G1S/damage_threshold");
+      if (dna_damage_ > thr) return true;
+    }
+  //
+  auto* rm = bdm::Simulation::GetActive()->GetResourceManager();
+  const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+  //
+  // --- Oxygen/nutrient sufficiency ---
+  if (std::find(substances.begin(), substances.end(), "O2") != substances.end())
+    {
+      if (auto* dg = rm->GetDiffusionGrid("O2"))
+        {
+          const double o2 = GetInterpolatedValue(dg, this->GetPosition(), this->params());
+          if (this->params()->have_parameter<double>(CP_name+"/checkpoint/G1S/O2_threshold"))
+            {
+              const double o2_thr = this->params()->get<double>(CP_name+"/checkpoint/G1S/O2_threshold");
+              if (o2 < o2_thr) return true; // block: hypoxic
+            }
+        }
+    }
+  //
+  // --- ECM density (sparse ECM => poor survival conditions for replication) ---
+  if (std::find(substances.begin(), substances.end(), "ECM") != substances.end())
+    {
+      if (auto* dg = rm->GetDiffusionGrid("ECM"))
+        {
+          const double ecm = GetInterpolatedValue(dg, this->GetPosition(), this->params());
+          if (this->params()->have_parameter<double>(CP_name+"/checkpoint/G1S/ECM_threshold"))
+            {
+              const double ecm_thr = this->params()->get<double>(CP_name+"/checkpoint/G1S/ECM_threshold");
+              if (ecm < ecm_thr) return true; // block: ECM too sparse for cycling
+            }
+        }
+    }
+  //
+  // --- Local crowding (contact inhibition of proliferation) ---
+  if (this->params()->have_parameter<double>(CP_name+"/checkpoint/G1S/crowding_threshold"))
+    {
+      const double influence_ratio =
+        this->params()->have_parameter<double>(CP_name+"/can_divide/influence_ratio")
+        ? this->params()->get<double>(CP_name+"/can_divide/influence_ratio") : 2.0;
+      const double occupancy = ComputeLocalOccupancyRatio(this->GetPosition(), influence_ratio);
+      const double crowd_thr = this->params()->get<double>(CP_name+"/checkpoint/G1S/crowding_threshold");
+      if (occupancy >= crowd_thr) return true; // block: contact inhibition
+    }
+  //
+  return false; // all checks passed: allow G1->S
+}
+// -----------------------------------------------------------------------------
+inline
+bool bdm::BiologicalCell::EvaluateG2MCheckpoint()
+{
+  // G2/M checkpoint: returns true if the G2->Di (mitosis) transition should be BLOCKED.
+  // This is the critical gate preventing damaged cells from entering mitosis.
+  if (!this->GetPhenotype()) return false;
+  //
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  // --- DNA damage checkpoint (ATM/CHK1/CHK2–Cdc25–CDK or legacy damage threshold) ---
+  if (bdm::IsMolecularG2MCheckpointBlocked(this))
+    return true;
+  if (this->params()->have_parameter<double>(CP_name+"/checkpoint/G2M/damage_threshold")
+      && (!this->params()->have_parameter<bool>(CP_name+"/intracellular/ddr/enabled")
+          || !this->params()->get<bool>(CP_name+"/intracellular/ddr/enabled")))
+    {
+      const double thr = this->params()->get<double>(CP_name+"/checkpoint/G2M/damage_threshold");
+      if (dna_damage_ > thr) return true;
+    }
+  //
+  auto* rm = bdm::Simulation::GetActive()->GetResourceManager();
+  const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+  //
+  // --- Oxygen sufficiency (cells need energy for mitosis) ---
+  if (std::find(substances.begin(), substances.end(), "O2") != substances.end())
+    {
+      if (auto* dg = rm->GetDiffusionGrid("O2"))
+        {
+          const double o2 = GetInterpolatedValue(dg, this->GetPosition(), this->params());
+          if (this->params()->have_parameter<double>(CP_name+"/checkpoint/G2M/O2_threshold"))
+            {
+              const double o2_thr = this->params()->get<double>(CP_name+"/checkpoint/G2M/O2_threshold");
+              if (o2 < o2_thr) return true; // block: insufficient oxygen for mitosis
+            }
+        }
+    }
+  //
+  return false; // all checks passed: allow G2->Di
+}
+// -----------------------------------------------------------------------------
+inline
+bool bdm::BiologicalCell::CheckNecrosis()
+{
+  // Necrosis pathway — two independent triggers:
+  //   Path 1 (original): severe hypoxia (O2 < threshold) + prolonged arrest.
+  //   Path 2 (new):      extreme intracellular ROS exceeding membrane / energy
+  //                      tolerance (relevant for high-dose CAP or metabolic stress).
+  // On any trigger, the cell transforms to the necrotic phenotype (ID 0).
+  if (!this->GetCanApoptose()) return false;
+  if (!this->GetPhenotype())   return false;
+  //
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  auto* rg = bdm::Simulation::GetActive()->GetRandom();
+  bool triggered = false;
+  //
+  // --- Path 2: extreme intracellular ROS / energy collapse ---
+  if (!triggered &&
+      this->params()->have_parameter<double>(CP_name+"/can_necrose/ros_threshold"))
+    {
+      const double ros_thr = this->params()->get<double>(CP_name+"/can_necrose/ros_threshold");
+      if (ros_internal_ > ros_thr)
+        {
+          const double prob_ros =
+            this->params()->have_parameter<double>(CP_name+"/can_necrose/ros_probability")
+            ? this->params()->get<double>(CP_name+"/can_necrose/ros_probability") : 0.5;
+          if (rg->Uniform(0.0, 1.0) <= prob_ros)
+            triggered = true;
+        }
+    }
+  //
+  // --- Path 1: severe hypoxia + prolonged arrest (original behaviour) ---
+  if (!triggered &&
+      this->params()->have_parameter<double>(CP_name+"/can_necrose/O2_threshold"))
+    {
+      auto* rm = bdm::Simulation::GetActive()->GetResourceManager();
+      const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+      if (std::find(substances.begin(), substances.end(), "O2") != substances.end())
+        {
+          auto* dg = rm->GetDiffusionGrid("O2");
+          if (dg)
+            {
+              const double o2 = GetInterpolatedValue(dg, this->GetPosition(), this->params());
+              const double necr_thr = this->params()->get<double>(CP_name+"/can_necrose/O2_threshold");
+              if (o2 <= necr_thr)
+                {
+                  const int min_arrest =
+                    this->params()->have_parameter<int>(CP_name+"/can_necrose/min_arrest_time")
+                    ? this->params()->get<int>(CP_name+"/can_necrose/min_arrest_time") : 1;
+                  if (arrest_time_ >= min_arrest)
+                    {
+                      const double prob =
+                        this->params()->have_parameter<double>(CP_name+"/can_necrose/probability")
+                        ? this->params()->get<double>(CP_name+"/can_necrose/probability") : 0.5;
+                      if (rg->Uniform(0.0, 1.0) <= prob)
+                        triggered = true;
+                    }
+                }
+            }
+        }
+    }
+  //
+  if (!triggered) return false;
+  //
+  // --- Perform necrotic transformation to phenotype 0 ---
+  const int new_phenotype = 0;
+  this->SetPhenotype(new_phenotype);
+  this->SetAge();
+  phase_age_ = 0;
+  arrest_time_ = 0;
+  is_quiescent_ = false;
+  this->IncrementNumberOfTrasformations();
+  //
+  const std::string CP_new_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(new_phenotype));
+  //
+  // Reset behavior to match the new (necrotic) phenotype's mechanism order
+  {
+    const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
+    if (behavior.size() == 1)
+      this->RemoveBehavior(behavior[0]);
+  }
+  const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
+  if      (10==mo) this->AddBehavior(new Biology4BiologicalCell_10());
+  else if (11==mo) this->AddBehavior(new Biology4BiologicalCell_11());
+  else if (12==mo) this->AddBehavior(new Biology4BiologicalCell_12());
+  else             ABORT_("an exception is caught");
+  //
+  return true; // transformation completed
 }
 // -----------------------------------------------------------------------------
 inline
@@ -311,7 +611,17 @@ bool bdm::BiologicalCell::CheckApoptosisByDamage()
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
   const double thr = this->params()->have_parameter<double>(CP_name+"/intracellular/damage/threshold")
                    ? this->params()->get<double>(CP_name+"/intracellular/damage/threshold") : 1.0e+99;
-  if (dna_damage_ <= thr) return false;
+  const bool ddr_enabled =
+    this->params()->have_parameter<bool>(CP_name+"/intracellular/ddr/enabled")
+    && this->params()->get<bool>(CP_name+"/intracellular/ddr/enabled");
+  if (ddr_enabled
+      && this->params()->have_parameter<double>(CP_name+"/intracellular/ddr/apoptosis/p53_threshold"))
+    {
+      if (p53_active_ <= this->params()->get<double>(CP_name+"/intracellular/ddr/apoptosis/p53_threshold"))
+        return false;
+    }
+  else if (dna_damage_ <= thr)
+    return false;
   if (this->params()->have_parameter<double>(CP_name+"/intracellular/damage/probability"))
     {
       const double p = this->params()->get<double>(CP_name+"/intracellular/damage/probability");
@@ -1067,217 +1377,9 @@ bool bdm::BiologicalCell::CheckMigration()
         }
     }
   //
-  // check if cell migrates actively due to some inherent random-walk or
-  // a biochemical stimulus, i.e. chemotaxis
-  if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/probability"))
-    {/// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
-      //
-      const int index_time = this->params()->get<int>("index time");
-      const int strength_time = this->params()->have_parameter<int>(CP_name+"/can_migrate/strength_of_time")
-                              ? this->params()->get<int>(CP_name+"/can_migrate/strength_of_time")
-                              : 1;
-      //
-      if ((index_time-1)%strength_time)
-        { //  --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-          //
-          // force this flag
-          has_migrated = true;
-          //
-        } //   --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-      else
-        { //   --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-          //
-          this->active_displacement_ = {0.0, 0.0, 0.0};
-          //
-          // Brownian cell motion
-          if (this->params()->get<double>(CP_name+"/can_migrate/half_range") > 0.0)
-            {
-              const double hr = this->params()->get<double>(CP_name+"/can_migrate/half_range");
-              // produce the displacement vector
-              bdm::Double3 dvec = {0.0, 0.0, 0.0};
-              dvec[0] = rg->Uniform(-hr,+hr);
-              dvec[1] = rg->Uniform(-hr,+hr);
-              dvec[2] = this->params()->get<bool>("simulation_domain_is_2D")
-                      ? 0.0 : rg->Uniform(-hr,+hr);
-              //
-              const double d_magn = L2norm(dvec);
-              // check if distance covered is above a minimum, else ignore
-              if (d_magn > this->params()->get<double>("migration_tolerance"))
-                {
-                  // update the (cell) displacement vector
-                  this->active_displacement_ += dvec;
-                  // update this flag
-                  has_migrated = true;
-                }
-            }
-          // chemotactic cell motion
-          // Select the best feasible local move from neighboring positions
-          // instead of following a global normalized gradient direction.
-          const std::vector<std::string>& substances =
-            this->params()->get<std::vector<std::string>>("substances");
-          const bool simulation_domain_is_2D =
-            this->params()->get<bool>("simulation_domain_is_2D");
-          const bdm::Double3 current_position = this->GetPosition();
-          const double migration_tolerance =
-            this->params()->get<double>("migration_tolerance");
-          const double self_diameter = this->GetDiameter();
-          auto* env = bdm::Simulation::GetActive()->GetEnvironment();
-          const auto* uniform_env =
-            dynamic_cast<bdm::UniformGridEnvironment*>(env);
-          const std::array<int32_t, 6> env_dims =
-            uniform_env ? uniform_env->GetDimensions()
-                        : std::array<int32_t, 6>{0, 0, 0, 0, 0, 0};
-          const double env_box_length =
-            uniform_env ? static_cast<double>(uniform_env->GetBoxLength()) : 0.0;
-          const double neighbor_search_radius =
-            uniform_env ? env_box_length : env->GetLargestAgentSize();
-          auto* ctxt = bdm::Simulation::GetActive()->GetExecutionContext();
-          std::vector<bdm::Double3> local_directions;
-          for (int dx=-1; dx<=1; dx++)
-            for (int dy=-1; dy<=1; dy++)
-              for (int dz=-1; dz<=1; dz++)
-                {
-                  if (simulation_domain_is_2D && dz) continue;
-                  if (!dx && !dy && !dz) continue;
-                  bdm::Double3 direction = {
-                    static_cast<double>(dx),
-                    static_cast<double>(dy),
-                    static_cast<double>(dz)
-                  };
-                  if (!normalize(direction, direction)) continue;
-                  local_directions.push_back(direction);
-                }
-          // shuffle directions to avoid systematic tie-breaking bias
-          for (size_t i = local_directions.size() - 1; i > 0; --i)
-            {
-              const size_t j = static_cast<size_t>(rg->Uniform(0, i + 1));
-              std::swap(local_directions[i], local_directions[j]);
-            }
-          // ensure cell is well within the simulation domain!
-          if (check_agent_position_in_domain(minCOORD, maxCOORD, current_position, tol))
-            // iterate for all substances
-            for ( std::vector<std::string>::const_iterator
-                  ci=substances.begin(); ci!=substances.end(); ci++ )
-              {
-                // access the BioDynaMo diffusion grid
-                auto* dg = rm->GetDiffusionGrid(*ci);
-                const std::string& BC_name = dg->GetContinuumName(); // biochemical name
-                //
-                if (! this->params()->have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name))
-                  continue;
-                //
-                const double chemotaxis = this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name);
-                if (! chemotaxis) continue;
-                //
-                const double concentration = GetInterpolatedValue(dg, current_position, this->params()),
-                             threshold =
-                               this->params()->have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/threshold")
-                               ? this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/threshold")
-                               : 1.0e-12;
-                //
-                if ( ( threshold > 0.0 && concentration > +threshold ) ||
-                     ( threshold < 0.0 && concentration < -threshold ) )
-                {
-                  const double probability =
-                    this->params()->have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability")
-                    ? this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability")
-                    : 1.0;
-                  if (rg->Uniform(0.0,1.0) <= probability)
-                    {
-                      const double local_step =
-                        std::min(std::max(fabs(chemotaxis), migration_tolerance), self_diameter);
-                      if (local_step <= migration_tolerance) continue;
-                      //
-                      const bdm::Double3 base_position =
-                        current_position + this->GetDisplacement();
-                      const double chemotaxis_sign = (chemotaxis > 0.0 ? +1.0 : -1.0);
-                      const double concentration_epsilon =
-                        1.0e-6 * std::max(1.0, fabs(concentration));
-                      double best_signed_improvement = concentration_epsilon;
-                      bdm::Double3 best_dvec = {0.0, 0.0, 0.0};
-                      bool found_better_candidate = false;
-                      //
-                      for (const auto& direction : local_directions)
-                        {
-                          bdm::Double3 point = base_position + direction * local_step;
-                          if (simulation_domain_is_2D) point[2] = current_position[2];
-                          if (!check_agent_position_in_domain(minCOORD, maxCOORD, point, tol))
-                            continue;
-                          if (uniform_env)
-                            {
-                              if (point[0] < env_dims[0] + env_box_length ||
-                                  point[0] > env_dims[1] - env_box_length ||
-                                  point[1] < env_dims[2] + env_box_length ||
-                                  point[1] > env_dims[3] - env_box_length ||
-                                  point[2] < env_dims[4] + env_box_length ||
-                                  point[2] > env_dims[5] - env_box_length)
-                                continue;
-                            }
-                          //
-                          bool feasible = true;
-                          auto has_free_space = bdm::L2F([&](bdm::Agent* neighbor, bdm::real_t) {
-                            if (!feasible) return;
-                            if (neighbor->GetUid() == this->GetUid()) return;
-                            auto* other_cell = dynamic_cast<bdm::BiologicalCell*>(neighbor);
-                            if (!other_cell) return;
-                            const double min_distance =
-                              0.5 * (self_diameter + other_cell->GetDiameter()) - 1.0e-6;
-                            if (L2norm(point-other_cell->GetPosition()) < min_distance)
-                              feasible = false;
-                          });
-                          ctxt->ForEachNeighbor(has_free_space, point,
-                                                pow2(neighbor_search_radius));
-                          if (!feasible) continue;
-                          //
-                          const double candidate_concentration = GetInterpolatedValue(dg, point, this->params());
-                          const double signed_improvement =
-                            chemotaxis_sign * (candidate_concentration - concentration);
-                          //
-                          // crowding penalty: lower score for overcrowded candidate positions
-                          double crowding_adjustment = 0.0;
-                          if (this->params()->get<bool>(CP_name+"/can_migrate/use_crowding"))
-                            {
-                              const double cr = this->params()->get<double>(CP_name+"/can_migrate/crowding_influence_ratio");
-                              if (cr > 0.0)
-                                {
-                                  const double occupancy = ComputeLocalOccupancyRatio(point, cr);
-                                  const double max_occ = this->params()->get<double>(CP_name+"/can_migrate/max_candidate_occupancy");
-                                  if (occupancy >= max_occ) continue; // reject overcrowded candidate
-                                  const double penalty = this->params()->get<double>(CP_name+"/can_migrate/crowding_penalty");
-                                  crowding_adjustment = -penalty * occupancy;
-                                }
-                            }
-                          //
-                          if (signed_improvement + crowding_adjustment > best_signed_improvement)
-                            {
-                              best_signed_improvement = signed_improvement + crowding_adjustment;
-                              best_dvec = point - base_position;
-                              found_better_candidate = true;
-                            }
-                        }
-                      //
-                      if (found_better_candidate)
-                        {
-                          const double d_magn = L2norm(best_dvec);
-                          if (d_magn <= migration_tolerance) continue;
-                          // update the (cell) displacement vector
-                          this->active_displacement_ += best_dvec;
-                          // update this flag
-                          has_migrated = true;
-                          //
-                          // check if to allow moving any further or skip any potential migration
-                          if (! this->params()->get<bool>(CP_name+"/can_migrate/accumulate_path"))
-                            break;
-                        }
-                      // ...end of propability check
-                    }
-                }
-                //...end of substances loop
-              }
-          //
-        } //   --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-      //
-    }/// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
+  // Active migration: timestep-consistent speed * dt, persistence, and chemotaxis.
+  bdm::migration::RunActiveMigration(
+    this, CP_name, this->active_displacement_, has_migrated);
   //
   // check if cell has migrated, if so then revise its spatial coordinates and trail
   if ( has_migrated )
@@ -1421,10 +1523,10 @@ bool bdm::BiologicalCell::CheckTransformation()
                       this->RemoveBehavior(behavior[0]);
                     }
                     const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-                    if (10==mo)
-                      this->AddBehavior(new Biology4BiologicalCell_10());
-                    else
-                      ABORT_("an exception is caught");
+                    if      (10==mo) this->AddBehavior(new Biology4BiologicalCell_10());
+                    else if (11==mo) this->AddBehavior(new Biology4BiologicalCell_11());
+                    else if (12==mo) this->AddBehavior(new Biology4BiologicalCell_12());
+                    else             ABORT_("an exception is caught");
                     // cell has transformed, then proceed to check if it can do other things
                     return true;
                   }
@@ -1979,6 +2081,19 @@ bool bdm::BiologicalCell::CheckGrowth()
       if (dna_damage_ > block_g) return false;
     }
   //
+  // Contact inhibition of growth: high local crowding suppresses biomass accumulation.
+  // This is distinct from contact inhibition of proliferation (G1/S checkpoint).
+  // Only active when the parameter can_grow/crowding_threshold is provided.
+  if (this->params()->have_parameter<double>(CP_name+"/can_grow/crowding_threshold"))
+    {
+      const double influence_ratio =
+        this->params()->have_parameter<double>(CP_name+"/can_divide/influence_ratio")
+        ? this->params()->get<double>(CP_name+"/can_divide/influence_ratio") : 2.0;
+      const double occ = ComputeLocalOccupancyRatio(this->GetPosition(), influence_ratio);
+      if (occ >= this->params()->get<double>(CP_name+"/can_grow/crowding_threshold"))
+        return false;
+    }
+  //
   const double diameter = this->GetDiameter(),
                diameter_min = this->params()->get<double>(CP_name+"/diameter/min"),
                diameter_max = this->params()->get<double>(CP_name+"/diameter/max");
@@ -2242,10 +2357,10 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
                 this->RemoveBehavior(behavior[0]);
               }
               const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-              if (10==mo)
-                this->AddBehavior(new Biology4BiologicalCell_10());
-              else
-                ABORT_("an exception is caught");
+              if      (10==mo) this->AddBehavior(new Biology4BiologicalCell_10());
+              else if (11==mo) this->AddBehavior(new Biology4BiologicalCell_11());
+              else if (12==mo) this->AddBehavior(new Biology4BiologicalCell_12());
+              else             ABORT_("an exception is caught");
               // secondly, the cell divides
               this->Divide(volume_ratio, axis);
               // cell has transformed and divided, then proceed to check if it can do other things
@@ -2278,6 +2393,13 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
   //
   const std::string& CP_name = // cell phenotype name
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  // DNA damage division block gate (centralized checkpoint enforcement)
+  if (this->params()->have_parameter<double>(CP_name+"/intracellular/damage/division_block"))
+    {
+      const double block = this->params()->get<double>(CP_name+"/intracellular/damage/division_block");
+      if (dna_damage_ > block) return false;
+    }
   //
   // cell cannot divide (not at least with current BioDynaMo implementation)
   // if it has developed protrusions (filopodia or/and neurites)
@@ -2411,10 +2533,10 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
                 this->RemoveBehavior(behavior[0]);
               }
               const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-              if (10==mo)
-                this->AddBehavior(new Biology4BiologicalCell_10());
-              else
-                ABORT_("an exception is caught");
+              if      (10==mo) this->AddBehavior(new Biology4BiologicalCell_10());
+              else if (11==mo) this->AddBehavior(new Biology4BiologicalCell_11());
+              else if (12==mo) this->AddBehavior(new Biology4BiologicalCell_12());
+              else             ABORT_("an exception is caught");
               // cell has divided and transformed, then proceed to check if it can do other things
               return true;
             }
@@ -2497,6 +2619,13 @@ bool bdm::BiologicalCell::CheckDivision() {
   //
   const std::string& CP_name = // cell phenotype name
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  // DNA damage division block gate (centralized checkpoint enforcement)
+  if (this->params()->have_parameter<double>(CP_name+"/intracellular/damage/division_block"))
+    {
+      const double block = this->params()->get<double>(CP_name+"/intracellular/damage/division_block");
+      if (dna_damage_ > block) return false;
+    }
   //
   // cell cannot divide (not at least with current BioDynaMo implementation)
   // if it has developed protrusions (filopodia or/and neurites)

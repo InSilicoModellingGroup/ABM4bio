@@ -19,6 +19,7 @@
 #include "./cell_protrusion.h"
 #include "./obstacles.h"
 #include "./io_flux.h"
+namespace bdm { void UpdateDdrPathway(BiologicalCell* cell); }
 // =============================================================================
 namespace bdm {
 // =============================================================================
@@ -68,6 +69,34 @@ public:
             n_trasformations_ = 0; // ...index is initialized
             n_protrusions_ = 0; // ...index is initialized
             params_ = mother->params_; // copy parameters pointer...
+            // daughter cells start fresh on phase timer and arrest state
+            phase_age_ = 0;
+            arrest_time_ = 0;
+            is_quiescent_ = false;
+            // Inherit a configurable fraction of parent's intracellular ROS and DNA damage.
+            // Biologically, daughter cells can receive some oxidative burden and unrepaired
+            // lesions from the parent. Default 0.0 = daughters start clean (backward-compatible).
+            {
+              const std::string& CP_p =
+                params_->get<std::string>("phenotype_ID/"+std::to_string(phenotype_));
+              const double frac =
+                params_->have_parameter<double>(CP_p+"/intracellular/damage/daughter_partition_factor")
+                ? params_->get<double>(CP_p+"/intracellular/damage/daughter_partition_factor")
+                : 0.0;
+              ros_internal_         = mother->ros_internal_ * frac;
+              antioxidant_capacity_ = 1.0;
+              dna_damage_           = mother->dna_damage_   * frac;
+              atm_active_           = mother->atm_active_   * frac;
+              atr_active_           = mother->atr_active_   * frac;
+              chk1_active_          = mother->chk1_active_  * frac;
+              chk2_active_          = mother->chk2_active_  * frac;
+              p53_active_           = mother->p53_active_   * frac;
+              p21_level_            = mother->p21_level_    * frac;
+              cdc25_active_         = mother->cdc25_active_ * frac
+                                      + (1.0 - frac) * 1.0;
+              cdk_activity_         = mother->cdk_activity_ * frac
+                                      + (1.0 - frac) * 1.0;
+            }
             CheckAndFixDiameter(); mother->CheckAndFixDiameter();
           }
         else
@@ -84,6 +113,29 @@ public:
   void SetAge(unsigned int a =1) { age_ = a; }
   int  GetAge() const { return age_; }
   void IncrementAge() { age_++; }
+  //
+  void IncrementPhaseAge() { ++phase_age_; }
+  int  GetPhaseAge() const { return phase_age_; }
+  void ResetPhaseAge() { phase_age_ = 0; }
+  //
+  void IncrementArrestTime() { ++arrest_time_; }
+  int  GetArrestTime() const { return arrest_time_; }
+  void ResetArrestTime() { arrest_time_ = 0; }
+  //
+  void SetQuiescent(bool q) { is_quiescent_ = q; }
+  bool IsQuiescent() const { return is_quiescent_; }
+  //
+  double GetROSInternal() const { return ros_internal_; }
+  double GetDNADamage() const { return dna_damage_; }
+  double GetAntioxidantCapacity() const { return antioxidant_capacity_; }
+  double GetAtmActive() const { return atm_active_; }
+  double GetAtrActive() const { return atr_active_; }
+  double GetChk1Active() const { return chk1_active_; }
+  double GetChk2Active() const { return chk2_active_; }
+  double GetP53Active() const { return p53_active_; }
+  double GetP21Level() const { return p21_level_; }
+  double GetCdc25Active() const { return cdc25_active_; }
+  double GetCdkActivity() const { return cdk_activity_; }
   //
   void SetPolarization(const bdm::Double3x3& p) { polarize_ = p; }
   const bdm::Double3x3& GetPolarization() const { return polarize_; }
@@ -133,6 +185,10 @@ public:
   //
   void RunBiochemics();
   void RunIntracellular();
+  bool RunECMInteraction();      // returns true if anoikis was triggered
+  bool EvaluateG1SCheckpoint();  // returns true if G1->S transition is blocked
+  bool EvaluateG2MCheckpoint();  // returns true if G2->M transition is blocked
+  bool CheckNecrosis();          // returns true if necrotic transformation occurred
   bool CheckApoptosisByDamage();
   bool CheckPositionValidity();
   bool CheckApoptosisAging();
@@ -185,6 +241,22 @@ private:
   double ros_internal_ = 0.0;
   double antioxidant_capacity_ = 1.0;
   double dna_damage_ = 0.0;
+  // DDR pathway (ATM/ATR–CHK–p53–p21–Cdc25–CDK), normalized activity in [0, 1]
+  double atm_active_ = 0.0;
+  double atr_active_ = 0.0;
+  double chk1_active_ = 0.0;
+  double chk2_active_ = 0.0;
+  double p53_active_ = 0.0;
+  double p21_level_ = 0.0;
+  double cdc25_active_ = 1.0;
+  double cdk_activity_ = 1.0;
+  friend void UpdateDdrPathway(BiologicalCell* cell);
+  // cell-cycle phase timer: number of time steps spent in current phase
+  int phase_age_ = 0;
+  // checkpoint arrest timer: number of time steps spent arrested at a checkpoint
+  int arrest_time_ = 0;
+  // G0 quiescence flag: true when cell has entered nutrient/crowding-driven quiescence
+  bool is_quiescent_ = false;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
 };

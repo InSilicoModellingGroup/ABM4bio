@@ -14,69 +14,16 @@
 #define _ABM4bio_H_
 // =============================================================================
 #include "./global.h"
+#include "./migration/field_sampling.h"
+#include "./migration/chemotaxis.h"
+#include "./migration/active_migration.h"
 #include "./csv_io.h"
 #include "./biology.h"
 #include "./biological_cell.h"
 #include "./cell_protrusion.h"
 #include "./vessel.h"
 namespace bdm {
-inline
-double GetInterpolatedValue(const bdm::DiffusionGrid* dg,
-                            const bdm::Double3& position,
-                            const ::Parameters* params)
-{
-  if (!dg) return 0.0;
-  const bool use_trilinear =
-    nullptr != params
-    && (!params->have_parameter<bool>("CAP/enabled")
-        || !params->get<bool>("CAP/enabled"))
-    && params->have_parameter<bool>("diffusion_grid/trilinear_interpolation")
-    && params->get<bool>("diffusion_grid/trilinear_interpolation");
-  if (!use_trilinear)
-    return dg->GetValue(position);
-  const size_t res = dg->GetResolution();
-  if (res<=1)
-    return dg->GetValue(position);
-  const auto dims = dg->GetDimensions();
-  const double grid_min = static_cast<double>(dims[0]),
-               grid_max = static_cast<double>(dims[1]),
-               box_len = dg->GetBoxLength(),
-               center_min = grid_min + 0.5*box_len,
-               center_max = grid_max - 0.5*box_len;
-  auto sample_axis = [=] (const double coord, uint32_t& i0, uint32_t& i1, double& t) {
-    const double clamped = std::clamp(coord, center_min, center_max);
-    const double g = (clamped-center_min)/box_len;
-    int lower = static_cast<int>(std::floor(g));
-    lower = std::clamp(lower, 0, static_cast<int>(res)-2);
-    i0 = static_cast<uint32_t>(lower);
-    i1 = static_cast<uint32_t>(lower+1);
-    t = std::clamp(g-static_cast<double>(lower), 0.0, 1.0);
-  };
-  uint32_t x0=0, x1=0, y0=0, y1=0, z0=0, z1=0;
-  double tx=0.0, ty=0.0, tz=0.0;
-  sample_axis(position[0], x0, x1, tx);
-  sample_axis(position[1], y0, y1, ty);
-  sample_axis(position[2], z0, z1, tz);
-  auto concentration = [&] (const uint32_t x, const uint32_t y, const uint32_t z) {
-    const std::array<uint32_t,3> box = {x, y, z};
-    return dg->GetConcentration(dg->GetBoxIndex(box));
-  };
-  const double c000 = concentration(x0, y0, z0),
-               c100 = concentration(x1, y0, z0),
-               c010 = concentration(x0, y1, z0),
-               c110 = concentration(x1, y1, z0),
-               c001 = concentration(x0, y0, z1),
-               c101 = concentration(x1, y0, z1),
-               c011 = concentration(x0, y1, z1),
-               c111 = concentration(x1, y1, z1);
-  const double c00 = c000*(1.0-tx) + c100*tx,
-               c10 = c010*(1.0-tx) + c110*tx,
-               c01 = c001*(1.0-tx) + c101*tx,
-               c11 = c011*(1.0-tx) + c111*tx;
-  const double c0 = c00*(1.0-ty) + c10*ty,
-               c1 = c01*(1.0-ty) + c11*ty;
-  return c0*(1.0-tz) + c1*tz;
-}
+// -----------------------------------------------------------------------------
 inline
 double GetNumericParameterFlexible(const ::Parameters& params,
                                    const std::string& parameter_name,
@@ -1720,6 +1667,13 @@ void init_cells(bdm::Simulation& sim,
         {
           if (! params.have_parameter<bool>(CP_name+"/can_migrate/accumulate_path"))
             params.set<bool>(CP_name+"/can_migrate/accumulate_path") = true;
+          // Timestep-consistent migration kinematics (speed [L/T], persistence [T])
+          if (! params.have_parameter<double>(CP_name+"/can_migrate/speed"))
+            params.set<double>(CP_name+"/can_migrate/speed") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_migrate/persistence_time"))
+            params.set<double>(CP_name+"/can_migrate/persistence_time") = 0.0;
+          if (! params.have_parameter<double>(CP_name+"/can_migrate/max_step_fraction_diameter"))
+            params.set<double>(CP_name+"/can_migrate/max_step_fraction_diameter") = 0.0;
           // local-crowding penalty during candidate migration (default: disabled)
           if (! params.have_parameter<bool>(CP_name+"/can_migrate/use_crowding"))
             params.set<bool>(CP_name+"/can_migrate/use_crowding") = false;
@@ -1729,6 +1683,55 @@ void init_cells(bdm::Simulation& sim,
             params.set<double>(CP_name+"/can_migrate/max_candidate_occupancy") = 1.0;
           if (! params.have_parameter<double>(CP_name+"/can_migrate/crowding_penalty"))
             params.set<double>(CP_name+"/can_migrate/crowding_penalty") = 1.0;
+        }
+      // --- DDR pathway defaults (ATM/ATR–CHK–p53–p21–Cdc25–CDK) for viable cells ---
+      if (CP_ID > 0)
+        {
+          const std::string ddr = CP_name + "/intracellular/ddr/";
+          if (! params.have_parameter<bool>(ddr + "enabled"))
+            params.set<bool>(ddr + "enabled") = true;
+          if (! params.have_parameter<double>(ddr + "ATM/k_activation"))
+            params.set<double>(ddr + "ATM/k_activation") = 2.0;
+          if (! params.have_parameter<double>(ddr + "ATM/k_deactivation"))
+            params.set<double>(ddr + "ATM/k_deactivation") = 0.5;
+          if (! params.have_parameter<double>(ddr + "ATR/k_activation"))
+            params.set<double>(ddr + "ATR/k_activation") = 1.5;
+          if (! params.have_parameter<double>(ddr + "ATR/k_deactivation"))
+            params.set<double>(ddr + "ATR/k_deactivation") = 0.4;
+          if (! params.have_parameter<double>(ddr + "CHK1/k_activation"))
+            params.set<double>(ddr + "CHK1/k_activation") = 1.2;
+          if (! params.have_parameter<double>(ddr + "CHK1/k_deactivation"))
+            params.set<double>(ddr + "CHK1/k_deactivation") = 0.3;
+          if (! params.have_parameter<double>(ddr + "CHK2/k_activation"))
+            params.set<double>(ddr + "CHK2/k_activation") = 1.0;
+          if (! params.have_parameter<double>(ddr + "CHK2/k_deactivation"))
+            params.set<double>(ddr + "CHK2/k_deactivation") = 0.25;
+          if (! params.have_parameter<double>(ddr + "p53/k_activation"))
+            params.set<double>(ddr + "p53/k_activation") = 0.8;
+          if (! params.have_parameter<double>(ddr + "p53/k_deactivation"))
+            params.set<double>(ddr + "p53/k_deactivation") = 0.15;
+          if (! params.have_parameter<double>(ddr + "p21/k_activation"))
+            params.set<double>(ddr + "p21/k_activation") = 1.0;
+          if (! params.have_parameter<double>(ddr + "p21/k_deactivation"))
+            params.set<double>(ddr + "p21/k_deactivation") = 0.2;
+          if (! params.have_parameter<double>(ddr + "Cdc25/baseline_activity"))
+            params.set<double>(ddr + "Cdc25/baseline_activity") = 1.0;
+          if (! params.have_parameter<double>(ddr + "CDK/baseline_activity"))
+            params.set<double>(ddr + "CDK/baseline_activity") = 1.0;
+          const std::string g1s = ddr + "checkpoint/G1S/";
+          if (! params.have_parameter<double>(g1s + "p21_threshold"))
+            params.set<double>(g1s + "p21_threshold") = 0.35;
+          if (! params.have_parameter<double>(g1s + "CDK_min_activity"))
+            params.set<double>(g1s + "CDK_min_activity") = 0.45;
+          const std::string g2m = ddr + "checkpoint/G2M/";
+          if (! params.have_parameter<double>(g2m + "CHK1_threshold"))
+            params.set<double>(g2m + "CHK1_threshold") = 0.25;
+          if (! params.have_parameter<double>(g2m + "CHK2_threshold"))
+            params.set<double>(g2m + "CHK2_threshold") = 0.20;
+          if (! params.have_parameter<double>(g2m + "ATM_threshold"))
+            params.set<double>(g2m + "ATM_threshold") = 0.30;
+          if (! params.have_parameter<double>(g2m + "CDK_min_activity"))
+            params.set<double>(g2m + "CDK_min_activity") = 0.40;
         }
       if (params.get<bool>(CP_name+"/can_protrude"))
         {
@@ -1857,11 +1860,13 @@ void init_cells(bdm::Simulation& sim,
               params.set<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance) = chemo_weight;
             // set sensible defaults for sub-parameters if not explicitly provided
             if (! params.have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/threshold"))
-              params.set<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/threshold") = 1.0e-12;
+              params.set<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/threshold") = 0.0;
             if (! params.have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/probability"))
               params.set<double>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/probability") = 1.0;
             if (! params.have_parameter<bool>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/normalize_gradient"))
               params.set<bool>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/normalize_gradient") = false;
+            if (! params.have_parameter<std::string>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/mode"))
+              params.set<std::string>(CP_name+"/can_migrate/chemotaxis/"+default_substance+"/mode") = std::string("local_best");
             //
             bdm::Log::Info("ABM4bio",
               "Chemotaxis shorthand expanded for "+CP_name+": using default substance \""+default_substance
@@ -2155,6 +2160,8 @@ void init_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
               else if (11==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
+              else if (12==mo)
+                cell->AddBehavior(new bdm::Biology4BiologicalCell_12());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // store this cell into BioDynaMo's resource manager
@@ -2298,6 +2305,8 @@ void init_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
               else if (11==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
+              else if (12==mo)
+                cell->AddBehavior(new bdm::Biology4BiologicalCell_12());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // store this cell into BioDynaMo's resource manager
@@ -2624,6 +2633,8 @@ void reinit_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
               else if (11==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
+              else if (12==mo)
+                cell->AddBehavior(new bdm::Biology4BiologicalCell_12());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // store this cell into BioDynaMo's resource manager
@@ -4147,6 +4158,8 @@ void ioflux_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
               else if (11==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
+              else if (12==mo)
+                cell->AddBehavior(new bdm::Biology4BiologicalCell_12());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // store this cell into BioDynaMo's resource manager
