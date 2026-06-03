@@ -34,6 +34,8 @@ void bdm::BiologicalCell::RunBiochemics()
   //
   const std::string& CP_name = // cell phenotype name
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const double dt = this->params()->get<double>("time_step");
+  const int mo = this->params()->get<int>(CP_name+"/mechanism_order");
   //
   // cell spatial coordinates
   const bdm::Double3 xyz = this->GetPosition();
@@ -332,6 +334,7 @@ bool bdm::BiologicalCell::RunECMInteraction()
   //
   const std::string& CP_name =
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const int mo = this->params()->get<int>(CP_name+"/mechanism_order");
   const bdm::Double3 xyz = this->GetPosition();
   //
   // Check if ECM field is present in this simulation
@@ -357,45 +360,102 @@ bool bdm::BiologicalCell::RunECMInteraction()
       const double anoikis_thr = this->params()->get<double>(CP_name+"/ecm/anoikis_threshold");
       if (adhesion_signal < anoikis_thr)
         {
-          const double anoikis_prob =
-            this->params()->have_parameter<double>(CP_name+"/ecm/anoikis_probability")
-            ? this->params()->get<double>(CP_name+"/ecm/anoikis_probability") : 0.01;
-          // Probability scales with dt to remain rate-consistent
-          if (rg->Uniform(0.0, 1.0) < anoikis_prob * dt)
-            return true; // anoikis: caller should trigger Ap phase
+          if (11 == mo || 12 == mo)
+            {
+              // Strict hazard form (Mechanism 11 and 12):
+              //   P(anoikis) = 1 - exp(-k_anoikis * dt)
+              // Preferred parameter: ecm/anoikis_hazard_rate [1/time]
+              // Backward compatibility: if legacy per-step probability is set,
+              // convert it to an equivalent hazard rate.
+              double k_anoikis = 0.0;
+              if (this->params()->have_parameter<double>(CP_name+"/ecm/anoikis_hazard_rate"))
+                {
+                  k_anoikis = std::max(0.0, this->params()->get<double>(CP_name+"/ecm/anoikis_hazard_rate"));
+                }
+              else
+                {
+                  const double p_legacy_raw =
+                    this->params()->have_parameter<double>(CP_name+"/ecm/anoikis_probability")
+                    ? this->params()->get<double>(CP_name+"/ecm/anoikis_probability") : 0.01;
+                  const double p_legacy = std::max(0.0, std::min(1.0, p_legacy_raw));
+                  if (p_legacy >= 1.0)
+                    return true;
+                  if (dt > 0.0 && p_legacy > 0.0)
+                    k_anoikis = -std::log1p(-p_legacy) / dt;
+                }
+              // Optional resistance factor in [0,1]: 1 => complete anoikis resistance.
+              if (this->params()->have_parameter<double>(CP_name+"/ecm/anoikis_resistance"))
+                {
+                  const double r_raw = this->params()->get<double>(CP_name+"/ecm/anoikis_resistance");
+                  const double r = std::max(0.0, std::min(1.0, r_raw));
+                  k_anoikis *= (1.0 - r);
+                }
+              const double P_anoikis = 1.0 - std::exp(-std::max(0.0, k_anoikis) * dt);
+              if (rg->Uniform(0.0, 1.0) < P_anoikis)
+                return true;
+            }
+          else
+            {
+              const double anoikis_prob =
+                this->params()->have_parameter<double>(CP_name+"/ecm/anoikis_probability")
+                ? this->params()->get<double>(CP_name+"/ecm/anoikis_probability") : 0.01;
+              // Legacy behavior for non-Mechanism-11 cells
+              if (rg->Uniform(0.0, 1.0) < anoikis_prob * dt)
+                return true; // anoikis: caller should trigger Ap phase
+            }
         }
     }
   //
   // --- ECM degradation by cell (MMP/protease-like activity) ---
-  if (this->params()->have_parameter<double>(CP_name+"/ecm/k_degrade"))
-    {
-      const double k_deg = this->params()->get<double>(CP_name+"/ecm/k_degrade");
-      if (k_deg > 0.0 && ecm_conc > 0.0)
-        {
-          const double deg_amount = dt * k_deg * ecm_conc;
-          const double actual_deg = std::min(ecm_conc, deg_amount);
-          if (actual_deg > 0.0)
-            dg_ecm->ChangeConcentrationBy(xyz, -actual_deg);
-        }
+  // Supports two parameter names for backward compatibility:
+  //   ecm_degradation_rate  (preferred, Mechanism 11 naming)
+  //   k_degrade             (legacy)
+  // mmp_activity is an optional multiplier (reflects MMP expression level;
+  //   enzymes: MMP-2, MMP-9, MT1-MMP, cathepsins, uPA).
+  // Focal-adhesion dynamics (FAK/Src/talin) regulate MMP secretion.
+  {
+    double k_deg = 0.0;
+    if (this->params()->have_parameter<double>(CP_name+"/ecm/ecm_degradation_rate"))
+      k_deg = this->params()->get<double>(CP_name+"/ecm/ecm_degradation_rate");
+    else if (this->params()->have_parameter<double>(CP_name+"/ecm/k_degrade"))
+      k_deg = this->params()->get<double>(CP_name+"/ecm/k_degrade");
+    // Optional MMP activity multiplier (mmp_activity = 0 disables degradation)
+    if (this->params()->have_parameter<double>(CP_name+"/ecm/mmp_activity"))
+      k_deg *= this->params()->get<double>(CP_name+"/ecm/mmp_activity");
+    if (k_deg > 0.0 && ecm_conc > 0.0) {
+      const double deg_amount = dt * k_deg * ecm_conc;
+      const double actual_deg = std::min(ecm_conc, deg_amount);
+      if (actual_deg > 0.0) dg_ecm->ChangeConcentrationBy(xyz, -actual_deg);
     }
+  }
   //
-  // --- ECM deposition by cell (matrix synthesis) ---
-  if (this->params()->have_parameter<double>(CP_name+"/ecm/k_deposit"))
-    {
-      const double k_dep = this->params()->get<double>(CP_name+"/ecm/k_deposit");
-      if (k_dep > 0.0)
-        {
-          const double max_ecm =
-            this->params()->have_parameter<double>(CP_name+"/ecm/ecm_saturation")
-            ? this->params()->get<double>(CP_name+"/ecm/ecm_saturation") : 2.0;
-          if (ecm_conc < max_ecm)
-            {
-              // Logistic deposition: rate decreases as ECM approaches saturation
-              const double dep_amount = dt * k_dep * (1.0 - ecm_conc / max_ecm);
-              dg_ecm->ChangeConcentrationBy(xyz, dep_amount);
-            }
-        }
+  // --- ECM deposition by cell (matrix synthesis / CAF remodelling) ---
+  // Supports parameter names:
+  //   ecm_deposition_rate    (preferred, Mechanism 11 naming)
+  //   caf_ecm_deposition_rate (for CAF-like cells; fibronectin, type-I collagen)
+  //   k_deposit              (legacy)
+  // All three are optional; if multiple are present they are summed.
+  // Biologically: CAFs deposit collagen/fibronectin/periostin to stiffen the
+  // tumour stroma; cancer cells may also secrete fibronectin for autocrine
+  // adhesion. Uses logistic deposition: rate decreases near ECM saturation.
+  {
+    double k_dep = 0.0;
+    if (this->params()->have_parameter<double>(CP_name+"/ecm/ecm_deposition_rate"))
+      k_dep += this->params()->get<double>(CP_name+"/ecm/ecm_deposition_rate");
+    if (this->params()->have_parameter<double>(CP_name+"/ecm/caf_ecm_deposition_rate"))
+      k_dep += this->params()->get<double>(CP_name+"/ecm/caf_ecm_deposition_rate");
+    if (k_dep <= 0.0 && this->params()->have_parameter<double>(CP_name+"/ecm/k_deposit"))
+      k_dep = this->params()->get<double>(CP_name+"/ecm/k_deposit");
+    if (k_dep > 0.0) {
+      const double max_ecm =
+        this->params()->have_parameter<double>(CP_name+"/ecm/ecm_saturation")
+        ? this->params()->get<double>(CP_name+"/ecm/ecm_saturation") : 2.0;
+      if (ecm_conc < max_ecm) {
+        const double dep_amount = dt * k_dep * (1.0 - ecm_conc / max_ecm);
+        dg_ecm->ChangeConcentrationBy(xyz, dep_amount);
+      }
     }
+  }
   //
   return false; // no anoikis
 }
@@ -437,6 +497,26 @@ bool bdm::BiologicalCell::EvaluateG1SCheckpoint()
             }
         }
     }
+  // --- Nutrient sufficiency (mTORC1/eIF4E/AMPK gate for G1/S entry) ---
+  // Low nutrient levels suppress CDK2 via AMPK → p21/p27 upregulation and
+  // decreased cyclin D1 synthesis. Applies to any substance named
+  // "nutrient", "Nutrient", "glucose", or "Glucose" if present.
+  // Only active when checkpoint/G1S/nutrient_min is configured.
+  {
+    for (const char* nname : {"nutrient", "Nutrient", "glucose", "Glucose"}) {
+      const std::string ns(nname);
+      if (std::find(substances.begin(), substances.end(), ns) != substances.end()) {
+        if (auto* dg = rm->GetDiffusionGrid(ns)) {
+          const double nut = GetInterpolatedValue(dg, this->GetPosition(), this->params());
+          if (this->params()->have_parameter<double>(CP_name+"/checkpoint/G1S/nutrient_min")) {
+            const double nut_min = this->params()->get<double>(CP_name+"/checkpoint/G1S/nutrient_min");
+            if (nut < nut_min) return true; // block: nutrient-depleted for S-phase
+          }
+        }
+        break; // only the first matching nutrient substance is used
+      }
+    }
+  }
   //
   // --- ECM density (sparse ECM => poor survival conditions for replication) ---
   if (std::find(substances.begin(), substances.end(), "ECM") != substances.end())
@@ -606,9 +686,11 @@ bool bdm::BiologicalCell::CheckApoptosisByDamage()
   if (!this->GetPhenotype()) return false;
   // access BioDynaMo's random number generator
   auto* rg = bdm::Simulation::GetActive()->GetRandom();
+  const double dt = this->params()->get<double>("time_step");
   // phenotype-specific namespace
   const std::string& CP_name =
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const int mo = this->params()->get<int>(CP_name+"/mechanism_order");
   const double thr = this->params()->have_parameter<double>(CP_name+"/intracellular/damage/threshold")
                    ? this->params()->get<double>(CP_name+"/intracellular/damage/threshold") : 1.0e+99;
   const bool ddr_enabled =
@@ -622,6 +704,34 @@ bool bdm::BiologicalCell::CheckApoptosisByDamage()
     }
   else if (dna_damage_ <= thr)
     return false;
+  if (11 == mo || 12 == mo)
+    {
+      // Strict hazard form for Mechanism 11 and 12:
+      //   P(apoptosis) = 1 - exp(-k_damage * dt)
+      // Preferred parameter: intracellular/damage/hazard_rate [1/time]
+      // Legacy compatibility: convert intracellular/damage/probability to hazard.
+      double k_apopt = 0.0;
+      if (this->params()->have_parameter<double>(CP_name+"/intracellular/damage/hazard_rate"))
+        {
+          k_apopt = std::max(0.0,
+                             this->params()->get<double>(CP_name+"/intracellular/damage/hazard_rate"));
+        }
+      else if (this->params()->have_parameter<double>(CP_name+"/intracellular/damage/probability"))
+        {
+          const double p_raw = this->params()->get<double>(CP_name+"/intracellular/damage/probability");
+          const double p = std::max(0.0, std::min(1.0, p_raw));
+          if (p >= 1.0) return true;
+          if (dt > 0.0 && p > 0.0) k_apopt = -std::log1p(-p) / dt;
+        }
+      else
+        {
+          // Legacy deterministic behavior when no probability parameter exists.
+          return true;
+        }
+      const double P_apopt = 1.0 - std::exp(-std::max(0.0, k_apopt) * dt);
+      return rg->Uniform(0.0,1.0) <= P_apopt;
+    }
+  // Legacy behavior for non-Mechanism-11 cells.
   if (this->params()->have_parameter<double>(CP_name+"/intracellular/damage/probability"))
     {
       const double p = this->params()->get<double>(CP_name+"/intracellular/damage/probability");
@@ -1152,10 +1262,55 @@ bool bdm::BiologicalCell::CheckApoptosisAging()
   //
   // access BioDynaMo's random number generator
   auto* rg = bdm::Simulation::GetActive()->GetRandom();
+  const double dt = this->params()->get<double>("time_step");
   //
   const std::string& CP_name = // cell phenotype name
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const int mo = this->params()->get<int>(CP_name+"/mechanism_order");
+  const int cell_maturity = this->params()->get<int>(CP_name+"/can_apoptose/time_window");
   //
+  // Age-gated apoptosis only after maturity threshold.
+  if (this->GetAge() <= cell_maturity) return false;
+
+  if (11 == mo)
+    {
+      // Strict hazard form for Mechanism 11:
+      //   P(apoptosis_age) = 1 - exp(-k_age * dt)
+      // Preferred parameters:
+      //   can_apoptose/hazard_rate
+      //   can_apoptose/hazard_rate_increment_with_age
+      // Legacy compatibility:
+      //   can_apoptose/probability and probability_increment_with_age
+      double k_age = 0.0;
+      const bool has_hazard =
+        this->params()->have_parameter<double>(CP_name+"/can_apoptose/hazard_rate") ||
+        this->params()->have_parameter<double>(CP_name+"/can_apoptose/hazard_rate_increment_with_age");
+
+      if (has_hazard)
+        {
+          const double k0 = this->params()->have_parameter<double>(CP_name+"/can_apoptose/hazard_rate")
+                          ? this->params()->get<double>(CP_name+"/can_apoptose/hazard_rate") : 0.0;
+          const double kinc = this->params()->have_parameter<double>(CP_name+"/can_apoptose/hazard_rate_increment_with_age")
+                            ? this->params()->get<double>(CP_name+"/can_apoptose/hazard_rate_increment_with_age") : 0.0;
+          k_age = std::max(0.0, k0 + kinc * this->GetAge());
+        }
+      else
+        {
+          const double p0 = this->params()->have_parameter<double>(CP_name+"/can_apoptose/probability")
+                          ? this->params()->get<double>(CP_name+"/can_apoptose/probability") : 0.0;
+          const double pinc = this->params()->have_parameter<double>(CP_name+"/can_apoptose/probability_increment_with_age")
+                            ? this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age") : 0.0;
+          const double p_raw = p0 + pinc * this->GetAge();
+          const double p = std::max(0.0, std::min(1.0, p_raw));
+          if (p >= 1.0) return true;
+          if (dt > 0.0 && p > 0.0) k_age = -std::log1p(-p) / dt;
+        }
+
+      const double P_apopt_age = 1.0 - std::exp(-std::max(0.0, k_age) * dt);
+      return rg->Uniform(0.0,1.0) <= P_apopt_age;
+    }
+
+  // Legacy behavior for non-Mechanism-11 cells.
   if (this->params()->get<double>(CP_name+"/can_apoptose/probability_increment_with_age")>0.0)
     {
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_apoptose/probability")
@@ -1168,13 +1323,7 @@ bool bdm::BiologicalCell::CheckApoptosisAging()
       if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_apoptose/probability"))
         return false;
     }
-  //
-  const int cell_maturity = this->params()->get<int>(CP_name+"/can_apoptose/time_window");
-  //
-  // since cell has apoptosed (due to ageing), then it must be removed from simulation
-  if (this->GetAge()>cell_maturity) return true;
-  // since cell has not been through apoptosis (due to ageing), then it can do other things
-  return false;
+  return true;
   //...end of cell apoptosis
 }
 // -----------------------------------------------------------------------------
@@ -1197,6 +1346,8 @@ bool bdm::BiologicalCell::CheckApoptosis()
   //
   const std::string& CP_name = // cell phenotype name
     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const double dt = this->params()->get<double>("time_step");
+  const int mo = this->params()->get<int>(CP_name+"/mechanism_order");
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
@@ -1242,21 +1393,80 @@ bool bdm::BiologicalCell::CheckApoptosis()
                   if ( ( threshold_other > 0.0 && concentration_other > +threshold_other ) ||
                        ( threshold_other < 0.0 && concentration_other < -threshold_other ) )
                     {
-                      if (! this->params()->have_parameter<double>(CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/probability"))
-                        return true;
-                      else if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/probability"))
-                        return true;
+                      if (11 == mo)
+                        {
+                          // Strict hazard form for Mechanism 11:
+                          // dependency-specific apoptosis
+                          //   P = 1 - exp(-k * dt)
+                          double k_apopt = 0.0;
+                          if (this->params()->have_parameter<double>(
+                                CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/hazard_rate"))
+                            {
+                              k_apopt = std::max(0.0, this->params()->get<double>(
+                                CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/hazard_rate"));
+                            }
+                          else if (this->params()->have_parameter<double>(
+                                     CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/probability"))
+                            {
+                              const double p_raw = this->params()->get<double>(
+                                CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/probability");
+                              const double p = std::max(0.0, std::min(1.0, p_raw));
+                              if (p >= 1.0) return true;
+                              if (dt > 0.0 && p > 0.0) k_apopt = -std::log1p(-p) / dt;
+                            }
+                          else
+                            {
+                              // Legacy deterministic behavior if no probability/hazard exists.
+                              return true;
+                            }
+                          const double P_apopt = 1.0 - std::exp(-std::max(0.0, k_apopt) * dt);
+                          if (rg->Uniform(0.0,1.0) <= P_apopt)
+                            return true;
+                        }
+                      else
+                        {
+                          if (! this->params()->have_parameter<double>(CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/probability"))
+                            return true;
+                          else if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_apoptose/"+BC_name+"/dependency/"+BC_other_name+"/probability"))
+                            return true;
+                        }
                     }
                   //...end of other substances loop
                 }
             }
-          // ...if no probability is provided by user, then cell simply dies!
+          if (11 == mo)
+            {
+              // Strict hazard form for Mechanism 11:
+              // direct apoptosis from BC threshold crossing
+              //   P = 1 - exp(-k * dt)
+              double k_apopt = 0.0;
+              if (this->params()->have_parameter<double>(CP_name+"/can_apoptose/"+BC_name+"/hazard_rate"))
+                {
+                  k_apopt = std::max(0.0,
+                    this->params()->get<double>(CP_name+"/can_apoptose/"+BC_name+"/hazard_rate"));
+                }
+              else if (this->params()->have_parameter<double>(CP_name+"/can_apoptose/"+BC_name+"/probability"))
+                {
+                  const double p_raw = this->params()->get<double>(CP_name+"/can_apoptose/"+BC_name+"/probability");
+                  const double p = std::max(0.0, std::min(1.0, p_raw));
+                  if (p >= 1.0) return true;
+                  if (dt > 0.0 && p > 0.0) k_apopt = -std::log1p(-p) / dt;
+                }
+              else
+                {
+                  // Legacy deterministic behavior if no probability/hazard exists.
+                  return true;
+                }
+              const double P_apopt = 1.0 - std::exp(-std::max(0.0, k_apopt) * dt);
+              if (rg->Uniform(0.0,1.0) <= P_apopt)
+                return true;
+            }
+          // Legacy behavior for non-Mechanism-11 cells.
           else if (! this->params()->have_parameter<double>(CP_name+"/can_apoptose/"+BC_name+"/probability"))
             {
               // since cell has apoptosed, then it must be removed from simulation
               return true;
             }
-          // ...otherwise, check the likelihood for cell apoptosis ;)
           else if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_apoptose/"+BC_name+"/probability"))
             {
               // since cell has apoptosed, then it must be removed from simulation
@@ -2812,6 +3022,834 @@ void bdm::BiologicalCell::Set2DeleteProtrusions()
       // assign this cell (that is associated with) to the protrusion created
       protrusion->Set2Delete();
     }
+}
+// =============================================================================
+// Mechanism 11 supporting methods — added for biologically stricter control
+// =============================================================================
+inline
+bdm::BiologicalCell::MicroenvironmentState
+bdm::BiologicalCell::SampleMicroenvironment() const
+{
+  // Samples all relevant local fields once per timestep to avoid repeated
+  // grid lookups. Returns safe defaults for absent substances so existing
+  // input files run unchanged.
+  MicroenvironmentState st;
+  if (!this->GetPhenotype()) return st; // necrotic cells: return defaults
+  auto* rm = bdm::Simulation::GetActive()->GetResourceManager();
+  const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+  const bdm::Double3 xyz = this->GetPosition();
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  // --- Oxygen (O2) ---
+  if (std::find(substances.begin(), substances.end(), "O2") != substances.end())
+    if (auto* dg = rm->GetDiffusionGrid("O2"))
+      st.local_O2 = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+  //
+  // --- Nutrient / glucose (first matching substance name) ---
+  for (const char* nname : {"nutrient", "Nutrient", "glucose", "Glucose"}) {
+    const std::string ns(nname);
+    if (std::find(substances.begin(), substances.end(), ns) != substances.end())
+      if (auto* dg = rm->GetDiffusionGrid(ns)) {
+        st.local_nutrient = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+        break;
+      }
+  }
+  //
+  // --- ECM density (collagen/fibronectin/laminin scaffold) ---
+  if (std::find(substances.begin(), substances.end(), "ECM") != substances.end())
+    if (auto* dg = rm->GetDiffusionGrid("ECM"))
+      st.ecm_density = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+  //
+  // --- ECM stiffness (YAP/TAZ mechanosensing modifier) ---
+  // Stub: use "ECM_stiffness" substance if present; default = 1.0 (normal).
+  // Biologically: matrix stiffness measured in kPa activates integrin clusters,
+  // FAK/Src, RhoA/ROCK, actomyosin tension, and nuclear YAP/TAZ localisation.
+  if (std::find(substances.begin(), substances.end(), "ECM_stiffness") != substances.end())
+    if (auto* dg = rm->GetDiffusionGrid("ECM_stiffness"))
+      st.ecm_stiffness = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+  //
+  // --- ECM adhesion ligand density (integrin-binding sites) ---
+  // Stub: use "ECM_adhesion" substance if present.
+  // Fallback: derive from ecm_density × integrin_sensitivity (phenotype param).
+  // Biologically: fibronectin/laminin/vitronectin RGD motifs bind α5β1/αvβ3;
+  // low density → detachment → anoikis (BIM/BAD activation).
+  if (std::find(substances.begin(), substances.end(), "ECM_adhesion") != substances.end()) {
+    if (auto* dg = rm->GetDiffusionGrid("ECM_adhesion"))
+      st.ecm_adhesion = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+  } else {
+    // Fallback: adhesion signal = ECM density × integrin_sensitivity
+    const double intsens =
+      this->params()->have_parameter<double>(CP_name+"/ecm/integrin_sensitivity")
+      ? this->params()->get<double>(CP_name+"/ecm/integrin_sensitivity") : 1.0;
+    st.ecm_adhesion = std::max(0.0, st.ecm_density * intsens);
+  }
+  //
+  // --- Intracellular ROS/RONS stress level ---
+  // Represents combined oxidative burden from H2O2/NO2 uptake and
+  // mitochondrial superoxide. Used to gate growth and division.
+  st.local_rons = ros_internal_;
+  //
+  // --- Local cell-volume crowding (occupancy ratio) ---
+  // Uses can_divide/influence_ratio parameter; default 2.0.
+  {
+    const double influence_ratio =
+      this->params()->have_parameter<double>(CP_name+"/can_divide/influence_ratio")
+      ? this->params()->get<double>(CP_name+"/can_divide/influence_ratio") : 2.0;
+    st.local_crowding = ComputeLocalOccupancyRatio(xyz, influence_ratio);
+  }
+  return st;
+}
+// -----------------------------------------------------------------------------
+inline
+bool bdm::BiologicalCell::EvaluateIntraSCheckpoint()
+{
+  // Intra-S checkpoint: returns true if Sy→G2 transition should be BLOCKED.
+  // Mechanism: persistent replication stress or unrepaired DNA DSBs during
+  // DNA synthesis activate ATR → CHK1 → CDC25A ubiquitination (degradation)
+  // → CDK2 inhibition → S-phase arrest.
+  // Only active when the relevant threshold parameters are configured.
+  if (!this->GetPhenotype()) return false;
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  // DNA damage intra-S threshold (ATR-mediated; e.g. stalled replication forks)
+  if (this->params()->have_parameter<double>(CP_name+"/checkpoint/IntraS/damage_threshold")) {
+    const double thr = this->params()->get<double>(CP_name+"/checkpoint/IntraS/damage_threshold");
+    if (dna_damage_ > thr) return true;
+  }
+  //
+  // ROS/replication stress threshold (oxidative damage to replication machinery)
+  if (this->params()->have_parameter<double>(CP_name+"/checkpoint/IntraS/ros_threshold")) {
+    const double thr = this->params()->get<double>(CP_name+"/checkpoint/IntraS/ros_threshold");
+    if (ros_internal_ > thr) return true;
+  }
+  return false;
+}
+// -----------------------------------------------------------------------------
+inline
+bdm::BiologicalCell::CellCycleCheckpointState
+bdm::BiologicalCell::EvaluateCellCycleCheckpoints(
+    const bdm::BiologicalCell::MicroenvironmentState& env)
+{
+  // Central checkpoint controller for Mechanism 11.
+  // Uses pre-sampled MicroenvironmentState to avoid re-querying diffusion grids.
+  // All gates use have_parameter<> guards so absent parameters default to
+  // permissive (no blocking), preserving backward compatibility.
+  CellCycleCheckpointState st; // all fields default-initialized to permissive
+  if (!this->GetPhenotype()) return st; // necrotic cells: no active checkpoints
+  //
+  auto* params = this->params();
+  const std::string& CP_name =
+    params->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  //
+  // ================================================================
+  // G1/S checkpoint
+  // Molecular annotation (for parameter naming, not GRN):
+  //   ATM/ATR → CHK1/CHK2 → p53 → p21 → CDK2/CyclinE inhibition
+  //   CDC25A inhibition → CDK2 dephosphorylated → RB hypophosphorylated
+  //   → E2F transcription factors blocked → S-phase genes suppressed
+  // ================================================================
+  // Molecular DDR cascade (ATM/ATR–CHK–p53–p21–Cdc25–CDK) takes precedence
+  if (bdm::IsMolecularG1SCheckpointBlocked(this)) {
+    st.can_enter_S = false;
+  } else {
+    // Legacy aggregate DNA damage threshold (when DDR pathway not enabled)
+    if (!bdm::IsDdrPathwayEnabled(*params, CP_name) &&
+        params->have_parameter<double>(CP_name+"/checkpoint/G1S/damage_threshold")) {
+      if (dna_damage_ > params->get<double>(CP_name+"/checkpoint/G1S/damage_threshold"))
+        st.can_enter_S = false;
+    }
+  }
+  // O2 gate: hypoxia suppresses E2F via HIF-1α / CDK inhibitor accumulation
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/O2_threshold") &&
+      env.local_O2 < params->get<double>(CP_name+"/checkpoint/G1S/O2_threshold"))
+    st.can_enter_S = false;
+  // Nutrient gate: AMPK activation under nutrient stress → p21/p27 upregulation
+  //   → CDK2/CyclinE inhibition → G1 arrest (mTORC1 nutrient sensing)
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/nutrient_min") &&
+      env.local_nutrient < params->get<double>(CP_name+"/checkpoint/G1S/nutrient_min"))
+    st.can_enter_S = false;
+  // ECM density gate: sparse matrix → poor integrin signalling → G1 arrest
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/ECM_threshold") &&
+      env.ecm_density < params->get<double>(CP_name+"/checkpoint/G1S/ECM_threshold"))
+    st.can_enter_S = false;
+  // ECM adhesion gate: low adhesion → integrin/FAK loss → RB hypophosphorylation
+  //   Mechanistically distinct from anoikis: promotes reversible G1 arrest
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/adhesion_min") &&
+      env.ecm_adhesion < params->get<double>(CP_name+"/checkpoint/G1S/adhesion_min"))
+    st.can_enter_S = false;
+  // Crowding gate: contact inhibition of proliferation via E-cadherin/RhoA/ROCK
+  //   → LATS1/2 kinase activation → YAP/TAZ cytoplasmic sequestration → CIP/KIP
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/crowding_threshold") &&
+      env.local_crowding >= params->get<double>(CP_name+"/checkpoint/G1S/crowding_threshold"))
+    st.can_enter_S = false;
+  //
+  // ================================================================
+  // G2/M checkpoint
+  // ATM/ATR → CHK1/CHK2 → CDC25C inhibition (14-3-3σ sequestration)
+  //   → CDK1/CyclinB dephosphorylated/inactive → mitosis entry blocked
+  // ================================================================
+  if (bdm::IsMolecularG2MCheckpointBlocked(this)) {
+    st.can_enter_M = false;
+  } else {
+    if (!bdm::IsDdrPathwayEnabled(*params, CP_name) &&
+        params->have_parameter<double>(CP_name+"/checkpoint/G2M/damage_threshold")) {
+      if (dna_damage_ > params->get<double>(CP_name+"/checkpoint/G2M/damage_threshold"))
+        st.can_enter_M = false;
+    }
+  }
+  // O2 gate for G2/M: cells need ATP for spindle assembly and chromosome segregation
+  if (st.can_enter_M &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G2M/O2_threshold") &&
+      env.local_O2 < params->get<double>(CP_name+"/checkpoint/G2M/O2_threshold"))
+    st.can_enter_M = false;
+  //
+  // Composite: can_divide requires both G2/M gate cleared AND G1/S gate cleared
+  // (can_enter_S false means cell never reached Di phase via checkpoint)
+  if (!st.can_enter_M) st.can_divide = false;
+  //
+  // ================================================================
+  // Growth gate
+  // ================================================================
+  // Nutrient: PI3K/Akt/mTOR → S6K/4EBP1 → protein synthesis
+  if (params->have_parameter<double>(CP_name+"/checkpoint/growth/nutrient_min") &&
+      env.local_nutrient < params->get<double>(CP_name+"/checkpoint/growth/nutrient_min"))
+    st.can_grow = false;
+  // O2: oxidative phosphorylation needed for biosynthetic energy
+  if (st.can_grow &&
+      params->have_parameter<double>(CP_name+"/checkpoint/growth/O2_min") &&
+      env.local_O2 < params->get<double>(CP_name+"/checkpoint/growth/O2_min"))
+    st.can_grow = false;
+  // Crowding: contact inhibition of growth (E-cadherin → LATS/YAP/TAZ)
+  if (st.can_grow &&
+      params->have_parameter<double>(CP_name+"/can_grow/crowding_threshold") &&
+      env.local_crowding >= params->get<double>(CP_name+"/can_grow/crowding_threshold"))
+    st.can_grow = false;
+  //
+  // ================================================================
+  // G0/quiescence recommendation
+  // p27/Kip1 upregulation; RB hypophosphorylation; reversible arrest
+  // ================================================================
+  {
+    const double crowd_entry =
+      params->have_parameter<double>(CP_name+"/quiescence/crowding_threshold")
+      ? params->get<double>(CP_name+"/quiescence/crowding_threshold") : -1.0;
+    const double o2_quies =
+      params->have_parameter<double>(CP_name+"/quiescence/O2_threshold")
+      ? params->get<double>(CP_name+"/quiescence/O2_threshold") : -1.0;
+    const double nut_quies =
+      params->have_parameter<double>(CP_name+"/quiescence/nutrient_threshold")
+      ? params->get<double>(CP_name+"/quiescence/nutrient_threshold") : -1.0;
+    if ((crowd_entry >= 0.0 && env.local_crowding >= crowd_entry) ||
+        (o2_quies   >= 0.0 && env.local_O2       <  o2_quies)    ||
+        (nut_quies  >= 0.0 && env.local_nutrient  <  nut_quies))
+      st.should_enter_G0 = true;
+  }
+  //
+  // ================================================================
+  // Apoptosis and necrosis recommendations (hazard-rate execution is
+  // in Mechanism 11 Run(); here we just set the flags)
+  // ================================================================
+  // Anoikis: low ECM adhesion → BIM/BAD activation → intrinsic apoptosis
+  //   Modulated by anoikis_resistance (e.g. via BCL-2/BCL-xL overexpression)
+  if (this->GetCanApoptose()) {
+    const double anoikis_thr =
+      params->have_parameter<double>(CP_name+"/ecm/anoikis_threshold")
+      ? params->get<double>(CP_name+"/ecm/anoikis_threshold") : -1.0;
+    if (anoikis_thr >= 0.0 && env.ecm_adhesion < anoikis_thr)
+      st.should_enter_Ap = true;
+  }
+  // Necrosis: severe O2 deprivation → ATP collapse → membrane failure
+  {
+    const double o2_nec =
+      params->have_parameter<double>(CP_name+"/can_necrose/O2_threshold")
+      ? params->get<double>(CP_name+"/can_necrose/O2_threshold") : -1.0;
+    if (o2_nec >= 0.0 && env.local_O2 <= o2_nec) st.should_enter_Nec = true;
+  }
+  //
+  // ================================================================
+  // DNA repair gating
+  // Repair requires O2 (NHEJ/HR need ATP) and nutrients (repair synthesis).
+  // HIF-1α under hypoxia competes for repair factor binding sites.
+  // ================================================================
+  {
+    const double o2_rep =
+      params->have_parameter<double>(CP_name+"/repair/O2_min")
+      ? params->get<double>(CP_name+"/repair/O2_min") : 0.0;
+    const double nut_rep =
+      params->have_parameter<double>(CP_name+"/repair/nutrient_min")
+      ? params->get<double>(CP_name+"/repair/nutrient_min") : 0.0;
+    if (env.local_O2 < o2_rep || env.local_nutrient < nut_rep)
+      st.repair_allowed = false;
+  }
+  return st;
+}
+// -----------------------------------------------------------------------------
+inline
+double bdm::BiologicalCell::ComputeGrowthModulation(
+    const bdm::BiologicalCell::MicroenvironmentState& env) const
+{
+  // Returns a multiplicative growth-rate modifier f_env ∈ [0,1].
+  // If no modulation parameters are defined, returns 1.0 (backward-compatible).
+  // Each factor represents a distinct signalling pathway; all are independent
+  // and the composite modulation is the product of individual factors.
+  if (!this->GetPhenotype()) return 0.0;
+  auto* params = this->params();
+  const std::string& CP_name =
+    params->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  double f = 1.0;
+  //
+  // O2 modulation: mTOR/HIF-1α — hypoxia reduces mTORC1 activity and
+  // protein synthesis. f_O2 = O2 / O2_reference, capped at 1.
+  if (params->have_parameter<double>(CP_name+"/can_grow/O2_reference")) {
+    const double o2_ref = params->get<double>(CP_name+"/can_grow/O2_reference");
+    if (o2_ref > 0.0)
+      f *= std::min(1.0, std::max(0.0, env.local_O2 / o2_ref));
+  }
+  //
+  // Nutrient modulation: PI3K/Akt/mTOR nutrient sensing (amino acids, glucose).
+  // f_nut = nutrient / nut_reference, capped at 1.
+  if (params->have_parameter<double>(CP_name+"/can_grow/nutrient_reference")) {
+    const double nut_ref = params->get<double>(CP_name+"/can_grow/nutrient_reference");
+    if (nut_ref > 0.0)
+      f *= std::min(1.0, std::max(0.0, env.local_nutrient / nut_ref));
+  }
+  //
+  // ECM stiffness modulation: YAP/TAZ mechanosensing.
+  // Stiff ECM → nuclear YAP/TAZ → TEAD → cyclin D1 / CTGF → proliferative.
+  // f_stiff = stiffness / stiffness_reference, capped at 1.
+  if (params->have_parameter<double>(CP_name+"/can_grow/ecm_stiffness_reference")) {
+    const double stiff_ref = params->get<double>(CP_name+"/can_grow/ecm_stiffness_reference");
+    if (stiff_ref > 0.0)
+      f *= std::min(1.0, std::max(0.0, env.ecm_stiffness / stiff_ref));
+  }
+  //
+  // Crowding modulation: contact inhibition of growth.
+  // E-cadherin → LATS1/2 → YAP/TAZ cytoplasmic sequestration.
+  // f_crowd = max(0, 1 - crowding / crowding_max_grow)
+  if (params->have_parameter<double>(CP_name+"/can_grow/crowding_max")) {
+    const double crowd_max = params->get<double>(CP_name+"/can_grow/crowding_max");
+    if (crowd_max > 0.0)
+      f *= std::max(0.0, 1.0 - env.local_crowding / crowd_max);
+  }
+  //
+  // ROS/stress modulation: high ROS activates p38/JNK → growth arrest.
+  // f_rons = max(0, 1 - rons / rons_max_grow)
+  if (params->have_parameter<double>(CP_name+"/can_grow/rons_max")) {
+    const double rons_max = params->get<double>(CP_name+"/can_grow/rons_max");
+    if (rons_max > 0.0)
+      f *= std::max(0.0, 1.0 - env.local_rons / rons_max);
+  }
+  return std::max(0.0, std::min(1.0, f));
+}
+// =============================================================================
+// MECHANISM 12 — CAP/PAM TREATMENT RESPONSE METHODS
+// =============================================================================
+// UpdateCAPIntracellular(): RONS-specific intracellular dynamics update.
+// Must be called AFTER RunIntracellular() so ros_internal_, dna_damage_,
+// and DDR pathway variables (atm_active_, chk1_active_, p53_active_, …)
+// are already current for this timestep.
+//
+// Biological model overview:
+//   CAP/PAM → extracellular H2O2 + NO2- (RONS cocktail)
+//   → intracellular H2O2 (via AQP3/AQP8) → Fenton → OH· → 8-oxoG, SSB/DSB
+//   → intracellular NO2-/ONOO- → nitrosative base lesions
+//   → ATM (DSB sensor) + ATR (ssDNA/fork-stall sensor) → CHK1/CHK2 phosphorylation
+//   → γH2AX foci form at DSB sites (ATM/ATR → H2AX-Ser139)
+//   → CHK1 phosphorylation reported in EGI-1 and HuCCT1 after CAP/PAM
+//   → p53 phosphorylation/accumulation → p21 (CDKN1A) → CDK inhibition
+//   → G1/S and G2/M cell-cycle arrest (primary response before apoptosis)
+//   → after sufficient damage and failed repair: BAX/BCL-2 imbalance →
+//     cytochrome C → Apaf-1 → caspase-9 → caspase-3 (cleaved)
+//   → PARP-1 cleavage (caspase-3 substrate) seals apoptosis fate
+//   → Annexin V+ / 7-AAD+: early/late apoptosis detected by flow cytometry
+//   → EGI-1 apoptosis ~72h; HuCCT1 ~48h (cell-line encoded as parameters, not names)
+//   → In vivo: 8-oxoG IHC + cleaved caspase-3 IHC positive in CAP-treated xenografts
+//   → Primary hepatocytes: weaker CHK1/p53 activation, no PARP cleavage observed
+//     (represented as phenotype-specific parameter set with low sensitivity, not hardcoded)
+// =============================================================================
+inline
+void bdm::BiologicalCell::UpdateCAPIntracellular()
+{
+  // Only viable cells with non-zero phenotype maintain CAP dynamics
+  if (!this->GetPhenotype()) return;
+  // Access resource manager and parameters
+  auto* rm = bdm::Simulation::GetActive()->GetResourceManager();
+  const double dt = this->params()->get<double>("time_step");
+  const std::string& CP_name =
+    this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const bdm::Double3 xyz = this->GetPosition();
+  const auto& substances = this->params()->get<std::vector<std::string>>("substances");
+  // ================================================================
+  // STEP A — Sample extracellular RONS fields
+  // ================================================================
+  // Total extracellular RONS (H2O2 + NO2_); species-resolved where available.
+  // When RONS fields are absent (e.g. untreated controls), ext_rons_total = 0.
+  double ext_h2o2 = 0.0, ext_no2 = 0.0;
+  if (std::find(substances.begin(), substances.end(), "H2O2") != substances.end())
+    if (auto* dg = rm->GetDiffusionGrid("H2O2"))
+      ext_h2o2 = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+  if (std::find(substances.begin(), substances.end(), "NO2_") != substances.end())
+    if (auto* dg = rm->GetDiffusionGrid("NO2_"))
+      ext_no2 = std::max(0.0, GetInterpolatedValue(dg, xyz, this->params()));
+  const double ext_rons_total = ext_h2o2 + ext_no2;
+  // ================================================================
+  // STEP B — Update cap_dose_integral_ and time_since_cap_
+  //   cap_dose_integral_ = ∫ ext_rons_total dt (area under curve)
+  //   time_since_cap_ counts steps since first non-zero RONS exposure.
+  // ================================================================
+  cap_dose_integral_ += dt * ext_rons_total;
+  if (ext_rons_total > 0.0)
+    ++time_since_cap_;
+  // ================================================================
+  // STEP C — Update rns_internal_ (reactive nitrogen species)
+  //   Tracks NO2--derived intracellular RNS separately from ROS.
+  //   NO2- enters via ion channels; reacts with O2-· to form ONOO-.
+  //   Separate ODE from ros_internal_ (RunIntracellular already handles H2O2 → ROS).
+  //
+  //   ODE: drns/dt = k_rns_uptake * ext_no2 * membrane_permeability
+  //                - k_rns_clear * antioxidant_capacity * rns
+  //   Use exponential integrator for stability.
+  // ================================================================
+  {
+    const double k_rns_uptake =
+      this->params()->have_parameter<double>(CP_name+"/cap/rns/k_uptake")
+      ? this->params()->get<double>(CP_name+"/cap/rns/k_uptake") : 0.0;
+    const double k_rns_clear =
+      this->params()->have_parameter<double>(CP_name+"/cap/rns/k_clearance")
+      ? this->params()->get<double>(CP_name+"/cap/rns/k_clearance") : 0.0;
+    // Read membrane_permeability from parameter if configured;
+    // otherwise use the cell's current membrane_permeability_ state.
+    const double mp =
+      this->params()->have_parameter<double>(CP_name+"/cap/membrane_permeability")
+      ? this->params()->get<double>(CP_name+"/cap/membrane_permeability")
+      : membrane_permeability_;
+    const double prod_rns = k_rns_uptake * ext_no2 * mp;
+    const double decay_rns = k_rns_clear * antioxidant_capacity_;
+    if (decay_rns > 1.0e-12) {
+      const double ss_rns = prod_rns / decay_rns;
+      rns_internal_ = ss_rns + (rns_internal_ - ss_rns) * std::exp(-decay_rns * dt);
+    } else {
+      rns_internal_ += dt * prod_rns;
+    }
+    if (rns_internal_ < 0.0) rns_internal_ = 0.0;
+  }
+  // ================================================================
+  // STEP D — Update membrane_permeability_
+  //   High ROS causes lipid peroxidation → reduced membrane integrity.
+  //   Conversely, moderate peroxidation may initially increase permeability.
+  //   Simple exponential relaxation toward baseline, perturbed by ros_internal_.
+  //   Only active when cap/membrane_permeability/k_damage is defined.
+  // ================================================================
+  {
+    const double k_mp_damage =
+      this->params()->have_parameter<double>(CP_name+"/cap/membrane_permeability/k_damage")
+      ? this->params()->get<double>(CP_name+"/cap/membrane_permeability/k_damage") : 0.0;
+    const double k_mp_repair =
+      this->params()->have_parameter<double>(CP_name+"/cap/membrane_permeability/k_repair")
+      ? this->params()->get<double>(CP_name+"/cap/membrane_permeability/k_repair") : 0.0;
+    if (k_mp_damage > 0.0 || k_mp_repair > 0.0) {
+      // membrane_permeability_ decreases with sustained high ROS
+      const double ros_ref =
+        this->params()->have_parameter<double>(CP_name+"/cap/membrane_permeability/ros_reference")
+        ? this->params()->get<double>(CP_name+"/cap/membrane_permeability/ros_reference") : 1.0;
+      const double stress = std::min(1.0, std::max(0.0, ros_internal_ / std::max(1.0e-9, ros_ref)));
+      membrane_permeability_ += dt * (-k_mp_damage * stress * membrane_permeability_
+                                      + k_mp_repair * (1.0 - membrane_permeability_));
+      membrane_permeability_ = std::clamp(membrane_permeability_, 0.0, 1.0);
+    }
+  }
+  // ================================================================
+  // STEP E — Update repair_capacity_
+  //   Repair enzymes (OGG1/APE1 for BER, Ku70/Ku80 for NHEJ, RAD51 for HR)
+  //   can be inactivated by sustained oxidative stress.
+  //   Simple logistic suppression by ros_internal_ / rns_internal_.
+  //   Only active when cap/repair_capacity parameters are configured.
+  // ================================================================
+  {
+    const double k_rc_suppress =
+      this->params()->have_parameter<double>(CP_name+"/cap/repair_capacity/k_suppress")
+      ? this->params()->get<double>(CP_name+"/cap/repair_capacity/k_suppress") : 0.0;
+    const double k_rc_recover =
+      this->params()->have_parameter<double>(CP_name+"/cap/repair_capacity/k_recovery")
+      ? this->params()->get<double>(CP_name+"/cap/repair_capacity/k_recovery") : 0.0;
+    const double rc_baseline =
+      this->params()->have_parameter<double>(CP_name+"/cap/repair_capacity/baseline")
+      ? this->params()->get<double>(CP_name+"/cap/repair_capacity/baseline") : 1.0;
+    if (k_rc_suppress > 0.0 || k_rc_recover > 0.0) {
+      const double rons_total_int = ros_internal_ + rns_internal_;
+      const double ros_ref =
+        this->params()->have_parameter<double>(CP_name+"/cap/repair_capacity/ros_reference")
+        ? this->params()->get<double>(CP_name+"/cap/repair_capacity/ros_reference") : 1.0;
+      const double stress = std::min(1.0, std::max(0.0, rons_total_int / std::max(1.0e-9, ros_ref)));
+      repair_capacity_ += dt * (-k_rc_suppress * stress * repair_capacity_
+                                + k_rc_recover * (rc_baseline - repair_capacity_));
+      repair_capacity_ = std::clamp(repair_capacity_, 0.0, 1.0);
+    }
+  }
+  // ================================================================
+  // STEP F — Compute CAP-specific marker proxies
+  //   These are normalized observables corresponding to experimental readouts.
+  //   They are computed from ros_internal_, dna_damage_, and DDR pathway state.
+  // ================================================================
+  // F1 — 8-oxoguanine proxy (8-oxoG):
+  //   Oxidative DNA base lesion; formed when OH· (from H2O2 Fenton reaction) attacks
+  //   guanine N7/C8. Accumulates proportional to cumulative oxidative stress.
+  //   Repaired by BER (OGG1 → APE1 → pol-β → ligase).
+  //   Simple linear combination: 8-oxoG ≈ α_ros * ros + α_dam * dna_damage.
+  {
+    const double alpha_ros =
+      this->params()->have_parameter<double>(CP_name+"/cap/markers/8oxoG/alpha_ros")
+      ? this->params()->get<double>(CP_name+"/cap/markers/8oxoG/alpha_ros") : 0.5;
+    const double alpha_dam =
+      this->params()->have_parameter<double>(CP_name+"/cap/markers/8oxoG/alpha_damage")
+      ? this->params()->get<double>(CP_name+"/cap/markers/8oxoG/alpha_damage") : 0.5;
+    oxidative_damage_8oxoG_proxy_ =
+      std::clamp(alpha_ros * ros_internal_ + alpha_dam * dna_damage_, 0.0, 1.0);
+  }
+  // F2 — γH2AX proxy (DSB marker):
+  //   H2AX phosphorylation at Ser139 by ATM/ATR at DSB sites (γH2AX foci).
+  //   Rapid response: γH2AX forms within minutes of DSB induction.
+  //   Reported positive in CAP/PAM-treated EGI-1 and HuCCT1 (immunofluorescence).
+  //   Sigmoid function of dna_damage_ captures threshold-like foci formation.
+  //   γH2AX_proxy = sigmoid(dna_damage / half_sat)
+  {
+    const double half_sat =
+      this->params()->have_parameter<double>(CP_name+"/cap/markers/gammaH2AX/half_saturation")
+      ? this->params()->get<double>(CP_name+"/cap/markers/gammaH2AX/half_saturation") : 0.3;
+    const double steepness =
+      this->params()->have_parameter<double>(CP_name+"/cap/markers/gammaH2AX/steepness")
+      ? this->params()->get<double>(CP_name+"/cap/markers/gammaH2AX/steepness") : 10.0;
+    if (half_sat > 1.0e-9)
+      dsb_damage_gammaH2AX_proxy_ =
+        1.0 / (1.0 + std::exp(-steepness * (dna_damage_ - half_sat)));
+    else
+      dsb_damage_gammaH2AX_proxy_ = 1.0;
+  }
+  // F3 — pCHK1 proxy: already stored as chk1_active_ (computed in UpdateDdrPathway)
+  // F4 — p53 proxy: already stored as p53_active_ (computed in UpdateDdrPathway)
+  //   CHK1 phosphorylation and p53 phosphorylation/accumulation reported in
+  //   CAP/PAM-treated CCA cells (CHK1-Ser345; p53-Ser15 are canonical markers).
+  //   Primary hepatocytes show weaker CHK1/p53 activation under comparable conditions.
+  // F5 — PARP cleavage proxy:
+  //   PARP-1 is cleaved by activated caspase-3 → 89 kDa fragment.
+  //   Cleavage only occurs AFTER caspase-3 is activated (apoptosis execution phase).
+  //   Therefore, parp_cleavage_proxy_ only increases after caspase3_activation_proxy_.
+  //   Reported as western blot marker in CAP-treated CCA cells.
+  {
+    const double k_parp_cleavage =
+      this->params()->have_parameter<double>(CP_name+"/cap/markers/PARP/k_cleavage")
+      ? this->params()->get<double>(CP_name+"/cap/markers/PARP/k_cleavage") : 2.0;
+    // PARP cleavage driven by caspase-3 activation (execution phase only)
+    const double drive = k_parp_cleavage * caspase3_activation_proxy_ * (1.0 - parp_cleavage_proxy_);
+    parp_cleavage_proxy_ = std::clamp(parp_cleavage_proxy_ + dt * drive, 0.0, 1.0);
+  }
+  // F6 — Cleaved caspase-3 proxy:
+  //   Executioner caspase; activated by intrinsic (mitochondrial) pathway:
+  //   BAX/BCL-2 imbalance → cytochrome C release → Apaf-1/caspase-9 apoptosome
+  //   → caspase-9 cleaves and activates caspase-3.
+  //   Increases ONLY when apoptosis_commitment_state_ exceeds commitment threshold.
+  //   Reported by IHC in CAP-treated CCA xenografts.
+  {
+    const double commit_thr =
+      this->params()->have_parameter<double>(CP_name+"/cap/apoptosis/commitment_threshold")
+      ? this->params()->get<double>(CP_name+"/cap/apoptosis/commitment_threshold") : 0.7;
+    const double k_casp3 =
+      this->params()->have_parameter<double>(CP_name+"/cap/markers/caspase3/k_activation")
+      ? this->params()->get<double>(CP_name+"/cap/markers/caspase3/k_activation") : 1.5;
+    if (apoptosis_commitment_state_ >= commit_thr) {
+      const double drive = k_casp3 * apoptosis_commitment_state_ * (1.0 - caspase3_activation_proxy_);
+      caspase3_activation_proxy_ = std::clamp(caspase3_activation_proxy_ + dt * drive, 0.0, 1.0);
+    }
+  }
+  // ================================================================
+  // STEP G — Update apoptosis_commitment_state_
+  //   Represents progressive accumulation of pro-apoptotic signals:
+  //   p53/BAX accumulation, BCL-2 degradation, mitochondrial membrane
+  //   potential collapse, cytochrome C release.
+  //
+  //   commitment increases when:
+  //     (a) checkpoint_activation (max of pCHK1, p53) > apoptosis_checkpoint_threshold
+  //         AND dna_damage > apoptosis_damage_threshold
+  //     (b) arrest_time > max_repair_time AND dna_damage still elevated
+  //         (irreparable damage → forced commitment)
+  //
+  //   commitment decreases slowly when damage/stress falls below threshold
+  //   (repair window: cell can recover if commitment is still low)
+  //
+  //   This models:
+  //   - The temporal delay between DNA damage detection and apoptosis onset
+  //   - The repair window: cells with low damage/commitment can recover
+  //   - The commitment threshold: once crossed, apoptosis is irreversible
+  // ================================================================
+  {
+    const double checkpoint_act = std::max(chk1_active_, p53_active_);
+    const double damage_for_commit =
+      this->params()->have_parameter<double>(CP_name+"/cap/apoptosis/damage_threshold")
+      ? this->params()->get<double>(CP_name+"/cap/apoptosis/damage_threshold")
+      : (this->params()->have_parameter<double>(CP_name+"/intracellular/damage/threshold")
+         ? this->params()->get<double>(CP_name+"/intracellular/damage/threshold") * 0.6
+         : 0.6);
+    const double chk_for_commit =
+      this->params()->have_parameter<double>(CP_name+"/cap/apoptosis/checkpoint_threshold")
+      ? this->params()->get<double>(CP_name+"/cap/apoptosis/checkpoint_threshold") : 0.5;
+    const double k_commit =
+      this->params()->have_parameter<double>(CP_name+"/cap/apoptosis/k_commitment")
+      ? this->params()->get<double>(CP_name+"/cap/apoptosis/k_commitment") : 0.1;
+    const double k_recover =
+      this->params()->have_parameter<double>(CP_name+"/cap/apoptosis/k_recovery")
+      ? this->params()->get<double>(CP_name+"/cap/apoptosis/k_recovery") : 0.05;
+    const int max_repair_time =
+      this->params()->have_parameter<int>(CP_name+"/cap/repair/max_repair_time")
+      ? this->params()->get<int>(CP_name+"/cap/repair/max_repair_time")
+      : (this->params()->have_parameter<int>(CP_name+"/phase_dwell/max_arrest_time")
+         ? this->params()->get<int>(CP_name+"/phase_dwell/max_arrest_time") : 999999);
+    // Is the cell in a pro-apoptotic state?
+    const bool damage_driven =
+      (dna_damage_ > damage_for_commit) && (checkpoint_act > chk_for_commit);
+    const bool arrest_driven =
+      (arrest_time_ > max_repair_time) && (dna_damage_ > damage_for_commit * 0.5);
+    if (damage_driven || arrest_driven) {
+      // Commitment accumulation: sigmoid-shaped drive proportional to damage excess
+      const double excess_damage = std::max(0.0, dna_damage_ - damage_for_commit);
+      const double drive = k_commit * (excess_damage + 0.5 * checkpoint_act)
+                           * (1.0 - apoptosis_commitment_state_);
+      apoptosis_commitment_state_ = std::clamp(apoptosis_commitment_state_ + dt * drive, 0.0, 1.0);
+    } else if (apoptosis_commitment_state_ > 0.0 && !damage_driven && !arrest_driven) {
+      // Recovery: commitment decays when conditions improve (repair window still open)
+      const double commit_thr =
+        this->params()->have_parameter<double>(CP_name+"/cap/apoptosis/commitment_threshold")
+        ? this->params()->get<double>(CP_name+"/cap/apoptosis/commitment_threshold") : 0.7;
+      if (apoptosis_commitment_state_ < commit_thr) {
+        // Below commitment threshold: full recovery possible
+        apoptosis_commitment_state_ = std::clamp(
+          apoptosis_commitment_state_ - dt * k_recover, 0.0, 1.0);
+      }
+      // Above commitment threshold: no recovery (apoptosis irreversible)
+    }
+  }
+}
+// =============================================================================
+// EvaluateCAPCheckpointState(): Mechanism 12 checkpoint controller.
+// Returns CAPCheckpointState encoding all gate decisions for CAP/PAM-treated cells.
+//
+// Uses the pre-sampled MicroenvironmentState (O2, nutrient, ECM, crowding)
+// combined with the intracellular RONS/damage state (ros_internal_, dna_damage_,
+// DDR pathway variables, apoptosis_commitment_state_) to make checkpoint decisions.
+//
+// Biology:
+//   G1/S block: p53/p21-CDK2/CyclinE axis (block DNA replication with damage)
+//   Intra-S slowing: ATR–CHK1–CDC25A ubiquitination (stalled replication)
+//   G2/M block: CHK1/CHK2–CDC25C–CDK1/CyclinB (primary CAP arrest gate)
+//   Division block: never with unresolved damage > G2M threshold
+//   Repair window: O2/nutrient must be sufficient for NER/NHEJ/HR
+//   Apoptosis: commitment_state > threshold OR arrest > max_repair_time + damage
+//   Necrosis: extreme ROS/energy failure (high ros + hypoxia + membrane damage)
+// =============================================================================
+inline
+bdm::BiologicalCell::CAPCheckpointState
+bdm::BiologicalCell::EvaluateCAPCheckpointState(
+    const bdm::BiologicalCell::MicroenvironmentState& env)
+{
+  CAPCheckpointState st; // all fields default-initialized to permissive/safe
+  if (!this->GetPhenotype()) return st;
+  auto* params = this->params();
+  const std::string& CP_name =
+    params->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+  const double dt = params->get<double>("time_step");
+  auto* rg = bdm::Simulation::GetActive()->GetRandom();
+  // ================================================================
+  // G1/S checkpoint
+  //   Primary gate: p53/p21-mediated CDK2/CyclinE inhibition.
+  //   The molecular DDR pathway (UpdateDdrPathway) computes p21_level_ and
+  //   cdk_activity_ from dna_damage_. IsMolecularG1SCheckpointBlocked() uses these.
+  //   Additional fallback: legacy aggregate damage threshold.
+  //
+  //   CAP context: CAP-induced p53 phosphorylation and CHK1 activation block
+  //   G1/S transition. Arrest appears before apoptosis (DDR response first).
+  // ================================================================
+  if (bdm::IsMolecularG1SCheckpointBlocked(this))
+    st.can_enter_S = false;
+  // Fallback: legacy aggregate damage threshold (when DDR not fully configured)
+  if (st.can_enter_S &&
+      !bdm::IsDdrPathwayEnabled(*params, CP_name) &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/damage_threshold") &&
+      dna_damage_ > params->get<double>(CP_name+"/checkpoint/G1S/damage_threshold"))
+    st.can_enter_S = false;
+  // CAP-specific G1/S damage threshold (separate from legacy, if defined)
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/cap/checkpoint/G1S/damage_threshold") &&
+      dna_damage_ > params->get<double>(CP_name+"/cap/checkpoint/G1S/damage_threshold"))
+    st.can_enter_S = false;
+  // Hypoxia gate: HIF-1α suppresses CDK2/CyclinD → G1 arrest under severe hypoxia
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/O2_threshold") &&
+      env.local_O2 < params->get<double>(CP_name+"/checkpoint/G1S/O2_threshold"))
+    st.can_enter_S = false;
+  // Nutrient gate: AMPK → p27/p21 under nutrient stress
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/nutrient_min") &&
+      env.local_nutrient < params->get<double>(CP_name+"/checkpoint/G1S/nutrient_min"))
+    st.can_enter_S = false;
+  // Crowding gate: contact inhibition
+  if (st.can_enter_S &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G1S/crowding_threshold") &&
+      env.local_crowding >= params->get<double>(CP_name+"/checkpoint/G1S/crowding_threshold"))
+    st.can_enter_S = false;
+  // ================================================================
+  // G2/M checkpoint — THE CRITICAL CAP ARREST GATE
+  //   CHK1 (ATR-driven) and CHK2 (ATM-driven) phosphorylate CDC25C → 14-3-3σ
+  //   sequestration → CDC25C inactive → CDK1/CyclinB cannot be dephosphorylated
+  //   → CDK1/CyclinB complex stays inactive → mitosis entry BLOCKED.
+  //   Division with unresolved DSBs = mitotic catastrophe → lethal.
+  //   γH2AX-positive cells must NOT divide: enforced here absolutely.
+  //
+  //   CAP context: most prominently reported arrest checkpoint in CCA cells.
+  //   γH2AX-positive cells arrested; arrest duration correlates with dose.
+  // ================================================================
+  if (bdm::IsMolecularG2MCheckpointBlocked(this))
+    st.can_enter_M = false;
+  // Fallback: legacy damage threshold
+  if (st.can_enter_M &&
+      !bdm::IsDdrPathwayEnabled(*params, CP_name) &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G2M/damage_threshold") &&
+      dna_damage_ > params->get<double>(CP_name+"/checkpoint/G2M/damage_threshold"))
+    st.can_enter_M = false;
+  // CAP-specific G2/M damage threshold
+  if (st.can_enter_M &&
+      params->have_parameter<double>(CP_name+"/cap/checkpoint/G2M/damage_threshold") &&
+      dna_damage_ > params->get<double>(CP_name+"/cap/checkpoint/G2M/damage_threshold"))
+    st.can_enter_M = false;
+  // γH2AX absolute block: cells with significant DSB marker must never enter mitosis
+  {
+    const double gh2ax_div_thr =
+      params->have_parameter<double>(CP_name+"/cap/checkpoint/G2M/gammaH2AX_block_threshold")
+      ? params->get<double>(CP_name+"/cap/checkpoint/G2M/gammaH2AX_block_threshold") : 0.5;
+    if (dsb_damage_gammaH2AX_proxy_ > gh2ax_div_thr)
+      st.can_enter_M = false;
+  }
+  // Hypoxia gate
+  if (st.can_enter_M &&
+      params->have_parameter<double>(CP_name+"/checkpoint/G2M/O2_threshold") &&
+      env.local_O2 < params->get<double>(CP_name+"/checkpoint/G2M/O2_threshold"))
+    st.can_enter_M = false;
+  // If G2/M is blocked, division is blocked
+  if (!st.can_enter_M) { /* can_divide is already constrained by can_enter_M in Mech 12 */ }
+  // ================================================================
+  // Intra-S checkpoint
+  //   ATR–CHK1–CDC25A ubiquitination during S-phase.
+  //   Moderate damage during replication → stalled forks → ATR activation.
+  // ================================================================
+  if (phase_ == Phase::Sy) {
+    const double intraS_thr =
+      params->have_parameter<double>(CP_name+"/cap/checkpoint/IntraS/damage_threshold")
+      ? params->get<double>(CP_name+"/cap/checkpoint/IntraS/damage_threshold")
+      : (params->have_parameter<double>(CP_name+"/checkpoint/IntraS/damage_threshold")
+         ? params->get<double>(CP_name+"/checkpoint/IntraS/damage_threshold") : 1.0e99);
+    const double intraS_ros_thr =
+      params->have_parameter<double>(CP_name+"/cap/checkpoint/IntraS/ros_threshold")
+      ? params->get<double>(CP_name+"/cap/checkpoint/IntraS/ros_threshold")
+      : (params->have_parameter<double>(CP_name+"/checkpoint/IntraS/ros_threshold")
+         ? params->get<double>(CP_name+"/checkpoint/IntraS/ros_threshold") : 1.0e99);
+    if (dna_damage_ > intraS_thr || ros_internal_ > intraS_ros_thr)
+      st.intra_s_blocked = true;
+  }
+  // ================================================================
+  // General arrest flag
+  // ================================================================
+  st.must_arrest = (!st.can_enter_S || !st.can_enter_M || st.intra_s_blocked);
+  // ================================================================
+  // Repair allowance
+  //   DNA repair (NHEJ/HR/BER) requires O2 (for NADPH, ATP) and metabolic energy.
+  //   Under severe hypoxia, HIF-1α competes for chromatin remodelling and
+  //   repair-factor recruitment (RAD51/OGG1/XRCC1 are O2-sensitive).
+  // ================================================================
+  {
+    const double o2_rep =
+      params->have_parameter<double>(CP_name+"/cap/repair/O2_min")
+      ? params->get<double>(CP_name+"/cap/repair/O2_min")
+      : (params->have_parameter<double>(CP_name+"/repair/O2_min")
+         ? params->get<double>(CP_name+"/repair/O2_min") : 0.0);
+    const double nut_rep =
+      params->have_parameter<double>(CP_name+"/cap/repair/nutrient_min")
+      ? params->get<double>(CP_name+"/cap/repair/nutrient_min")
+      : (params->have_parameter<double>(CP_name+"/repair/nutrient_min")
+         ? params->get<double>(CP_name+"/repair/nutrient_min") : 0.0);
+    if (env.local_O2 < o2_rep || env.local_nutrient < nut_rep)
+      st.repair_allowed = false;
+  }
+  // ================================================================
+  // Apoptosis commitment flag
+  //   must_enter_Ap = true when:
+  //   (a) apoptosis_commitment_state_ >= commitment_threshold (slow accumulation)
+  //   (b) arrest_time_ > max_repair_time AND damage remains elevated
+  //   (c) dna_damage_ > hard_apoptosis_threshold (extreme damage, fast path)
+  //
+  //   The stochastic apoptosis hazard is applied in the Mechanism 12 Run()
+  //   (rate-to-probability: P = 1 - exp(-k * dt)).
+  // ================================================================
+  {
+    const double commit_thr =
+      params->have_parameter<double>(CP_name+"/cap/apoptosis/commitment_threshold")
+      ? params->get<double>(CP_name+"/cap/apoptosis/commitment_threshold") : 0.7;
+    if (apoptosis_commitment_state_ >= commit_thr)
+      st.must_enter_Ap = true;
+    // Prolonged arrest path: max_repair_time exceeded AND damage still high
+    const int max_repair_time =
+      params->have_parameter<int>(CP_name+"/cap/repair/max_repair_time")
+      ? params->get<int>(CP_name+"/cap/repair/max_repair_time")
+      : (params->have_parameter<int>(CP_name+"/phase_dwell/max_arrest_time")
+         ? params->get<int>(CP_name+"/phase_dwell/max_arrest_time") : 999999);
+    const double arrest_ap_damage_thr =
+      params->have_parameter<double>(CP_name+"/cap/apoptosis/damage_threshold")
+      ? params->get<double>(CP_name+"/cap/apoptosis/damage_threshold")
+      : (params->have_parameter<double>(CP_name+"/intracellular/damage/threshold")
+         ? params->get<double>(CP_name+"/intracellular/damage/threshold") * 0.4 : 0.4);
+    if (arrest_time_ > max_repair_time && dna_damage_ > arrest_ap_damage_thr)
+      st.must_enter_Ap = true;
+    // Hard damage threshold (extreme unrepaired damage → immediate apoptosis path)
+    const double hard_ap_thr =
+      params->have_parameter<double>(CP_name+"/cap/apoptosis/hard_damage_threshold")
+      ? params->get<double>(CP_name+"/cap/apoptosis/hard_damage_threshold")
+      : (params->have_parameter<double>(CP_name+"/intracellular/damage/threshold")
+         ? params->get<double>(CP_name+"/intracellular/damage/threshold") : 1.0e99);
+    if (dna_damage_ > hard_ap_thr)
+      st.must_enter_Ap = true;
+    // cap_dose_exceeded: track chronic exposure signal (not necessarily apoptotic alone)
+    const double dose_thr =
+      params->have_parameter<double>(CP_name+"/cap/apoptosis/dose_integral_threshold")
+      ? params->get<double>(CP_name+"/cap/apoptosis/dose_integral_threshold") : 1.0e99;
+    if (cap_dose_integral_ > dose_thr)
+      st.cap_dose_exceeded = true;
+  }
+  // ================================================================
+  // Necrosis flag
+  //   Extreme RONS + hypoxia + membrane damage → energy collapse.
+  //   Biologically: peroxynitrite (ONOO-) destroys mitochondrial membranes;
+  //   ATP depletion triggers oncosis → HMGB1/DAMPs release.
+  //   Separate from apoptosis (necrosis is passive/uncontrolled).
+  // ================================================================
+  if (this->GetCanApoptose()) {
+    // ROS necrosis: extreme intracellular ROS or RNS
+    const double ros_nec_thr =
+      params->have_parameter<double>(CP_name+"/can_necrose/ros_threshold")
+      ? params->get<double>(CP_name+"/can_necrose/ros_threshold") : 1.0e99;
+    if (ros_internal_ > ros_nec_thr || rns_internal_ > ros_nec_thr * 0.8)
+      st.must_enter_Nec = true;
+    // Severe hypoxia necrosis
+    const double o2_nec_thr =
+      params->have_parameter<double>(CP_name+"/can_necrose/O2_threshold")
+      ? params->get<double>(CP_name+"/can_necrose/O2_threshold") : -1.0;
+    if (o2_nec_thr >= 0.0 && env.local_O2 <= o2_nec_thr)
+      st.must_enter_Nec = true;
+  }
+  return st;
 }
 // =============================================================================
 #endif // _BIOLOGICAL_CELL_INLINE_H_

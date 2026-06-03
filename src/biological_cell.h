@@ -32,6 +32,86 @@ public:
     Ap =-1,
     I0 =0, G1 =1, Sy =2, G2 =3, Di =4, Tr =5
   };
+  // -----------------------------------------------------------------------
+  // Mechanism 11: Snapshot of local microenvironment sampled once per step.
+  // Sampled by SampleMicroenvironment() to avoid redundant grid lookups.
+  // All values use safe defaults so old input files still run without change.
+  struct MicroenvironmentState {
+    double local_O2       = 1.0; ///< O2 concentration (normalized, [0,1]+)
+    double local_nutrient = 1.0; ///< nutrient/glucose level (normalized)
+    double local_crowding = 0.0; ///< local cell-volume occupancy ratio [0,inf)
+    double ecm_density    = 1.0; ///< ECM (collagen/fibronectin) field value
+    // ECM_stiffness field ("ECM_stiffness" substance if present):
+    // represents effective mechanosensing input to YAP/TAZ / ROCK signalling.
+    double ecm_stiffness  = 1.0; ///< effective ECM stiffness modifier
+    // ECM_adhesion_ligand_density: derived from ecm_density * integrin_sensitivity
+    // or from an "ECM_adhesion" substance field if present.
+    // Controls focal-adhesion / FAK/Src / anoikis gating.
+    double ecm_adhesion   = 1.0; ///< effective adhesion ligand density
+    double local_rons     = 0.0; ///< intracellular ROS/RONS (from ros_internal_)
+  };
+  // -----------------------------------------------------------------------
+  // Mechanism 11: Central cell-cycle checkpoint state from one consolidated
+  // evaluation. Used to gate all proliferation/survival decisions without
+  // re-querying the microenvironment multiple times per step.
+  // Molecular annotations are for documentation / parameter naming only.
+  struct CellCycleCheckpointState {
+    // G1/S gate: ATM/ATR → CHK1/CHK2 → CDC25A inhibition → CDK2/CyclinE arrest
+    //            → RB/E2F transcription block
+    bool can_enter_S      = true;
+    // G2/M gate: ATM/ATR → CHK1/CHK2 → CDC25C inhibition → CDK1/CyclinB arrest
+    bool can_enter_M      = true;
+    // Growth gate: nutrient/O2/crowding sufficient for biomass increase
+    //   PI3K/Akt/mTOR pathway; YAP/TAZ mechanosensing; contact inhibition
+    bool can_grow         = true;
+    // Division gate: composite (can_enter_M + volume threshold + crowding)
+    bool can_divide       = true;
+    // G0/quiescence recommended by microenvironment (crowding, hypoxia,
+    //   nutrient depletion → p27/Kip1 upregulation; RB hypophosphorylation)
+    bool should_enter_G0  = false;
+    // Apoptosis commitment (anoikis: BIM via integrin/FAK loss;
+    //   or stress-induced intrinsic pathway via p53/BAX/BCL-2)
+    bool should_enter_Ap  = false;
+    // Necrosis commitment (severe energy collapse; membrane integrity failure)
+    bool should_enter_Nec = false;
+    // DNA repair permissible (requires O2 for NHEJ; nutrients for synthesis)
+    bool repair_allowed   = true;
+  };
+  // -----------------------------------------------------------------------
+  // Mechanism 12: CAP/PAM-specific checkpoint state from EvaluateCAPCheckpointState().
+  // Encodes all gate decisions driven by RONS-induced DNA damage, DDR signalling,
+  // accumulated arrest time, and apoptosis commitment.
+  // Distinct from CellCycleCheckpointState (Mechanism 11).
+  struct CAPCheckpointState {
+    // G1/S gate: p53/p21-mediated CDK2/CyclinE inhibition after RONS-induced damage.
+    // Molecular: ATM/ATR → CHK1/CHK2 → CDC25A degradation → CDK2 inactive
+    //            → RB hypophosphorylated → E2F transcription factors blocked
+    //            p53 → p21 (CDKN1A) → CDK2/CyclinE inhibition
+    bool can_enter_S      = true;
+    // G2/M gate: CHK1-CDC25C-CDK1/CyclinB inhibition.
+    // Most important for CAP response: γH2AX-positive cells remain arrested
+    // until damage resolved. Division with unresolved DSBs = mitotic catastrophe.
+    bool can_enter_M      = true;
+    // Intra-S slowing: ATR–CHK1–CDC25A ubiquitination during replication stress.
+    // Returns true when Sy→G2 should be blocked (damage arises during S phase).
+    bool intra_s_blocked  = false;
+    // General arrest flag: true when any checkpoint is actively blocking.
+    bool must_arrest      = false;
+    // DNA repair permitted: NHEJ/HR/NER require O2 and metabolic energy.
+    // HIF-1α under hypoxia competes for repair factor binding (RAD51/Ku70/OGG1).
+    bool repair_allowed   = true;
+    // Apoptosis commitment: accumulated damage/arrest threshold crossed.
+    // Models delayed apoptosis observed in EGI-1 (~72h) and HuCCT1 (~48h) CCA lines.
+    // Triggered when: apoptosis_commitment_state > threshold
+    //              OR arrest_time > max_repair_time AND dna_damage still elevated.
+    // Downstream: p53 → BAX/BCL-2 imbalance → cytochrome C → Apaf-1 → caspase-9/3.
+    bool must_enter_Ap    = false;
+    // Necrosis: extreme energy/membrane collapse under very high RONS or hypoxia.
+    // Biologically: high peroxynitrite → mitochondrial membrane rupture → HMGB1/DAMPs.
+    bool must_enter_Nec   = false;
+    // CAP dose integral exceeded safe threshold: signals chronic treatment exposure
+    bool cap_dose_exceeded = false;
+  };
 //
 public:
   BiologicalCell() {}
@@ -96,6 +176,26 @@ public:
                                       + (1.0 - frac) * 1.0;
               cdk_activity_         = mother->cdk_activity_ * frac
                                       + (1.0 - frac) * 1.0;
+              // Mechanism 12 — CAP/PAM state inheritance
+              // RNS: daughter inherits same fraction as ROS
+              rns_internal_             = mother->rns_internal_             * frac;
+              // Dose integral: daughter starts fresh (the treatment was applied to the parent)
+              cap_dose_integral_        = 0.0;
+              // Time since CAP: inherited to preserve treatment timing context
+              time_since_cap_           = mother->time_since_cap_;
+              // Marker proxies start clean (proxies are computed, not inherited)
+              oxidative_damage_8oxoG_proxy_  = mother->oxidative_damage_8oxoG_proxy_  * frac;
+              dsb_damage_gammaH2AX_proxy_    = mother->dsb_damage_gammaH2AX_proxy_    * frac;
+              // Execution markers reset to zero — daughters start uncommitted
+              parp_cleavage_proxy_      = 0.0;
+              caspase3_activation_proxy_= 0.0;
+              apoptosis_commitment_state_= mother->apoptosis_commitment_state_ * frac;
+              // Physical/capacity parameters: inherited fully from parent phenotype
+              membrane_permeability_    = mother->membrane_permeability_;
+              repair_capacity_          = mother->repair_capacity_;
+              // Arrest phase resets: daughters are not checkpoint-arrested at birth
+              cap_arrest_phase_         = 0;
+              cap_recovered_from_arrest_count_ = 0;
             }
             CheckAndFixDiameter(); mother->CheckAndFixDiameter();
           }
@@ -136,6 +236,23 @@ public:
   double GetP21Level() const { return p21_level_; }
   double GetCdc25Active() const { return cdc25_active_; }
   double GetCdkActivity() const { return cdk_activity_; }
+  // Mechanism 12 — CAP/PAM-specific state getters
+  double GetRNSInternal() const { return rns_internal_; }
+  double GetCapDoseIntegral() const { return cap_dose_integral_; }
+  int    GetTimeSinceCap() const { return time_since_cap_; }
+  double GetOxidativeDamage8OxoGProxy() const { return oxidative_damage_8oxoG_proxy_; }
+  double GetDSBDamageGammaH2AXProxy() const { return dsb_damage_gammaH2AX_proxy_; }
+  double GetPARPCleavageProxy() const { return parp_cleavage_proxy_; }
+  double GetCaspase3ActivationProxy() const { return caspase3_activation_proxy_; }
+  double GetApoptosisCommitmentState() const { return apoptosis_commitment_state_; }
+  double GetMembranePermeability() const { return membrane_permeability_; }
+  double GetRepairCapacity() const { return repair_capacity_; }
+  void   SetCapArrestPhase(int phase) { cap_arrest_phase_ = phase; }
+  int    GetCapArrestPhase() const { return cap_arrest_phase_; }
+  void   IncrementCapRecoveredCount() { ++cap_recovered_from_arrest_count_; }
+  int    GetCapRecoveredCount() const { return cap_recovered_from_arrest_count_; }
+  void   ResetCapRecoveredCount() { cap_recovered_from_arrest_count_ = 0; }
+  void   IncrementTimeSinceCap() { ++time_since_cap_; }
   //
   void SetPolarization(const bdm::Double3x3& p) { polarize_ = p; }
   const bdm::Double3x3& GetPolarization() const { return polarize_; }
@@ -208,6 +325,61 @@ public:
   // Returns 0.0 if influence_ratio <= 0.
   double ComputeLocalOccupancyRatio(const bdm::Double3& position, double influence_ratio) const;
   void Set2DeleteProtrusions();
+  // Mechanism 11 — new supporting methods (backward-compatible, all optional)
+  // -----------------------------------------------------------------------
+  /// Sample local microenvironment fields once per timestep. Safe defaults
+  /// are returned for any field whose substance/grid is absent, so all
+  /// existing input files continue to run unchanged.
+  MicroenvironmentState SampleMicroenvironment() const;
+  /// Central cell-cycle checkpoint controller (Mechanism 11).
+  /// Uses a pre-sampled MicroenvironmentState to avoid redundant grid queries.
+  /// Returns a CellCycleCheckpointState encoding all gate decisions.
+  CellCycleCheckpointState EvaluateCellCycleCheckpoints(
+      const MicroenvironmentState& env);
+  /// Intra-S checkpoint: returns true if Sy→G2 should be blocked.
+  /// Phenomenological implementation of ATR–CHK1–CDC25A inhibition during
+  /// S-phase when replication stress or DNA DSBs are elevated.
+  bool EvaluateIntraSCheckpoint();
+  /// Multiplicative growth-rate modifier ∈ [0,1] encoding microenvironmental
+  /// support for biomass accumulation. Returns 1.0 if no modulation
+  /// parameters are defined (backward-compatible).
+  /// Factors: O2 (mTOR/HIF-1α), nutrient (PI3K/Akt/mTOR), ECM stiffness
+  /// (YAP/TAZ mechanosensing), crowding (contact inhibition), ROS/stress.
+  double ComputeGrowthModulation(const MicroenvironmentState& env) const;
+  // -----------------------------------------------------------------------
+  // Mechanism 12 — CAP/PAM-specific methods
+  // -----------------------------------------------------------------------
+  /// Update CAPP/RONS intracellular dynamics for Mechanism 12:
+  ///   - rns_internal_ (reactive nitrogen species, NO2-/peroxynitrite tracking)
+  ///   - cap_dose_integral_ (area-under-curve of extracellular RONS)
+  ///   - time_since_cap_ increment
+  ///   - Marker proxies: 8-oxoG, γH2AX (DSB), pCHK1, p53, PARP, caspase-3
+  ///   - apoptosis_commitment_state_ accumulation
+  ///   - membrane_permeability_ and repair_capacity_ updates
+  ///
+  /// Must be called AFTER RunIntracellular() so that ros_internal_,
+  /// dna_damage_, and DDR pathway variables are already up-to-date.
+  ///
+  /// Biological model:
+  ///   ROS accumulates from H2O2/ONOO- uptake (aquaporins AQP3/AQP8).
+  ///   DNA damage includes 8-oxoG (base oxidation) and DSBs (strand breaks).
+  ///   ATM (DSB sensor) and ATR (ssDNA/fork stall sensor) activate CHK1/CHK2.
+  ///   γH2AX marks DSB sites; pCHK1 and p53-Ser15 phosphorylation are DDR markers.
+  ///   PARP cleavage and caspase-3 activation are apoptosis execution markers.
+  ///   Cell-line sensitivity is encoded in phenotype parameter sets, not hardcoded.
+  void UpdateCAPIntracellular();
+  /// Central checkpoint controller for CAP/PAM-treated cells (Mechanism 12).
+  /// Returns a CAPCheckpointState encoding:
+  ///   - G1/S gate (p53/p21-CDK2 axis)
+  ///   - G2/M gate (CHK1-CDC25C-CDK1 axis — primary arrest gate for CAP)
+  ///   - Intra-S slowing (ATR-CHK1 during replication)
+  ///   - Repair allowance (O2/nutrient requirements for NHEJ/HR)
+  ///   - Apoptosis commitment (delayed, dose/time-dependent)
+  ///   - Necrosis flag (extreme RONS/energy collapse)
+  ///
+  /// Distinct from EvaluateCellCycleCheckpoints() (Mechanism 11).
+  CAPCheckpointState EvaluateCAPCheckpointState(
+      const MicroenvironmentState& env);
   //
 //
 private:
@@ -257,6 +429,72 @@ private:
   int arrest_time_ = 0;
   // G0 quiescence flag: true when cell has entered nutrient/crowding-driven quiescence
   bool is_quiescent_ = false;
+  // -----------------------------------------------------------------------
+  // Mechanism 12 — CAP/PAM-specific intracellular state variables
+  // -----------------------------------------------------------------------
+  // rns_internal_: intracellular reactive nitrogen species (NO2-/peroxynitrite)
+  // Biologically: NO2- from CAP/PAM enters via aquaporins and can react with
+  // superoxide O2·- to form peroxynitrite (ONOO-), which nitrosylates proteins
+  // and DNA bases (8-nitroguanine, DNA strand nicking).
+  double rns_internal_ = 0.0;
+  // cap_dose_integral_: time-integrated extracellular RONS exposure (dose AUC).
+  // Represents cumulative reactive species burden analogous to LQ dose integral.
+  // Used to model dose-dependent survival reduction observed in EGI-1 / HuCCT1.
+  double cap_dose_integral_ = 0.0;
+  // time_since_cap_: time steps since first CAP/PAM exposure (non-zero RONS detected).
+  // Used to model time-dependent delayed apoptosis (EGI-1 ~72h, HuCCT1 ~48h
+  // under tested PAM conditions). Cell-line timing encoded via sensitivity params.
+  int time_since_cap_ = 0;
+  // oxidative_damage_8oxoG_proxy_: normalised 8-oxoguanine level ∈ [0,1].
+  // 8-oxoG arises from OH· (Fenton/Haber-Weiss) oxidation of guanine in DNA.
+  // Reported by IHC (anti-8-OHdG antibody) in in vivo CAP-treated CCA xenografts.
+  // Drives NER (OGG1/APE1/PCNA base excision repair pathway).
+  double oxidative_damage_8oxoG_proxy_ = 0.0;
+  // dsb_damage_gammaH2AX_proxy_: normalised γH2AX foci count ∈ [0,1].
+  // γH2AX (H2AX-Ser139 phosphorylation) is the canonical DSB marker.
+  // Rapid ATM/ATR-mediated phosphorylation at DSB sites (≤1h after damage).
+  // Reported positive in CAP/PAM-treated EGI-1 and HuCCT1 cells (immunofluorescence).
+  double dsb_damage_gammaH2AX_proxy_ = 0.0;
+  // parp_cleavage_proxy_: normalised cleaved PARP-1 (89 kDa fragment) level ∈ [0,1].
+  // PARP-1 is cleaved by executioner caspase-3 (-7) during apoptosis.
+  // Cleavage inactivates PARP-1's DNA repair function, sealing apoptosis fate.
+  // Reported as western blot marker in CAP-treated CCA apoptosis assays.
+  // Only increases after apoptosis commitment (not during DDR/arrest phase).
+  double parp_cleavage_proxy_ = 0.0;
+  // caspase3_activation_proxy_: normalised cleaved caspase-3 level ∈ [0,1].
+  // Caspase-3 is the primary executioner caspase; activated by caspase-9
+  // downstream of cytochrome-C/Apaf-1 apoptosome (intrinsic/mitochondrial path).
+  // Reported by IHC in in vivo CAP-treated CCA xenografts (cleaved caspase-3 Ab).
+  // Used as definitive apoptosis readout alongside Annexin V / 7-AAD staining.
+  double caspase3_activation_proxy_ = 0.0;
+  // apoptosis_commitment_state_: continuous commitment accumulation ∈ [0,1].
+  // Integrates pro-apoptotic signals over time (damage history, arrest duration).
+  // Once commitment crosses apoptosis_commitment_threshold, cell enters Ap phase.
+  // Models delayed apoptosis: arrest appears first, apoptosis occurs later.
+  // Represents p53/BAX–BCL-2 imbalance slowly tipping toward irreversible fate.
+  double apoptosis_commitment_state_ = 0.0;
+  // membrane_permeability_: RONS uptake modulator ∈ [0,1].
+  // Reflects aquaporin (AQP3/AQP8) density and lipid bilayer integrity.
+  // Reduced by membrane damage or lipid peroxidation from high ROS.
+  // Models inter-cell variability in RONS uptake (contributes to dose-response variance).
+  double membrane_permeability_ = 1.0;
+  // repair_capacity_: cell's active DNA repair ability ∈ [0,1].
+  // Aggregates NHEJ (Ku70/Ku80/DNA-PKcs for DSBs), BER (OGG1/APE1 for 8-oxoG),
+  // and HR (RAD51/BRCA1/BRCA2 for complex DSBs in S/G2 phase).
+  // Reduced by sustained oxidative damage to repair enzymes.
+  // Biologically, primary hepatocytes have higher repair capacity than CCA cells.
+  // Phenotype-configurable: repair_capacity is a parameter, not a cell-line name.
+  double repair_capacity_ = 1.0;
+  // cap_arrest_phase_: tracks which checkpoint is responsible for current arrest.
+  //   0 = not checkpoint-arrested
+  //   1 = arrested at G1/S (p53/p21 gate; CDK2/CyclinE inhibition)
+  //   2 = arrested at intra-S (ATR–CHK1–CDC25A; replication stress)
+  //   3 = arrested at G2/M (CHK1/CHK2–CDC25C–CDK1/CyclinB inhibition)
+  // Used for statistics export (number of cells blocked at each checkpoint).
+  int cap_arrest_phase_ = 0;
+  // cap_recovered_from_arrest_count_: number of successful recoveries where a
+  // checkpoint-arrested cell repaired sufficiently and re-entered progression.
+  int cap_recovered_from_arrest_count_ = 0;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
 };

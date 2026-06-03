@@ -334,6 +334,50 @@ void save_stats(bdm::Simulation& sim,
   std::map<int, unsigned int> n_cell_per_phenotype__G2;
   std::map<int, unsigned int> n_cell_per_phenotype__Di;
   std::map<int, unsigned int> n_cell_per_phenotype__Tr;
+  std::map<int, unsigned int> n_cell_per_phenotype__G0;
+  // CAP/Mechanism-12 statistics (accumulated only for mechanism_order==12 phenotypes)
+  std::map<int, double>       cap_sum_ros;               // mean intracellular ROS
+  std::map<int, double>       cap_sum_rns;               // mean intracellular RNS
+  std::map<int, double>       cap_sum_dna_damage;        // mean DNA damage
+  std::map<int, double>       cap_sum_8oxoG;             // mean 8-oxoG proxy
+  std::map<int, double>       cap_sum_gammaH2AX;         // mean γH2AX proxy (DSBs)
+  std::map<int, double>       cap_sum_chk1;              // mean pCHK1 (ATR/CHK1 activity)
+  std::map<int, double>       cap_sum_p53;               // mean p53 activation
+  std::map<int, double>       cap_sum_parp;              // mean PARP cleavage proxy
+  std::map<int, double>       cap_sum_casp3;             // mean cleaved caspase-3 proxy
+  std::map<int, double>       cap_sum_commitment;        // mean apoptosis commitment state
+  std::map<int, double>       cap_sum_dose;              // mean CAP dose integral (AUC)
+  std::map<int, unsigned int> cap_n_arrest_G1S;          // count: arrested at G1/S
+  std::map<int, unsigned int> cap_n_arrest_IntraS;       // count: arrested intra-S
+  std::map<int, unsigned int> cap_n_arrest_G2M;          // count: arrested at G2/M
+  std::map<int, unsigned int> cap_n_recovered;           // count: recovered from checkpoint arrest
+  std::map<int, bool>         phenotype_is_cap;          // true if mechanism_order==12
+  bool has_mechanism12 = false;
+  // Global CAP/Mechanism-12 summary statistics across all mechanism-12 phenotypes.
+  unsigned int cap12_viable_count = 0;
+  unsigned int cap12_dead_count = 0;
+  unsigned int cap12_apoptotic_count = 0;
+  unsigned int cap12_necrotic_count = 0;
+  unsigned int cap12_arrested_count = 0;
+  unsigned int cap12_phase_G0 = 0;
+  unsigned int cap12_phase_G1 = 0;
+  unsigned int cap12_phase_Sy = 0;
+  unsigned int cap12_phase_G2 = 0;
+  unsigned int cap12_phase_Di = 0;
+  unsigned int cap12_phase_Ap = 0;
+  unsigned int cap12_phase_Nec = 0;
+  double cap12_sum_ros = 0.0;
+  double cap12_sum_dna_damage = 0.0;
+  double cap12_sum_gammaH2AX = 0.0;
+  double cap12_sum_chk1 = 0.0;
+  double cap12_sum_p53 = 0.0;
+  double cap12_sum_parp = 0.0;
+  double cap12_sum_casp3 = 0.0;
+  double cap12_sum_dose = 0.0;
+  unsigned int cap12_mean_norm_count = 0;
+  unsigned int cap12_n_blocked_G1S = 0;
+  unsigned int cap12_n_blocked_G2M = 0;
+  unsigned int cap12_n_recovered = 0;
   // iterate for all cell phenotypes
   for ( std::map<int, std::string>::const_iterator
         ci=cells.begin(); ci!=cells.end(); ci++ )
@@ -349,7 +393,31 @@ void save_stats(bdm::Simulation& sim,
       n_cell_per_phenotype__G2[CP_ID] = 0;
       n_cell_per_phenotype__Di[CP_ID] = 0;
       n_cell_per_phenotype__Tr[CP_ID] = 0;
-    }
+      n_cell_per_phenotype__G0[CP_ID] = 0;
+      // CAP stats: initialize for this phenotype; detect if mechanism 12
+      {
+        const std::string& CP_name = ci->second;
+        const int mo = params.have_parameter<int>(CP_name+"/mechanism_order")
+                     ? params.get<int>(CP_name+"/mechanism_order") : 0;
+        phenotype_is_cap[CP_ID] = (12 == mo);
+        has_mechanism12 = has_mechanism12 || phenotype_is_cap[CP_ID];
+      }
+      cap_sum_ros[CP_ID]          = 0.0;
+      cap_sum_rns[CP_ID]          = 0.0;
+      cap_sum_dna_damage[CP_ID]   = 0.0;
+      cap_sum_8oxoG[CP_ID]        = 0.0;
+      cap_sum_gammaH2AX[CP_ID]    = 0.0;
+      cap_sum_chk1[CP_ID]         = 0.0;
+      cap_sum_p53[CP_ID]          = 0.0;
+      cap_sum_parp[CP_ID]         = 0.0;
+      cap_sum_casp3[CP_ID]        = 0.0;
+      cap_sum_commitment[CP_ID]   = 0.0;
+      cap_sum_dose[CP_ID]         = 0.0;
+      cap_n_arrest_G1S[CP_ID]     = 0;
+      cap_n_arrest_IntraS[CP_ID]  = 0;
+      cap_n_arrest_G2M[CP_ID]     = 0;
+      cap_n_recovered[CP_ID]      = 0;
+    } // end phenotype init loop
   unsigned int n_protrusion = 0;
   //
   // Variables for tumor volume calculation (length * width^2 / 2)
@@ -391,7 +459,77 @@ void save_stats(bdm::Simulation& sim,
           n_cell_per_phenotype__Di[CP_ID] += 1;
         else if ( bdm::BiologicalCell::Phase::Tr==CP_Ph )
           n_cell_per_phenotype__Tr[CP_ID] += 1;
-      }
+        if (CP_ID && cell->IsQuiescent())
+          n_cell_per_phenotype__G0[CP_ID] += 1;
+        // Global necrotic accounting for CAP summary output.
+        if (0 == CP_ID)
+          {
+            ++cap12_necrotic_count;
+            ++cap12_phase_Nec;
+          }
+        // Accumulate CAP/Mechanism-12 statistics (only for phenotypes with mech 12)
+        if (phenotype_is_cap.count(CP_ID) && phenotype_is_cap.at(CP_ID))
+          {
+            if (bdm::BiologicalCell::Phase::Ap == CP_Ph)
+              {
+                ++cap12_apoptotic_count;
+                ++cap12_phase_Ap;
+              }
+            else
+              {
+                ++cap12_viable_count;
+                ++cap12_mean_norm_count;
+                cap_sum_ros[CP_ID]        += cell->GetROSInternal();
+                cap_sum_rns[CP_ID]        += cell->GetRNSInternal();
+                cap_sum_dna_damage[CP_ID] += cell->GetDNADamage();
+                cap_sum_8oxoG[CP_ID]      += cell->GetOxidativeDamage8OxoGProxy();
+                cap_sum_gammaH2AX[CP_ID]  += cell->GetDSBDamageGammaH2AXProxy();
+                cap_sum_chk1[CP_ID]       += cell->GetChk1Active();
+                cap_sum_p53[CP_ID]        += cell->GetP53Active();
+                cap_sum_parp[CP_ID]       += cell->GetPARPCleavageProxy();
+                cap_sum_casp3[CP_ID]      += cell->GetCaspase3ActivationProxy();
+                cap_sum_commitment[CP_ID] += cell->GetApoptosisCommitmentState();
+                cap_sum_dose[CP_ID]       += cell->GetCapDoseIntegral();
+                const int arr_ph = cell->GetCapArrestPhase();
+                if (1 == arr_ph)
+                  {
+                    ++cap_n_arrest_G1S[CP_ID];
+                    ++cap12_arrested_count;
+                    ++cap12_n_blocked_G1S;
+                  }
+                if (2 == arr_ph)
+                  {
+                    ++cap_n_arrest_IntraS[CP_ID];
+                    ++cap12_arrested_count;
+                  }
+                if (3 == arr_ph)
+                  {
+                    ++cap_n_arrest_G2M[CP_ID];
+                    ++cap12_arrested_count;
+                    ++cap12_n_blocked_G2M;
+                  }
+                if (cell->GetCapRecoveredCount() > 0)
+                  {
+                    ++cap_n_recovered[CP_ID];
+                    ++cap12_n_recovered;
+                  }
+                cap12_sum_ros        += cell->GetROSInternal();
+                cap12_sum_dna_damage += cell->GetDNADamage();
+                cap12_sum_gammaH2AX  += cell->GetDSBDamageGammaH2AXProxy();
+                cap12_sum_chk1       += cell->GetChk1Active();
+                cap12_sum_p53        += cell->GetP53Active();
+                cap12_sum_parp       += cell->GetPARPCleavageProxy();
+                cap12_sum_casp3      += cell->GetCaspase3ActivationProxy();
+                cap12_sum_dose       += cell->GetCapDoseIntegral();
+                if (cell->IsQuiescent()) ++cap12_phase_G0;
+                if      (bdm::BiologicalCell::Phase::I0==CP_Ph ||
+                         bdm::BiologicalCell::Phase::G1==CP_Ph) ++cap12_phase_G1;
+                else if (bdm::BiologicalCell::Phase::Sy==CP_Ph) ++cap12_phase_Sy;
+                else if (bdm::BiologicalCell::Phase::G2==CP_Ph) ++cap12_phase_G2;
+                else if (bdm::BiologicalCell::Phase::Di==CP_Ph) ++cap12_phase_Di;
+              }
+          }
+      } // end if BiologicalCell
     else if (auto* vessel = dynamic_cast<bdm::Vessel*>(a))
       {
         ++n_vessel;
@@ -403,6 +541,7 @@ void save_stats(bdm::Simulation& sim,
   });
   
   // Calculate tumor volume using formula: length * width^2 / 2
+  cap12_dead_count = cap12_apoptotic_count + cap12_necrotic_count;
   if (cancer_positions.size() > 1) {
     // Find bounding box of cancer cells
     double min_x = cancer_positions[0][0], max_x = cancer_positions[0][0];
@@ -451,7 +590,54 @@ void save_stats(bdm::Simulation& sim,
               fout << ", N_cells_pheno_" << CP_ID << "_G2";
               fout << ", N_cells_pheno_" << CP_ID << "_Di";
               fout << ", N_cells_pheno_" << CP_ID << "_Tr";
+              fout << ", N_cells_pheno_" << CP_ID << "_G0";
+              // CAP/Mechanism-12 per-phenotype statistics (appended only for mech-12)
+              if (phenotype_is_cap.count(CP_ID) && phenotype_is_cap.at(CP_ID))
+                {
+                  const std::string p = std::to_string(CP_ID);
+                  fout << ", cap_mean_ROS_"        << p;
+                  fout << ", cap_mean_RNS_"        << p;
+                  fout << ", cap_mean_DNAdmg_"     << p;
+                  fout << ", cap_mean_8oxoG_"      << p;
+                  fout << ", cap_mean_gammaH2AX_"  << p;
+                  fout << ", cap_mean_pCHK1_"      << p;
+                  fout << ", cap_mean_p53_"        << p;
+                  fout << ", cap_mean_PARPclv_"    << p;
+                  fout << ", cap_mean_Casp3_"      << p;
+                  fout << ", cap_mean_commitment_" << p;
+                  fout << ", cap_mean_doseAUC_"    << p;
+                  fout << ", cap_N_G1S_arrest_"    << p;
+                  fout << ", cap_N_IntraS_arrest_" << p;
+                  fout << ", cap_N_G2M_arrest_"    << p;
+                  fout << ", cap_N_recovered_"     << p;
+                }
             }
+        }
+      if (has_mechanism12)
+        {
+          fout << ", cap12_viable_count";
+          fout << ", cap12_dead_count";
+          fout << ", cap12_apoptotic_count";
+          fout << ", cap12_necrotic_count";
+          fout << ", cap12_arrested_count";
+          fout << ", cap12_phase_G0";
+          fout << ", cap12_phase_G1";
+          fout << ", cap12_phase_Sy";
+          fout << ", cap12_phase_G2";
+          fout << ", cap12_phase_Di";
+          fout << ", cap12_phase_Ap";
+          fout << ", cap12_phase_Nec";
+          fout << ", cap12_mean_ROS";
+          fout << ", cap12_mean_DNAdmg";
+          fout << ", cap12_mean_gammaH2AX";
+          fout << ", cap12_mean_pCHK1";
+          fout << ", cap12_mean_p53";
+          fout << ", cap12_mean_PARPclv";
+          fout << ", cap12_mean_Casp3";
+          fout << ", cap12_mean_doseAUC";
+          fout << ", cap12_N_blocked_G1S";
+          fout << ", cap12_N_blocked_G2M";
+          fout << ", cap12_N_recovered";
         }
       fout << ", N_cell_protrusions";
       fout << std::endl;
@@ -479,7 +665,59 @@ void save_stats(bdm::Simulation& sim,
           fout << ',' << n_cell_per_phenotype__G2[CP_ID];
           fout << ',' << n_cell_per_phenotype__Di[CP_ID];
           fout << ',' << n_cell_per_phenotype__Tr[CP_ID];
+          fout << ',' << n_cell_per_phenotype__G0[CP_ID];
+          // CAP/Mechanism-12 per-phenotype statistics output
+          if (phenotype_is_cap.count(CP_ID) && phenotype_is_cap.at(CP_ID))
+            {
+              // Number of viable (non-apoptotic) cells for mean normalisation
+              const double n_viable = static_cast<double>(
+                n_cell_per_phenotype[CP_ID] - n_cell_per_phenotype__Ap[CP_ID]);
+              const double norm = (n_viable > 0.0) ? n_viable : 1.0;
+              fout << ',' << cap_sum_ros[CP_ID]        / norm;
+              fout << ',' << cap_sum_rns[CP_ID]        / norm;
+              fout << ',' << cap_sum_dna_damage[CP_ID] / norm;
+              fout << ',' << cap_sum_8oxoG[CP_ID]      / norm;
+              fout << ',' << cap_sum_gammaH2AX[CP_ID]  / norm;
+              fout << ',' << cap_sum_chk1[CP_ID]       / norm;
+              fout << ',' << cap_sum_p53[CP_ID]        / norm;
+              fout << ',' << cap_sum_parp[CP_ID]       / norm;
+              fout << ',' << cap_sum_casp3[CP_ID]      / norm;
+              fout << ',' << cap_sum_commitment[CP_ID] / norm;
+              fout << ',' << cap_sum_dose[CP_ID]       / norm;
+              fout << ',' << cap_n_arrest_G1S[CP_ID];
+              fout << ',' << cap_n_arrest_IntraS[CP_ID];
+              fout << ',' << cap_n_arrest_G2M[CP_ID];
+              fout << ',' << cap_n_recovered[CP_ID];
+            }
         }
+    }
+  if (has_mechanism12)
+    {
+      const double cap_norm = (cap12_mean_norm_count > 0)
+                            ? static_cast<double>(cap12_mean_norm_count) : 1.0;
+      fout << ',' << cap12_viable_count;
+      fout << ',' << cap12_dead_count;
+      fout << ',' << cap12_apoptotic_count;
+      fout << ',' << cap12_necrotic_count;
+      fout << ',' << cap12_arrested_count;
+      fout << ',' << cap12_phase_G0;
+      fout << ',' << cap12_phase_G1;
+      fout << ',' << cap12_phase_Sy;
+      fout << ',' << cap12_phase_G2;
+      fout << ',' << cap12_phase_Di;
+      fout << ',' << cap12_phase_Ap;
+      fout << ',' << cap12_phase_Nec;
+      fout << ',' << cap12_sum_ros / cap_norm;
+      fout << ',' << cap12_sum_dna_damage / cap_norm;
+      fout << ',' << cap12_sum_gammaH2AX / cap_norm;
+      fout << ',' << cap12_sum_chk1 / cap_norm;
+      fout << ',' << cap12_sum_p53 / cap_norm;
+      fout << ',' << cap12_sum_parp / cap_norm;
+      fout << ',' << cap12_sum_casp3 / cap_norm;
+      fout << ',' << cap12_sum_dose / cap_norm;
+      fout << ',' << cap12_n_blocked_G1S;
+      fout << ',' << cap12_n_blocked_G2M;
+      fout << ',' << cap12_n_recovered;
     }
   fout << ',' << n_protrusion;
   fout << std::endl;
