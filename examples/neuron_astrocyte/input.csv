@@ -3,7 +3,7 @@ parameter_name, type, parameter_value
 output_directory,               string, results
 simulation_title,               string, ABM4bio
 #,#,#
-number_of_time_steps,           int,   10
+number_of_time_steps,           int,   20
 time_step,                      float, 1.0
 visualization_interval,         int,   1
 #,#,#
@@ -38,14 +38,15 @@ NGF/initial_value/max,          float, 1.000000e-5
 #,#,#
 ### neuron , ### , ###
 neuron/phenotype_ID, int, 1
-neuron/initial_population,                           int, 4
+neuron/initial_population,                           int, 8
 neuron/initial_population/std,                       int, 0
-neuron/initial_population/pattern,                string, sphere/inside
-neuron/initial_population/pattern/sphere/inside,    bool, true
-neuron/initial_population/pattern/sphere/center/0, float, 0.0
-neuron/initial_population/pattern/sphere/center/1, float, 0.0
-neuron/initial_population/pattern/sphere/center/2, float, 0.0
-neuron/initial_population/pattern/sphere/radius,   float, 100.0
+neuron/initial_population/from_file,              string, cells.dat
+#neuron/initial_population/pattern,                string, sphere/inside
+#neuron/initial_population/pattern/sphere/inside,    bool, true
+#neuron/initial_population/pattern/sphere/center/0, float, 0.0
+#neuron/initial_population/pattern/sphere/center/1, float, 0.0
+#neuron/initial_population/pattern/sphere/center/2, float, 0.0
+#neuron/initial_population/pattern/sphere/radius,   float, 100.0
 neuron/can_protrude, bool, true
 neuron/can_protrude/time_repeats,                        int, 44
 neuron/can_protrude/max_protrusions,                     int, 11
@@ -69,7 +70,7 @@ neuron/can_protrude/sprout/elongation_rate,            float, 0.05
 neuron/can_protrude/sprout/remodelling_ratio,          float, 0.999000
 neuron/can_protrude/branch/probability,                float, 0.
 neuron/can_protrude/dissect/probability,               float, 0.399
-neuron/can_protrude/dissect/length2branch/min,         float, 9.5
+neuron/can_protrude/dissect/length2branch/min,         float, 12.0
 neuron/can_protrude/afterwards/can_grow,                bool, false
 neuron/can_protrude/afterwards/can_divide,              bool, false
 neuron/can_protrude/afterwards/can_migrate,             bool, false
