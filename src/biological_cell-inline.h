@@ -18,6 +18,84 @@ void bdm::BiologicalCell::RunRegulatoryNetwork()
 {
   // by design only viable (non-necrotic) cells could have a regulatory network
   if (!this->GetPhenotype()) return;
+  //
+  // check if any of the state vectors of the regulatory network species is empty
+  if (this->rn_.previous_species.empty() || this->rn_.current_species.empty())
+    return;
+  // check if the basic parameters vector of the regulatory network is empty
+  if (this->rn_.params.empty())
+    return;
+  //
+  const size_t N = this->rn_.current_species.size();
+  // check if state vectors' dimension of the regulatory network species is valid
+  if (N != this->rn_.previous_species.size())
+    ABORT_("state vectors' dimension of the regulatory network species is invalid");
+  // update the previous solution
+  this->rn_.previous_species = this->rn_.current_species;
+  // define the type of integrator used
+  typedef boost::numeric::odeint::runge_kutta_dopri5<bvector_t> ode_int;
+  // set-up the Runge-Kutta integrator
+  auto stepper =
+    boost::numeric::odeint::make_dense_output<ode_int>(1e-6,1e-6);
+  //
+  // regulatory network model based on the work of L.Mendoza & I.Xenarios (2006):
+  //   https://doi.org/10.1186/1742-4682-3-13
+  auto rhs = [](const bvector_t& x, bvector_t& dxdt, real_t t)
+  {
+    // const real_t h = this->rn_.params[0],
+    //              h_2 = 0.5 * h;
+    // for (size_t i=0; i<N; i++)
+    //   {
+    //     real_t gamma = this->rn_.params[1+i];
+    //     //
+    //     real_t omega = 0.0;
+    //     if (!this->rn_.params_a.empty() && !this->rn_.params_i.empty())
+    //       {
+    //         double sum_a = this->rn_.params_a[N];
+    //         double sum_a_x = 0.0;
+    //         for (size_t j=0; j<N; j++)
+    //           sum_a_x += this->rn_.params_a[j] * x[j];
+    //         double sum_b = this->rn_.params_b[N];
+    //         double sum_b_x = 0.0;
+    //         for (size_t j=0; j<N; j++)
+    //           sum_b_x += this->rn_.params_b[j] * x[j];
+    //         //
+    //         omega = ((1.0+sum_a)/sum_a) * (sum_a_x/(1.0+sum_a_x))
+    //               * (1.0 - ((1.0+sum_b)/sum_b) * (sum_b_x/(1.0+sum_b_x)));
+    //       }
+    //     else if (!this->rn_.params_a.empty())
+    //       {
+    //         double sum_a = this->rn_.params_a[N];
+    //         double sum_a_x = 0.0;
+    //         for (size_t j=0; j<N; j++)
+    //           sum_a_x += this->rn_.params_a[j] * x[j];
+    //         //
+    //         omega = ((1.0+sum_a)/sum_a) * (sum_a_x/(1.0+sum_a_x));
+    //       }
+    //     else if (!this->rn_.params_i.empty())
+    //       {
+    //         double sum_b = this->rn_.params_b[N];
+    //         double sum_b_x = 0.0;
+    //         for (size_t j=0; j<N; j++)
+    //           sum_b_x += this->rn_.params_b[j] * x[j];
+    //         //
+    //         omega = (1.0 - ((1.0+sum_b)/sum_b) * (sum_b_x/(1.0+sum_b_x)));
+    //       }
+    //     else
+    //       ABORT_("an exception is caught");
+    //     //
+    //     // formulate the right-hand-side component of this specie
+    //     dxdt[i] = (exp(h_2-h*omega)-exp(h_2)) / (1.0-exp(h_2)) / (1.0+exp(h_2-h*omega))
+    //             - gamma * x[i];
+    //   }
+  };
+  // perform the time-integration
+  const int N_DT = this->rn_.time_step_subdivision;
+  const double DT = this->rn_.time_step;
+  const double T = this->rn_.time;
+  integrate_const(stepper, rhs, this->rn_.current_species, T, T+DT, DT/N_DT);
+  // update the time of the regulatory network
+  this->rn_.time += this->rn_.time_step;
   //...end of cell regulatory network
 }
 // -----------------------------------------------------------------------------
