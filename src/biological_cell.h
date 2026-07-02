@@ -156,6 +156,8 @@ public:
   void SetParametersPointer(Parameters* p) { params_ = p; }
   Parameters* params() const { return params_; }
   //
+  RegNet& SetRegulatoryNetwork () { return rn_; }
+  //
   void RunRegulatoryNetwork();
   void RunBiochemics();
   bool CheckPositionValidity();
