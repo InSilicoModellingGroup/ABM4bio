@@ -2352,6 +2352,28 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       });
       fout << std::endl
            << "        </DataArray>" << std::endl;
+      //++++++++++++++++++++++++
+      if ( ! simplify_output ) {
+      //++++++++++++++++++++++++
+      const int max_number_of_species = params.get<int>("regulatory_network/number_of_species/max");
+      const std::string s = std::to_string(max_number_of_species);
+      fout << "        <DataArray type=\"Float64\" Name=\"reg_net\" NumberOfComponents=\""<<s<<"\" format=\"ascii\">" << std::endl;
+      rm->ForEachAgent([&] (bdm::Agent* a) {
+        if (auto* cell = dynamic_cast<bdm::BiologicalCell*>(a))
+          {
+            const int N = cell->SetRegulatoryNetwork().current_species.size();
+            for (int l=0; l<N; l++)
+              fout << ' ' << cell->SetRegulatoryNetwork().current_species[l];
+            if (N<max_number_of_species)
+              for (int l=N; l<max_number_of_species; l++)
+                fout << ' ' << 0.0;
+          }
+      });
+      fout << std::endl
+           << "        </DataArray>" << std::endl;
+      //++++++++++++++++++++++++
+      } // ...end if-statement
+      //++++++++++++++++++++++++
       fout << "      </PointData>" << std::endl;
       fout << "      <Cells>" << std::endl;
       fout << "        <DataArray type=\"Int32\" Name=\"offsets\" NumberOfComponents=\"1\" format=\"ascii\">" << std::endl;
