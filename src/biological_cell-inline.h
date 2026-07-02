@@ -40,54 +40,56 @@ void bdm::BiologicalCell::RunRegulatoryNetwork()
   //
   // regulatory network model based on the work of L.Mendoza & I.Xenarios (2006):
   //   https://doi.org/10.1186/1742-4682-3-13
-  auto rhs = [](const bvector_t& x, bvector_t& dxdt, real_t t)
+  auto rhs = [&](const bvector_t& x, bvector_t& dxdt, real_t t)
   {
-    // const real_t h = this->rn_.params[0],
-    //              h_2 = 0.5 * h;
-    // for (size_t i=0; i<N; i++)
-    //   {
-    //     real_t gamma = this->rn_.params[1+i];
-    //     //
-    //     real_t omega = 0.0;
-    //     if (!this->rn_.params_a.empty() && !this->rn_.params_i.empty())
-    //       {
-    //         double sum_a = this->rn_.params_a[N];
-    //         double sum_a_x = 0.0;
-    //         for (size_t j=0; j<N; j++)
-    //           sum_a_x += this->rn_.params_a[j] * x[j];
-    //         double sum_b = this->rn_.params_b[N];
-    //         double sum_b_x = 0.0;
-    //         for (size_t j=0; j<N; j++)
-    //           sum_b_x += this->rn_.params_b[j] * x[j];
-    //         //
-    //         omega = ((1.0+sum_a)/sum_a) * (sum_a_x/(1.0+sum_a_x))
-    //               * (1.0 - ((1.0+sum_b)/sum_b) * (sum_b_x/(1.0+sum_b_x)));
-    //       }
-    //     else if (!this->rn_.params_a.empty())
-    //       {
-    //         double sum_a = this->rn_.params_a[N];
-    //         double sum_a_x = 0.0;
-    //         for (size_t j=0; j<N; j++)
-    //           sum_a_x += this->rn_.params_a[j] * x[j];
-    //         //
-    //         omega = ((1.0+sum_a)/sum_a) * (sum_a_x/(1.0+sum_a_x));
-    //       }
-    //     else if (!this->rn_.params_i.empty())
-    //       {
-    //         double sum_b = this->rn_.params_b[N];
-    //         double sum_b_x = 0.0;
-    //         for (size_t j=0; j<N; j++)
-    //           sum_b_x += this->rn_.params_b[j] * x[j];
-    //         //
-    //         omega = (1.0 - ((1.0+sum_b)/sum_b) * (sum_b_x/(1.0+sum_b_x)));
-    //       }
-    //     else
-    //       ABORT_("an exception is caught");
-    //     //
-    //     // formulate the right-hand-side component of this specie
-    //     dxdt[i] = (exp(h_2-h*omega)-exp(h_2)) / (1.0-exp(h_2)) / (1.0+exp(h_2-h*omega))
-    //             - gamma * x[i];
-    //   }
+    const real_t h = this->rn_.params[0];
+    const real_t exp_h2 = exp(0.5 * h);
+    for (size_t i=0; i<N; i++)
+      {
+        real_t gamma = this->rn_.params[1+i];
+        //
+        real_t omega = 0.0;
+        if (!this->rn_.params_a.empty() && !this->rn_.params_i.empty())
+          {
+            double sum_a_x = 0.0;
+            for (size_t j=0; j<N; j++)
+              sum_a_x += this->rn_.params_a[j] * x[j];
+            double sum_a = this->rn_.params_a[N];
+            //
+            double sum_b_x = 0.0;
+            for (size_t j=0; j<N; j++)
+              sum_b_x += this->rn_.params_i[j] * x[j];
+            double sum_b = this->rn_.params_i[N];
+            //
+            omega = ((1.0+sum_a)/sum_a) * (sum_a_x/(1.0+sum_a_x))
+                  * (1.0 - ((1.0+sum_b)/sum_b) * (sum_b_x/(1.0+sum_b_x)));
+          }
+        else if (!this->rn_.params_a.empty())
+          {
+            double sum_a_x = 0.0;
+            for (size_t j=0; j<N; j++)
+              sum_a_x += this->rn_.params_a[j] * x[j];
+            double sum_a = this->rn_.params_a[N];
+            //
+            omega = ((1.0+sum_a)/sum_a) * (sum_a_x/(1.0+sum_a_x));
+          }
+        else if (!this->rn_.params_i.empty())
+          {
+            double sum_b_x = 0.0;
+            for (size_t j=0; j<N; j++)
+              sum_b_x += this->rn_.params_i[j] * x[j];
+            double sum_b = this->rn_.params_i[N];
+            //
+            omega = (1.0 - ((1.0+sum_b)/sum_b) * (sum_b_x/(1.0+sum_b_x)));
+          }
+        else
+          ABORT_("an exception is caught");
+        //
+        const real_t exp_h2_homega = exp(h*(0.5-omega));
+        // formulate the right-hand-side component of this specie
+        dxdt[i] = (exp_h2_homega-exp_h2) / (1.0-exp_h2) / (1.0+exp_h2_homega)
+                - gamma * x[i];
+      }
   };
   // perform the time-integration
   const int N_DT = this->rn_.time_step_subdivision;
