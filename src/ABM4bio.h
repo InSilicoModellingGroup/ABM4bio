@@ -1259,6 +1259,11 @@ void init_cells(bdm::Simulation& sim,
             params.set<double>(CP_name+"/can_protrude/branch/probability") = 0.0;
         }
       //
+      if (params.have_parameter<std::string>(CP_name+"/regulatory_network_data"))
+        {
+          ABORT_("work in progress");
+        }
+      //
       if (CP_ID>0) // ignore necrotic cell whose default phenotype ID = 0
         {
           // identify the principal directions' order
