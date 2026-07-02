@@ -14,6 +14,14 @@
 #define _BIOLOGICAL_CELL_INLINE_H_
 // =============================================================================
 inline
+void bdm::BiologicalCell::RunRegulatoryNetwork()
+{
+  // by design only viable (non-necrotic) cells could have a regulatory network
+  if (!this->GetPhenotype()) return;
+  //...end of cell regulatory network
+}
+// -----------------------------------------------------------------------------
+inline
 void bdm::BiologicalCell::RunBiochemics()
 {
   // by design only viable (non-necrotic) cells could secrete biochemicals
