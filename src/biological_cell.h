@@ -19,6 +19,12 @@
 #include "./cell_protrusion.h"
 #include "./obstacles.h"
 #include "./io_flux.h"
+#include "boost/numeric/odeint.hpp"
+#include "boost/phoenix/core.hpp"
+#include "boost/phoenix/operator.hpp"
+// =============================================================================
+typedef boost::numeric::ublas::vector<double>  bvector_t;
+typedef boost::numeric::ublas::matrix<double>  bmatrix_t;
 // =============================================================================
 namespace bdm {
 // =============================================================================
@@ -30,6 +36,23 @@ public:
   enum Phase {
     Ap =-1,
     I0 =0, G1 =1, Sy =2, G2 =3, Di =4, Tr =5
+  };
+//
+  struct RegNet {
+    // pseudo-time for ODE(s) time integration
+    mutable
+    real_t time = 0.0;
+    // time-step for ODE(s) time integration
+    real_t time_step = 1.0;
+    int time_step_subdivision = 100;
+    // current solution of the species concentration
+    mutable
+    bvector_t current_species = {};
+    // previous solution of the species concentration
+    mutable
+    bvector_t previous_species = {};
+    // parameters of the regulatory network
+    std::vector<double> params, params_a, params_i;
   };
 //
 public:
@@ -69,6 +92,8 @@ public:
             n_protrusions_ = 0; // ...index is initialized
             params_ = mother->params_; // copy parameters pointer...
             CheckAndFixDiameter(); mother->CheckAndFixDiameter();
+            rn_ = mother->rn_; // copy all member data
+            rn_.time = 0.0; // ...but reset the time of the regulatory network
           }
         else
           ABORT_("an exception is caught");
@@ -177,6 +202,8 @@ private:
   Parameters* params_ = 0;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
+  // regulatory network data and parameters
+  RegNet rn_;
 };
 // =============================================================================
 } // ...end of namespace
