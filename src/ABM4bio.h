@@ -1265,43 +1265,20 @@ void init_cells(bdm::Simulation& sim,
       params.set<double>(CP_name+"/regulatory_network/time_step") = 0.0;
       params.set<int>(CP_name+"/regulatory_network/time_step_subdivision") = 100;
       params.set<int>(CP_name+"/regulatory_network/number_of_species") = 0;
-      // some more parameters of the regulatory network
-      std::vector<double> rn_params, rn_params_a, rn_params_i;
-      // initial condition of the regulatory network
-      std::vector<double> rn_initial;
+      //
+      RegulatoryNetworkData rn;
       if (params.have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
         {
-          std::string fn = params.get<std::string>(CP_name+"/regulatory_network/from_file");
-          //
-          std::ifstream fin(fn);
-          ASSERT_(fin.good(),"file \""+fn+"\" cannot be accessed");
-          //
-          fin >> params.set<double>(CP_name+"/regulatory_network/time_step")
-              >> params.set<int>(CP_name+"/regulatory_network/time_step_subdivision")
-              >> params.set<int>(CP_name+"/regulatory_network/number_of_species");
-          //
-          const int N = params.get<int>(CP_name+"/regulatory_network/number_of_species");
-          // now read the regulatory network parameters respectively
-          rn_params.resize(N+1);
-          for (int p=0; p<N+1; p++)
-            fin >> rn_params[p];
-          rn_params_a.resize(N);
-          for (int p=0; p<N; p++)
-            fin >> rn_params_a[p];
-          rn_params_i.resize(N);
-          for (int p=0; p<N; p++)
-            fin >> rn_params_i[p];
-          // also read the initial condition of the regulatory network
-          rn_initial.resize(N);
-          for (int l=0; l<N; l++)
-            fin >> rn_initial[l];
+          const std::string fn = params.get<std::string>(CP_name+"/regulatory_network/from_file");
+          params.set<int>(CP_name+"/regulatory_network/number_of_species") =
+            read_regulatory_network_data(fn, rn);
+          params.set<double>(CP_name+"/regulatory_network/time_step") = rn.time_step;
+          params.set<int>(CP_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
         }
-      const double rn_time_step = params.get<double>(CP_name+"/regulatory_network/time_step");
-      const int rn_time_step_subdivision = params.get<int>(CP_name+"/regulatory_network/time_step_subdivision");
-      const int number_of_species = params.get<int>(CP_name+"/regulatory_network/number_of_species");
       //
       params.set<int>("regulatory_network/number_of_species/max") =
-        std::max(number_of_species, params.get<int>("regulatory_network/number_of_species/max"));
+        std::max( params.get<int>(CP_name+"/regulatory_network/number_of_species"),
+                  params.get<int>("regulatory_network/number_of_species/max") );
       //
       if (CP_ID>0) // ignore necrotic cell whose default phenotype ID = 0
         {
@@ -1611,19 +1588,8 @@ void init_cells(bdm::Simulation& sim,
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // setup the regulatory network data
-              if (number_of_species)
-                {
-                  cell->SetRegulatoryNetwork().time_step = rn_time_step;
-                  cell->SetRegulatoryNetwork().time_step_subdivision = rn_time_step_subdivision;
-                  cell->SetRegulatoryNetwork().params = rn_params;
-                  cell->SetRegulatoryNetwork().params_a = rn_params_a;
-                  cell->SetRegulatoryNetwork().params_i = rn_params_i;
-                  cell->SetRegulatoryNetwork().previous_species.resize(number_of_species);
-                  cell->SetRegulatoryNetwork().current_species.resize(number_of_species);
-                  for (size_t l=0; l<number_of_species; l++)
-                    cell->SetRegulatoryNetwork().previous_species[l] =
-                    cell->SetRegulatoryNetwork().current_species[l] = rn_initial[l];
-                }
+              if ( params.get<int>(CP_name+"/regulatory_network/number_of_species") )
+                cell->SetRegulatoryNetworkData() = rn;
               // store this cell into BioDynaMo's resource manager
               rm->AddAgent(cell);
             }
@@ -1767,19 +1733,8 @@ void init_cells(bdm::Simulation& sim,
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // setup the regulatory network data
-              if (number_of_species)
-                {
-                  cell->SetRegulatoryNetwork().time_step = rn_time_step;
-                  cell->SetRegulatoryNetwork().time_step_subdivision = rn_time_step_subdivision;
-                  cell->SetRegulatoryNetwork().params = rn_params;
-                  cell->SetRegulatoryNetwork().params_a = rn_params_a;
-                  cell->SetRegulatoryNetwork().params_i = rn_params_i;
-                  cell->SetRegulatoryNetwork().previous_species.resize(number_of_species);
-                  cell->SetRegulatoryNetwork().current_species.resize(number_of_species);
-                  for (size_t l=0; l<number_of_species; l++)
-                    cell->SetRegulatoryNetwork().previous_species[l] =
-                    cell->SetRegulatoryNetwork().current_species[l] = rn_initial[l];
-                }
+              if ( params.get<int>(CP_name+"/regulatory_network/number_of_species") )
+                cell->SetRegulatoryNetworkData() = rn;
               // store this cell into BioDynaMo's resource manager
               rm->AddAgent(cell);
             }
@@ -2361,9 +2316,9 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       rm->ForEachAgent([&] (bdm::Agent* a) {
         if (auto* cell = dynamic_cast<bdm::BiologicalCell*>(a))
           {
-            const int N = cell->SetRegulatoryNetwork().current_species.size();
+            const int N = cell->SetRegulatoryNetworkData().current_species.size();
             for (int l=0; l<N; l++)
-              fout << ' ' << cell->SetRegulatoryNetwork().current_species[l];
+              fout << ' ' << cell->SetRegulatoryNetworkData().current_species[l];
             if (N<max_number_of_species)
               for (int l=N; l<max_number_of_species; l++)
                 fout << ' ' << 0.0;
