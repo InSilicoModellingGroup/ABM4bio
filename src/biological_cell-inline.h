@@ -1297,16 +1297,28 @@ bool bdm::BiologicalCell::CheckTransformation()
                   // reset the cell behavior (mechanisms order) from old to new one
                   {
                     const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
-                    if (behavior.size()!=1)
-                      ABORT_("an internal error occurred");
+                    ASSERT_(behavior.size()==1, "an internal error occurred");
                     //
                     this->RemoveBehavior(behavior[0]);
                   }
-                  const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-                  if (10==mo)
+                  if      ( 10 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
                     this->AddBehavior(new Biology4BiologicalCell_10());
+                  else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+                    this->AddBehavior(new Biology4BiologicalCell_11());
                   else
                     ABORT_("an exception is caught");
+                  // setup the regulatory network data
+                  RegulatoryNetworkData rn;
+                  if (this->params()->have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
+                    {
+                      const std::string fn = this->params()->get<std::string>(CP_name+"/regulatory_network/from_file");
+                      this->params()->set<int>(CP_name+"/regulatory_network/number_of_species") =
+                        read_regulatory_network_data(fn, rn);
+                      this->params()->set<double>(CP_name+"/regulatory_network/time_step") = rn.time_step;
+                      this->params()->set<int>(CP_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
+                    }
+                  if ( this->params()->get<int>(CP_name+"/regulatory_network/number_of_species") )
+                    this->SetRegulatoryNetworkData() = rn;
                   // cell has transformed, then proceed to check if it can do other things
                   return true;
                 }
@@ -1314,6 +1326,95 @@ bool bdm::BiologicalCell::CheckTransformation()
           //
         }
       //...end of substances loop
+    }
+  // iterate for all species of the regulatory network
+  for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
+    {
+      std::string RN_specie = std::to_string(s);
+      //
+      if (! this->params()->have_parameter<int>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/new_phenotype"))
+        continue;
+      if (! this->params()->have_parameter<double>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/threshold"))
+        continue;
+      //
+      const double level = this->GetRegulatoryNetworkData().current_species[s],
+                   threshold = this->params()->get<double>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/threshold");
+      //
+      if ( ( threshold > 0.0 && level > +threshold ) ||
+           ( threshold < 0.0 && level < -threshold ) )
+        {
+          const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/new_phenotype");
+          // firstly, the cell transforms
+          this->SetPhenotype(new_phenotype);
+          // increment this index
+          this->IncrementNumberOfTrasformations();
+          // now reset the age of the cell
+          this->SetAge();
+          //
+          const std::string CP_new_name = // cell phenotype name
+            this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+          // principal directions of the cell polarization matrix
+          double p0, p1, p2;
+          if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
+            {
+              p0 = this->params()->get<double>(CP_new_name+"/principal/0");
+              p1 = this->params()->get<double>(CP_new_name+"/principal/1");
+              p2 = this->params()->get<double>(CP_new_name+"/principal/2");
+            }
+          //
+          this->SetCanApoptose(this->params()->get<bool>(CP_new_name+"/can_apoptose"));
+          this->SetCanGrow(this->params()->get<bool>(CP_new_name+"/can_grow"));
+          this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
+          this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
+          this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
+          this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+          this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+          // reset the cell polarization matrix
+          if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
+            this->SetPolarization(diag(p0, p1, p2));
+          // reset the cell protrusion phenotype
+          if ( this->GetNumberOfProtrusions() )
+            {
+              if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
+                ABORT_("an internal error occurred");
+              //
+              // iterate for all (existing) protrusions of this cell
+              for (int p=0; p<this->GetNumberOfProtrusions(); p++)
+                {
+                  auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
+                  // assign this cell (that is associated with) to the protrusion created
+                  protrusion->SetCell(this);
+                }
+            }
+          // reset the cell behavior (mechanisms order) from old to new one
+          {
+            const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
+            ASSERT_(behavior.size()==1, "an internal error occurred");
+            //
+            this->RemoveBehavior(behavior[0]);
+          }
+          if      ( 10 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+            this->AddBehavior(new Biology4BiologicalCell_10());
+          else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+            this->AddBehavior(new Biology4BiologicalCell_11());
+          else
+            ABORT_("an exception is caught");
+          // setup the regulatory network data
+          RegulatoryNetworkData rn;
+          if (this->params()->have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
+            {
+              const std::string fn = this->params()->get<std::string>(CP_name+"/regulatory_network/from_file");
+              this->params()->set<int>(CP_name+"/regulatory_network/number_of_species") =
+                read_regulatory_network_data(fn, rn);
+              this->params()->set<double>(CP_name+"/regulatory_network/time_step") = rn.time_step;
+              this->params()->set<int>(CP_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
+            }
+          if ( this->params()->get<int>(CP_name+"/regulatory_network/number_of_species") )
+            this->SetRegulatoryNetworkData() = rn;
+          // cell has transformed, then proceed to check if it can do other things
+          return true;
+        }
+      //...end of species loop
     }
   // cell has not been through any transformation
   return false;
