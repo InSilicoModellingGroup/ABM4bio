@@ -902,6 +902,26 @@ bool bdm::BiologicalCell::CheckApoptosis()
         }
       //...end of substances loop
     }
+  // iterate for all species of the regulatory network
+  for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
+    {
+      std::string RN_specie = std::to_string(s);
+      //
+      if (! this->params()->have_parameter<double>(CP_name+"/can_apoptose/regulatory_network/"+RN_specie+"/threshold"))
+        continue;
+      //
+      const double level = this->GetRegulatoryNetworkData().current_species[s],
+                   threshold = this->params()->get<double>(CP_name+"/can_apoptose/regulatory_network/"+RN_specie+"/threshold");
+      //
+      if ( ( threshold > 0.0 && level > +threshold ) ||
+           ( threshold < 0.0 && level < -threshold ) )
+        {
+          // since cell has apoptosed, then it must be removed from simulation
+          return true;
+        }
+      //...end of species loop
+    }
+  //
   // since cell has not been through apoptosis, then it can do other things
   return false;
   //...end of cell apoptosis
