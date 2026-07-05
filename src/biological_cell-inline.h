@@ -2431,6 +2431,7 @@ bool bdm::BiologicalCell::CheckDivision() {
   // ensure cell is well within the simulation domain!
   if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
     return false;
+  //
   // iterate for all substances if cell can
   // divide (symmetrically)
   for ( std::vector<std::string>::const_iterator
@@ -2454,6 +2455,29 @@ bool bdm::BiologicalCell::CheckDivision() {
         }
       //...end of substances loop
     }
+  // iterate for all species of the regulatory network
+  for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
+    {
+      std::string RN_specie = std::to_string(s);
+      //
+      if (! this->params()->have_parameter<double>(CP_name+"/can_divide/regulatory_network/"+RN_specie+"/threshold"))
+        continue;
+      //
+      const double level = this->GetRegulatoryNetworkData().current_species[s],
+                   threshold = this->params()->get<double>(CP_name+"/can_divide/regulatory_network/"+RN_specie+"/threshold");
+      //
+      if ( ( threshold > 0.0 && level > +threshold ) ||
+           ( threshold < 0.0 && level < -threshold ) )
+        {
+          // since no symmetric (prior to cell transformation) or unsymmetric division
+          // has occurred, then cell divides conventionally
+          this->Divide(volume_ratio, axis);
+          // cell has divided, then proceed to check if it can do other things
+          return true;
+        }
+      //...end of species loop
+    }
+  //
   // cell has not been through any division
   return false;
   //...end of cell division
