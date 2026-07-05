@@ -2489,15 +2489,28 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
               // reset the cell behavior (mechanisms order) from old to new one
               {
                 const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
-                ASSERT_(1==behavior.size(),"an internal error occurred");
+                ASSERT_(behavior.size()==1, "an internal error occurred");
                 //
                 this->RemoveBehavior(behavior[0]);
               }
-              const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-              if (10==mo)
+              if      ( 10 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
                 this->AddBehavior(new Biology4BiologicalCell_10());
+              else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+                this->AddBehavior(new Biology4BiologicalCell_11());
               else
                 ABORT_("an exception is caught");
+              // setup the regulatory network data
+              RegulatoryNetworkData rn;
+              if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+                {
+                  const std::string fn = this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file");
+                  this->params()->set<int>(CP_new_name+"/regulatory_network/number_of_species") =
+                    read_regulatory_network_data(fn, rn);
+                  this->params()->set<double>(CP_new_name+"/regulatory_network/time_step") = rn.time_step;
+                  this->params()->set<int>(CP_new_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
+                }
+              if ( this->params()->get<int>(CP_new_name+"/regulatory_network/number_of_species") )
+                this->SetRegulatoryNetworkData() = rn;
               // cell has divided and transformed, then proceed to check if it can do other things
               return true;
             }
