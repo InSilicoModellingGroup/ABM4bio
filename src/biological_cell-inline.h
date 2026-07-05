@@ -157,9 +157,10 @@ void bdm::BiologicalCell::RunBiochemics()
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
+  //
   // ensure cell is well within the simulation domain!
-  if (! check_agent_position_in_domain(minCOORD, maxCOORD, xyz, tol))
-    return;
+  if (check_agent_position_in_domain(minCOORD, maxCOORD, xyz, tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -267,6 +268,7 @@ void bdm::BiologicalCell::RunBiochemics()
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   //...end of cell biochemics
 }
 // -----------------------------------------------------------------------------
@@ -843,9 +845,10 @@ bool bdm::BiologicalCell::CheckApoptosis()
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
+  //
   // ensure cell is well within the simulation domain!
-  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    return false;
+  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -902,6 +905,7 @@ bool bdm::BiologicalCell::CheckApoptosis()
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
@@ -1081,6 +1085,7 @@ bool bdm::BiologicalCell::CheckMigration()
           // chemotactic cell motion
           const std::vector<std::string>& substances =
             this->params()->get<std::vector<std::string>>("substances");
+          //
           // ensure cell is well within the simulation domain!
           if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
             // iterate for all substances
@@ -1226,9 +1231,10 @@ bool bdm::BiologicalCell::CheckTransformation()
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
+  //
   // ensure cell is well within the simulation domain!
-  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    return false;
+  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -1327,6 +1333,7 @@ bool bdm::BiologicalCell::CheckTransformation()
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
@@ -1448,9 +1455,6 @@ bool bdm::BiologicalCell::CheckPolarization()
   if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_polarize/probability"))
     return false;
   //
-  const std::vector<std::string>& substances =
-    this->params()->get<std::vector<std::string>>("substances");
-  //
   const double principal_min = this->params()->get<double>(CP_name+"/principal/min"),
                principal_max = this->params()->get<double>(CP_name+"/principal/max");
   const std::vector<int> perm =
@@ -1520,9 +1524,12 @@ bool bdm::BiologicalCell::CheckPolarization()
         }
     }
   //
+  const std::vector<std::string>& substances =
+    this->params()->get<std::vector<std::string>>("substances");
+  //
   // ensure cell is well within the simulation domain!
-  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    return false;
+  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances if cell can
   // re-orient / polarize
   for ( std::vector<std::string>::const_iterator
@@ -1579,6 +1586,7 @@ bool bdm::BiologicalCell::CheckPolarization()
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // cell has not been through any polarization
   return false;
   //...end of cell polarization
@@ -1629,8 +1637,10 @@ bool bdm::BiologicalCell::CheckProtrusion()
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
+  //
   // ensure cell is well within the simulation domain!
   if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -1649,6 +1659,8 @@ bool bdm::BiologicalCell::CheckProtrusion()
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  //
   // check if any biochemical stimulus leads towards cell protrusion generation
   if ( ! stimulate ) return false;
   //
@@ -2003,8 +2015,10 @@ bool bdm::BiologicalCell::CheckGrowth()
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
+  //
   // ensure cell is well within the simulation domain!
   if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -2065,6 +2079,7 @@ bool bdm::BiologicalCell::CheckGrowth()
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
@@ -2163,9 +2178,8 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
     this->params()->get<std::vector<std::string>>("substances");
   //
   // ensure cell is well within the simulation domain!
-  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    return false;
-  //
+  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances if cell can
   // transform and then divide (symmetrically)
   for ( std::vector<std::string>::const_iterator
@@ -2262,6 +2276,7 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
@@ -2423,8 +2438,8 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
     this->params()->get<std::vector<std::string>>("substances");
   //
   // ensure cell is well within the simulation domain!
-  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    return false;
+  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances if cell can
   // divide and then transform
   for ( std::vector<std::string>::const_iterator
@@ -2517,6 +2532,7 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // cell has not been through any division
   return false;
   //...end of cell division
@@ -2649,9 +2665,8 @@ bool bdm::BiologicalCell::CheckDivision() {
     this->params()->get<std::vector<std::string>>("substances");
   //
   // ensure cell is well within the simulation domain!
-  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
-    return false;
-  //
+  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all substances if cell can
   // divide (symmetrically)
   for ( std::vector<std::string>::const_iterator
@@ -2675,6 +2690,7 @@ bool bdm::BiologicalCell::CheckDivision() {
         }
       //...end of substances loop
     }
+  // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
