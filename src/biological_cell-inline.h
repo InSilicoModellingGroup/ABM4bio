@@ -902,6 +902,7 @@ bool bdm::BiologicalCell::CheckApoptosis()
               // since cell has apoptosed, then it must be removed from simulation
               return true;
             }
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -922,6 +923,7 @@ bool bdm::BiologicalCell::CheckApoptosis()
         {
           // since cell has apoptosed, then it must be removed from simulation
           return true;
+          // ...end of threshold check
         }
       //...end of species loop
     }
@@ -1041,7 +1043,6 @@ bool bdm::BiologicalCell::CheckMigration()
   // check if cell migrates actively due to some inherent random-walk or
   // a biochemical stimulus, i.e. chemotaxis
   if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/probability"))
-    /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
     {
       //
       const int index_time = this->params()->get<int>("index time");
@@ -1107,68 +1108,68 @@ bool bdm::BiologicalCell::CheckMigration()
                 //
                 if ( ( threshold > 0.0 && concentration > +threshold ) ||
                      ( threshold < 0.0 && concentration < -threshold ) )
-                {
-                  if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability"))
-                    {
-                      bdm::Double3 dvec = {0.0, 0.0, 0.0};
-                      int n_random_point = 0;
-                      for (int random_point=0; random_point<20; random_point++)
-                        {
-                          const double radius      = rg->Uniform(0.0,1.5) * this->GetDiameter(),
-                                       inclination = this->params()->get<bool>("simulation_domain_is_2D")
-                                                   ? 0.5*bdm::Math::kPi : rg->Uniform(0.0,bdm::Math::kPi),
-                                       azimuth     = rg->Uniform(0.0,2.0*bdm::Math::kPi);
-                          const double x = radius * sin(inclination) * cos(azimuth),
-                                       y = radius * sin(inclination) * sin(azimuth),
-                                       z = radius * cos(inclination);
-                          bdm::Double3 point = {x,y,z};
-                          point += this->GetPosition();
-                          // check spatial coordinates
-                          if (point[0]<minCOORD||point[1]<minCOORD||point[2]<minCOORD||
-                              point[0]>maxCOORD||point[1]>maxCOORD||point[2]>maxCOORD) continue;
-                          //
-                          bdm::Double3 gradS;
-                          dg->GetGradient(point, &gradS);
-                          //
-                          if (L2norm(gradS)<=1.0e-6) continue;
-                          //
-                          dvec += gradS;
-                          ++n_random_point; // increment this index
-                        }
-                      // average out the space vector
-                      if (n_random_point) dvec /= n_random_point;
-                      //
-                      if (this->params()->get<bool>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/normalize_gradient"))
-                        {
-                          auto m = L2norm(dvec);
-                          if (m>1.0e-6) dvec /= m;
-                        }
-                      // scale gradient vector accordingly
-                      dvec *= chemotaxis;
-                      //
-                      const double d_magn = L2norm(dvec);
-                      // check if distance covered is above a minimum, else ignore
-                      if (d_magn > this->params()->get<double>("migration_tolerance"))
-                        {
-                          // update the (cell) displacement vector
-                          this->active_displacement_ += dvec;
-                          // update this flag
-                          has_migrated = true;
-                          //
-                          // check if to allow moving any further or skip any potential migration
-                          if (! this->params()->get<bool>(CP_name+"/can_migrate/accumulate_path"))
-                            break;
-                        }
-                      // ...end of propability check
-                    }
-                }
+                  {
+                    if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability"))
+                      {
+                        bdm::Double3 dvec = {0.0, 0.0, 0.0};
+                        int n_random_point = 0;
+                        for (int random_point=0; random_point<20; random_point++)
+                          {
+                            const double radius      = rg->Uniform(0.0,1.5) * this->GetDiameter(),
+                                         inclination = this->params()->get<bool>("simulation_domain_is_2D")
+                                                     ? 0.5*bdm::Math::kPi : rg->Uniform(0.0,bdm::Math::kPi),
+                                         azimuth     = rg->Uniform(0.0,2.0*bdm::Math::kPi);
+                            const double x = radius * sin(inclination) * cos(azimuth),
+                                         y = radius * sin(inclination) * sin(azimuth),
+                                         z = radius * cos(inclination);
+                            bdm::Double3 point = {x,y,z};
+                            point += this->GetPosition();
+                            // check spatial coordinates
+                            if (point[0]<minCOORD||point[1]<minCOORD||point[2]<minCOORD||
+                                point[0]>maxCOORD||point[1]>maxCOORD||point[2]>maxCOORD) continue;
+                            //
+                            bdm::Double3 gradS;
+                            dg->GetGradient(point, &gradS);
+                            //
+                            if (L2norm(gradS)<=1.0e-6) continue;
+                            //
+                            dvec += gradS;
+                            ++n_random_point; // increment this index
+                          }
+                        // average out the space vector
+                        if (n_random_point) dvec /= n_random_point;
+                        //
+                        if (this->params()->get<bool>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/normalize_gradient"))
+                          {
+                            auto m = L2norm(dvec);
+                            if (m>1.0e-6) dvec /= m;
+                          }
+                        // scale gradient vector accordingly
+                        dvec *= chemotaxis;
+                        //
+                        const double d_magn = L2norm(dvec);
+                        // check if distance covered is above a minimum, else ignore
+                        if (d_magn > this->params()->get<double>("migration_tolerance"))
+                          {
+                            // update the (cell) displacement vector
+                            this->active_displacement_ += dvec;
+                            // update this flag
+                            has_migrated = true;
+                            //
+                            // check if to allow moving any further or skip any potential migration
+                            if (! this->params()->get<bool>(CP_name+"/can_migrate/accumulate_path"))
+                              break;
+                          }
+                        // ...end of propability check
+                      }
+                    // ...end of threshold check
+                  }
                 //...end of substances loop
               }
           //
         } //   --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
       //
     }
-    /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
   //
   // check if cell has migrated, if so then revise its spatial coordinates and trail
   if ( has_migrated )
@@ -1180,27 +1181,27 @@ bool bdm::BiologicalCell::CheckMigration()
   // check if cell has migrated, if so then revise the spatial coordinates
   // of the cell protrusions; however, check for current algorithmic limitations!!!
   if ( has_migrated && this->GetNumberOfProtrusions() )
-  // current implementation assumes that cell migration cannot be applied when
-  // a cell has produced protrusions that have created sprouts or/and branches
-  {
-    if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
-      ABORT_("an internal error occurred");
-
-    // iterate for all (existing) protrusions of this cell
-    for (int p=0; p<this->GetNumberOfProtrusions(); p++)
     {
-      auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
-      // only a cell with filodia can be displaced (together with its migrating cell)
-      if ( protrusion->IsTerminal() )
+      // current implementation assumes that cell migration cannot be applied when
+      // a cell has produced protrusions that have created sprouts or/and branches
+      if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
+        ABORT_("an internal error occurred");
+
+      // iterate for all (existing) protrusions of this cell
+      for (int p=0; p<this->GetNumberOfProtrusions(); p++)
         {
-          const bdm::Double3 xyz = protrusion->GetPosition();
-          protrusion->SetPosition(xyz+this->GetDisplacement());
+          auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
+          // only a cell with filodia can be displaced (together with its migrating cell)
+          if ( protrusion->IsTerminal() )
+            {
+              const bdm::Double3 xyz = protrusion->GetPosition();
+              protrusion->SetPosition(xyz+this->GetDisplacement());
+            }
+          else
+            ABORT_("an exception is caught");
         }
-      else
-        ABORT_("an exception is caught");
+      // completed the cell protrusion displacement task
     }
-    // completed the cell protrusion displacement task
-  }
   //
   return has_migrated;
   //...end of cell migration
@@ -1253,9 +1254,10 @@ bool bdm::BiologicalCell::CheckTransformation()
            ( threshold < 0.0 && concentration < -threshold ) )
         {
           if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_transform/"+BC_name+"/probability"))
-            // now check if cell age is within an appropriate time-window to allow its transformation
-            if ( this->GetAge() >= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_open" ) &&
-                 this->GetAge() <= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_close") )
+            {
+              // now check if cell age is within an appropriate time-window to allow its transformation
+              if ( this->GetAge() >= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_open" ) &&
+                   this->GetAge() <= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_close") )
                 {
                   const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/new_phenotype");
                   // firstly, the cell transforms
@@ -1328,8 +1330,8 @@ bool bdm::BiologicalCell::CheckTransformation()
                   // cell has transformed, then proceed to check if it can do other things
                   return true;
                 }
-            //
-          //
+            }
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -1420,6 +1422,7 @@ bool bdm::BiologicalCell::CheckTransformation()
             this->SetRegulatoryNetworkData() = rn;
           // cell has transformed, then proceed to check if it can do other things
           return true;
+          // ...end of threshold check
         }
       //...end of species loop
     }
@@ -1583,6 +1586,7 @@ bool bdm::BiologicalCell::CheckPolarization()
           this->polarize_ = n0Xn0_p0 + n1Xn1_p1 + n2Xn2_p2;
           // cell has polarized, then proceed to check if it can do other things
           return true;
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -1656,6 +1660,7 @@ bool bdm::BiologicalCell::CheckProtrusion()
            ( threshold < 0.0 && concentration < -threshold ) )
         {
           stimulate = true;
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -2076,6 +2081,7 @@ bool bdm::BiologicalCell::CheckGrowth()
             {
               volume_rate += (0.5*TMath::Pi())*diameter_rate*pow2(diameter);
             }
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -2098,6 +2104,7 @@ bool bdm::BiologicalCell::CheckGrowth()
             this->params()->get<double>(CP_name+"/can_grow/regulatory_network/"+RN_specie+"/diameter_rate");
           //
           volume_rate += (0.5*TMath::Pi())*diameter_rate*pow2(diameter);
+          // ...end of threshold check
         }
       //...end of species loop
     }
@@ -2273,6 +2280,7 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
               // cell has transformed and divided, then proceed to check if it can do other things
               return true;
             }
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -2365,6 +2373,7 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
           this->Divide(volume_ratio, axis);
           // cell has transformed and divided, then proceed to check if it can do other things
           return true;
+          // ...end of threshold check
         }
       //...end of species loop
     }
@@ -2529,6 +2538,7 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
               // cell has divided and transformed, then proceed to check if it can do other things
               return true;
             }
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -2687,6 +2697,7 @@ bool bdm::BiologicalCell::CheckDivision() {
           this->Divide(volume_ratio, axis);
           // cell has divided, then proceed to check if it can do other things
           return true;
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -2710,6 +2721,7 @@ bool bdm::BiologicalCell::CheckDivision() {
           this->Divide(volume_ratio, axis);
           // cell has divided, then proceed to check if it can do other things
           return true;
+          // ...end of threshold check
         }
       //...end of species loop
     }
