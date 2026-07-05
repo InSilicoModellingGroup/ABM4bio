@@ -135,6 +135,7 @@ public:
   Parameters* params() const { return params_; }
   //
   RegulatoryNetworkData& SetRegulatoryNetworkData () { return rn_; }
+  const RegulatoryNetworkData& GetRegulatoryNetworkData () const { return rn_; }
   //
   void RunRegulatoryNetwork();
   void RunBiochemics();
