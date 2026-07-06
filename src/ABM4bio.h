@@ -1587,9 +1587,8 @@ void init_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
-              // setup the regulatory network data
               if ( params.get<int>(CP_name+"/regulatory_network/number_of_species") )
-                cell->SetRegulatoryNetworkData() = rn;
+                cell->SetRegulatoryNetworkData() = rn; // copy regulatory network data
               // store this cell into BioDynaMo's resource manager
               rm->AddAgent(cell);
             }
@@ -1732,9 +1731,8 @@ void init_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
-              // setup the regulatory network data
               if ( params.get<int>(CP_name+"/regulatory_network/number_of_species") )
-                cell->SetRegulatoryNetworkData() = rn;
+                cell->SetRegulatoryNetworkData() = rn; // copy regulatory network data
               // store this cell into BioDynaMo's resource manager
               rm->AddAgent(cell);
             }

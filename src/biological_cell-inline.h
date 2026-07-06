@@ -1316,17 +1316,10 @@ bool bdm::BiologicalCell::CheckTransformation()
                   else
                     ABORT_("an exception is caught");
                   // setup the regulatory network data
-                  RegulatoryNetworkData rn;
-                  if (this->params()->have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
-                    {
-                      const std::string fn = this->params()->get<std::string>(CP_name+"/regulatory_network/from_file");
-                      this->params()->set<int>(CP_name+"/regulatory_network/number_of_species") =
-                        read_regulatory_network_data(fn, rn);
-                      this->params()->set<double>(CP_name+"/regulatory_network/time_step") = rn.time_step;
-                      this->params()->set<int>(CP_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
-                    }
-                  if ( this->params()->get<int>(CP_name+"/regulatory_network/number_of_species") )
-                    this->SetRegulatoryNetworkData() = rn;
+                  if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+                    read_regulatory_network_data(
+                      this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+                      this->SetRegulatoryNetworkData() );
                   // cell has transformed, then proceed to check if it can do other things
                   return true;
                 }
@@ -1409,17 +1402,10 @@ bool bdm::BiologicalCell::CheckTransformation()
           else
             ABORT_("an exception is caught");
           // setup the regulatory network data
-          RegulatoryNetworkData rn;
-          if (this->params()->have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
-            {
-              const std::string fn = this->params()->get<std::string>(CP_name+"/regulatory_network/from_file");
-              this->params()->set<int>(CP_name+"/regulatory_network/number_of_species") =
-                read_regulatory_network_data(fn, rn);
-              this->params()->set<double>(CP_name+"/regulatory_network/time_step") = rn.time_step;
-              this->params()->set<int>(CP_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
-            }
-          if ( this->params()->get<int>(CP_name+"/regulatory_network/number_of_species") )
-            this->SetRegulatoryNetworkData() = rn;
+          if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+            read_regulatory_network_data(
+              this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+              this->SetRegulatoryNetworkData() );
           // cell has transformed, then proceed to check if it can do other things
           return true;
           // ...end of threshold check
@@ -2264,17 +2250,10 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
               else
                 ABORT_("an exception is caught");
               // setup the regulatory network data
-              RegulatoryNetworkData rn;
-              if (this->params()->have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
-                {
-                  const std::string fn = this->params()->get<std::string>(CP_name+"/regulatory_network/from_file");
-                  this->params()->set<int>(CP_name+"/regulatory_network/number_of_species") =
-                    read_regulatory_network_data(fn, rn);
-                  this->params()->set<double>(CP_name+"/regulatory_network/time_step") = rn.time_step;
-                  this->params()->set<int>(CP_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
-                }
-              if ( this->params()->get<int>(CP_name+"/regulatory_network/number_of_species") )
-                this->SetRegulatoryNetworkData() = rn;
+              if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+                read_regulatory_network_data(
+                  this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+                  this->SetRegulatoryNetworkData() );
               // secondly, the cell divides
               this->Divide(volume_ratio, axis);
               // cell has transformed and divided, then proceed to check if it can do other things
@@ -2358,17 +2337,10 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
           else
             ABORT_("an exception is caught");
           // setup the regulatory network data
-          RegulatoryNetworkData rn;
-          if (this->params()->have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
-            {
-              const std::string fn = this->params()->get<std::string>(CP_name+"/regulatory_network/from_file");
-              this->params()->set<int>(CP_name+"/regulatory_network/number_of_species") =
-                read_regulatory_network_data(fn, rn);
-              this->params()->set<double>(CP_name+"/regulatory_network/time_step") = rn.time_step;
-              this->params()->set<int>(CP_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
-            }
-          if ( this->params()->get<int>(CP_name+"/regulatory_network/number_of_species") )
-            this->SetRegulatoryNetworkData() = rn;
+          if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+            read_regulatory_network_data(
+              this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+              this->SetRegulatoryNetworkData() );
           // secondly, the cell divides
           this->Divide(volume_ratio, axis);
           // cell has transformed and divided, then proceed to check if it can do other things
@@ -2524,17 +2496,10 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
               else
                 ABORT_("an exception is caught");
               // setup the regulatory network data
-              RegulatoryNetworkData rn;
               if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
-                {
-                  const std::string fn = this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file");
-                  this->params()->set<int>(CP_new_name+"/regulatory_network/number_of_species") =
-                    read_regulatory_network_data(fn, rn);
-                  this->params()->set<double>(CP_new_name+"/regulatory_network/time_step") = rn.time_step;
-                  this->params()->set<int>(CP_new_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
-                }
-              if ( this->params()->get<int>(CP_new_name+"/regulatory_network/number_of_species") )
-                this->SetRegulatoryNetworkData() = rn;
+                read_regulatory_network_data(
+                  this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+                  this->SetRegulatoryNetworkData() );
               // cell has divided and transformed, then proceed to check if it can do other things
               return true;
             }
