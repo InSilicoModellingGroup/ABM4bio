@@ -46,3 +46,9 @@ examples/cell-matrix_interaction/input.csv
 # LibreOffice lock files
 .~lock.*
 *#
+
+# macOS Finder files
+.DS_Store
+
+# Local run logs
+cell_matrix_run.log
