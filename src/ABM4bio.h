@@ -1406,6 +1406,36 @@ void init_cells(bdm::Simulation& sim,
         if (!params.have_parameter<std::string>(mech_base + "/lattice_mesh_path"))
           ABORT_("model parameter \"" + mech_base + "/lattice_mesh_path\" must be provided");
 
+
+        // Reference probability that a cell migrates over the reference time interval.
+        // Example: 0.2 means 20% probability over reference_migration_time.
+        if (!params.have_parameter<double>(mech_base + "/reference_migration_probability"))
+            params.set<double>(mech_base + "/reference_migration_probability") = 0.2;
+
+        // Reference time interval in seconds.
+        // Example: 600 seconds = 10 minutes.
+        if (!params.have_parameter<double>(mech_base + "/reference_migration_time"))
+            params.set<double>(mech_base + "/reference_migration_time") = 600.0;
+        
+
+        double reference_migration_probability =
+          params.get<double>(mech_base + "/reference_migration_probability");
+
+        double reference_migration_time =
+            params.get<double>(mech_base + "/reference_migration_time");
+
+        double time_step = params.get<double>("time_step");
+
+        double mechanics_migration_probability =
+            1.0 - std::pow(
+                1.0 - reference_migration_probability,
+                time_step / reference_migration_time
+            );
+
+        // Store the calculated probability so the rest of the code can continue using the old name.
+        params.set<double>(mech_base + "/mechanics_migration_probability") =
+            mechanics_migration_probability;
+
         if (!params.have_parameter<double>(mech_base + "/mechanics_migration_probability"))
           params.set<double>(mech_base + "/mechanics_migration_probability") = 1.0;
 
