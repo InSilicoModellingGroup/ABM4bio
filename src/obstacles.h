@@ -27,68 +27,404 @@ public:
 };
 // -----------------------------------------------------------------------------
 class ObstacleScaffold : public Obstacle {
-public:
-  struct Segment {
-    bdm::Double3 vertex_0, vertex_1;
-    double length, radius;
+ public:
+  // ---------------------------------------------------------------------------
+  // Persistent scaffold node
+  // ---------------------------------------------------------------------------
+
+  struct ScaffoldNode {
+    int id;
+    bdm::Double3 position;
+    double radius;
+    std::vector<int> connected_node_ids;
   };
-//
-public:
-  ObstacleScaffold() {}
-  ~ObstacleScaffold() {}
+
+  // ---------------------------------------------------------------------------
+  // Geometric segment representation
   //
-  inline
-  void init(const std::string& t, const std::string& fname) {
+  // This keeps the existing interface used by biological_cell-inline.h while
+  // also retaining the persistent node and element identifiers.
+  // ---------------------------------------------------------------------------
+
+  struct Segment {
+    int element_id;
+    int node_id_1;
+    int node_id_2;
+
+    bdm::Double3 vertex_0;
+    bdm::Double3 vertex_1;
+
+    double length;
+    double radius;
+  };
+
+ public:
+  ObstacleScaffold() {}
+
+  ~ObstacleScaffold() {}
+
+  // ---------------------------------------------------------------------------
+  // Read scaffold file
+  //
+  // Supported formats
+  // -----------------
+  //
+  // Version 1.0:
+  //
+  //   1.0
+  //   <number_of_nodes>
+  //   <x> <y> <z> <radius>
+  //   ...
+  //   <number_of_elements>
+  //   <zero_based_node_index_1> <zero_based_node_index_2>
+  //
+  // Version 2.0:
+  //
+  //   2.0
+  //   <number_of_nodes>
+  //   <node_id> <x> <y> <z> <radius>
+  //   ...
+  //   <number_of_elements>
+  //   <element_id> <node_id_1> <node_id_2>
+  // ---------------------------------------------------------------------------
+
+  inline void init(const std::string& t, const std::string& fname) {
     this->type = t;
-    // now open the file to process
+
+    // -------------------------------------------------------------------------
+    // Step 1: Open scaffold file
+    // -------------------------------------------------------------------------
+
     std::ifstream fin(fname);
-    ASSERT_(fin,"could not open file "+fname);
-    // enforce to clear memory
+
+    ASSERT_(fin, "could not open scaffold file " + fname);
+
+    // -------------------------------------------------------------------------
+    // Step 2: Clear previously stored scaffold data
+    // -------------------------------------------------------------------------
+
     segment.clear();
-    //
-    std::vector<bdm::Double3> vertices;
-    std::vector<double> radii;
-    // version of the data file
-    double v;
-    fin >> v;
-    // number of points
-    unsigned int n_pnt;
-    fin >> n_pnt;
-    vertices.resize(n_pnt);
-    radii.resize(n_pnt);
-    for (unsigned int i=0; i<n_pnt; i++)
-      {
-        double x, y, z, r(0.0);
-        fin >> x >> y >> z;
-        if      (1.0==v) fin >> r;
-        else if (1.1==v) r = 0.0;
-        else ABORT_("data version of file "+fname+" is wrong");
-        vertices[i] = {x,y,z};
-        radii[i] = r;
+    nodes_by_id.clear();
+    segment_index_by_id.clear();
+
+    // -------------------------------------------------------------------------
+    // Step 3: Read and validate file version
+    // -------------------------------------------------------------------------
+
+    double version = 0.0;
+
+    fin >> version;
+
+    ASSERT_(fin,
+            "could not read scaffold file version from " + fname);
+
+    if (version != 1.0 && version != 2.0) {
+      ABORT_(
+        "unsupported scaffold file version "
+        + std::to_string(version)
+        + " in " + fname
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: Read scaffold nodes
+    // -------------------------------------------------------------------------
+
+    unsigned int number_of_nodes = 0;
+
+    fin >> number_of_nodes;
+
+    ASSERT_(fin,
+            "could not read number of scaffold nodes from " + fname);
+
+    ASSERT_(number_of_nodes > 0,
+            "scaffold file contains no nodes: " + fname);
+
+    for (unsigned int i = 0; i < number_of_nodes; ++i) {
+      int node_id = 0;
+
+      double x = 0.0;
+      double y = 0.0;
+      double z = 0.0;
+      double radius = 0.0;
+
+      if (version == 1.0) {
+        /*
+         * Legacy version 1.0:
+         *
+         * Node IDs are not stored explicitly. Assign one-based persistent IDs
+         * using the node row order.
+         */
+
+        node_id = static_cast<int>(i) + 1;
+
+        fin >> x >> y >> z >> radius;
+
+      } else {
+        /*
+         * Version 2.0:
+         *
+         * Read the persistent one-based node ID directly from the file.
+         */
+
+        fin >> node_id >> x >> y >> z >> radius;
       }
-    // number of segments
-    unsigned int n_segm;
-    fin >> n_segm;
-    segment.resize(n_segm);
-    for (unsigned int i=0; i<n_segm; i++)
-      {
-        int n0, n1;
-        double r(0.0);
-        fin >> n0 >> n1;
-        if      (1.0==v) r = 0.5*(radii[n0]+radii[n1]);
-        else if (1.1==v) fin >> r;
-        else ABORT_("data version of file "+fname+" is wrong");
-        segment[i].vertex_0 = vertices[n0];
-        segment[i].vertex_1 = vertices[n1];
-        segment[i].length = L2norm(vertices[n1]-vertices[n0]);
-        segment[i].radius = r;
+
+      ASSERT_(
+        fin,
+        "failed reading scaffold node row "
+        + std::to_string(i + 1)
+        + " from " + fname
+      );
+
+      ASSERT_(
+        node_id > 0,
+        "scaffold node IDs must be positive in " + fname
+      );
+
+      ASSERT_(
+        radius >= 0.0,
+        "scaffold node radius cannot be negative for node ID "
+        + std::to_string(node_id)
+        + " in " + fname
+      );
+
+      ASSERT_(
+        nodes_by_id.find(node_id) == nodes_by_id.end(),
+        "duplicate scaffold node ID "
+        + std::to_string(node_id)
+        + " in " + fname
+      );
+
+      ScaffoldNode node;
+
+      node.id = node_id;
+      node.position = bdm::Double3{x, y, z};
+      node.radius = radius;
+      node.connected_node_ids.clear();
+
+      nodes_by_id.emplace(node_id, node);
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 5: Read scaffold elements
+    // -------------------------------------------------------------------------
+
+    unsigned int number_of_elements = 0;
+
+    fin >> number_of_elements;
+
+    ASSERT_(fin,
+            "could not read number of scaffold elements from " + fname);
+
+    segment.reserve(number_of_elements);
+
+    for (unsigned int i = 0; i < number_of_elements; ++i) {
+      int element_id = 0;
+      int node_id_1 = 0;
+      int node_id_2 = 0;
+
+      if (version == 1.0) {
+        /*
+         * Legacy version 1.0:
+         *
+         * Connectivity is stored using zero-based node indices.
+         * Convert these indices to the one-based persistent IDs assigned above.
+         */
+
+        int legacy_node_index_1 = -1;
+        int legacy_node_index_2 = -1;
+
+        fin >> legacy_node_index_1 >> legacy_node_index_2;
+
+        element_id = static_cast<int>(i) + 1;
+
+        node_id_1 = legacy_node_index_1 + 1;
+        node_id_2 = legacy_node_index_2 + 1;
+
+      } else {
+        /*
+         * Version 2.0:
+         *
+         * Read the persistent element ID and persistent node IDs directly.
+         */
+
+        fin >> element_id >> node_id_1 >> node_id_2;
       }
-    // now close the file stream
+
+      ASSERT_(
+        fin,
+        "failed reading scaffold element row "
+        + std::to_string(i + 1)
+        + " from " + fname
+      );
+
+      ASSERT_(
+        element_id > 0,
+        "scaffold element IDs must be positive in " + fname
+      );
+
+      ASSERT_(
+        segment_index_by_id.find(element_id) == segment_index_by_id.end(),
+        "duplicate scaffold element ID "
+        + std::to_string(element_id)
+        + " in " + fname
+      );
+
+      ASSERT_(
+        node_id_1 > 0 && node_id_2 > 0,
+        "scaffold element "
+        + std::to_string(element_id)
+        + " contains an invalid node ID in " + fname
+      );
+
+      ASSERT_(
+        node_id_1 != node_id_2,
+        "scaffold element "
+        + std::to_string(element_id)
+        + " connects node "
+        + std::to_string(node_id_1)
+        + " to itself in " + fname
+      );
+
+      auto node_1_it = nodes_by_id.find(node_id_1);
+      auto node_2_it = nodes_by_id.find(node_id_2);
+
+      ASSERT_(
+        node_1_it != nodes_by_id.end(),
+        "scaffold element "
+        + std::to_string(element_id)
+        + " references missing node ID "
+        + std::to_string(node_id_1)
+        + " in " + fname
+      );
+
+      ASSERT_(
+        node_2_it != nodes_by_id.end(),
+        "scaffold element "
+        + std::to_string(element_id)
+        + " references missing node ID "
+        + std::to_string(node_id_2)
+        + " in " + fname
+      );
+
+      const bdm::Double3& position_1 = node_1_it->second.position;
+      const bdm::Double3& position_2 = node_2_it->second.position;
+
+      const double element_length =
+        L2norm(position_2 - position_1);
+
+      ASSERT_(
+        element_length > 0.0,
+        "scaffold element "
+        + std::to_string(element_id)
+        + " has zero length in " + fname
+      );
+
+      const double element_radius =
+        0.5 * (
+          node_1_it->second.radius
+          + node_2_it->second.radius
+        );
+
+      // -----------------------------------------------------------------------
+      // Step 5a: Store node connectivity
+      // -----------------------------------------------------------------------
+
+      node_1_it->second.connected_node_ids.push_back(node_id_2);
+      node_2_it->second.connected_node_ids.push_back(node_id_1);
+
+      // -----------------------------------------------------------------------
+      // Step 5b: Preserve the existing segment representation
+      // -----------------------------------------------------------------------
+
+      Segment geometric_segment;
+
+      geometric_segment.element_id = element_id;
+      geometric_segment.node_id_1 = node_id_1;
+      geometric_segment.node_id_2 = node_id_2;
+
+      geometric_segment.vertex_0 = position_1;
+      geometric_segment.vertex_1 = position_2;
+
+      geometric_segment.length = element_length;
+      geometric_segment.radius = element_radius;
+
+      // Store the vector position before adding the segment.
+      const std::size_t segment_index = segment.size();
+
+      segment.push_back(geometric_segment);
+
+      segment_index_by_id.emplace(element_id, segment_index);
+    }
+
     fin.close();
   }
-  //
-public:
-  // list of all segments
+
+  // ---------------------------------------------------------------------------
+  // Persistent-ID lookup functions
+  // ---------------------------------------------------------------------------
+
+  inline bool HasNode(const int node_id) const {
+    return nodes_by_id.find(node_id) != nodes_by_id.end();
+  }
+
+  inline const ScaffoldNode& GetNode(const int node_id) const {
+    auto node_it = nodes_by_id.find(node_id);
+
+    ASSERT_(
+      node_it != nodes_by_id.end(),
+      "could not find scaffold node ID "
+      + std::to_string(node_id)
+    );
+
+    return node_it->second;
+  }
+
+  inline const bdm::Double3& GetNodePosition(const int node_id) const {
+    return GetNode(node_id).position;
+  }
+
+  inline double GetNodeRadius(const int node_id) const {
+    return GetNode(node_id).radius;
+  }
+
+  inline const std::vector<int>& GetConnectedNodeIds(
+      const int node_id) const {
+    return GetNode(node_id).connected_node_ids;
+  }
+
+  inline bool HasSegment(const int element_id) const {
+  return segment_index_by_id.find(element_id)
+         != segment_index_by_id.end();
+  }
+
+  inline const Segment& GetSegment(const int element_id) const {
+    auto index_it = segment_index_by_id.find(element_id);
+
+    ASSERT_(
+      index_it != segment_index_by_id.end(),
+      "could not find scaffold element ID "
+      + std::to_string(element_id)
+    );
+
+    ASSERT_(
+      index_it->second < segment.size(),
+      "stored segment index is out of range for element ID "
+      + std::to_string(element_id)
+    );
+
+    return segment[index_it->second];
+  }
+
+ public:
+  // Scaffold nodes stored by persistent one-based node ID.
+  std::unordered_map<int, ScaffoldNode> nodes_by_id;
+
+  // Persistent element ID mapped to its position in the segment vector.
+  std::unordered_map<int, std::size_t> segment_index_by_id;
+
+  // Existing segment representation used by obstacle calculations.
   std::vector<ObstacleScaffold::Segment> segment;
 };
 // -----------------------------------------------------------------------------

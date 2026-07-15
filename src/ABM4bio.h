@@ -684,6 +684,26 @@ void reinit_obstacles(bdm::Simulation& sim,
     any_cell_matrix_mechanics_enabled(cells);
 
   // ---------------------------------------------------------------------------
+  // Step 2a: Prepare temporary scaffold storage
+  //
+  // New scaffold files are loaded and validated here first. The active scaffold
+  // vector is replaced only after all scaffold obstacles have been processed
+  // successfully.
+  // ---------------------------------------------------------------------------
+
+  std::vector<ObstacleScaffold> updated_scaffolds;
+
+  updated_scaffolds.reserve(obstacles.scaffold.size());
+
+  // Tracks the corresponding scaffold in the existing active scaffold vector.
+  // This is needed when a non-mechanics scaffold has no update for this timestep
+  // and should therefore retain its previous geometry.
+  std::size_t existing_scaffold_index = 0;
+
+  bool found_scaffold_obstacle = false;
+
+
+  // ---------------------------------------------------------------------------
   // Step 3: Loop over all simulation obstacles
   // ---------------------------------------------------------------------------
 
@@ -702,66 +722,120 @@ void reinit_obstacles(bdm::Simulation& sim,
 
     if ("scaffold" == pattern) {
 
+      found_scaffold_obstacle = true;
+
       std::string fn;
+      bool load_new_scaffold = false;
+
+      // -------------------------------------------------------------------------
+      // Coupled cell-matrix mechanics mode
+      // -------------------------------------------------------------------------
 
       if (mechanics_enabled) {
         /*
-         * Coupled mechanics mode:
-         *
-         * The FEM solver writes the deformed lattice into timestep-labelled
-         * folders. The ABM time index is one step ahead of the FEM lattice
-         * index, therefore ABM time `time` loads FEM folder `step_<time-1>`.
-         */
+        * The FEM solver writes the current deformed lattice into:
+        *
+        *   <output_directory>/FEM/step_<time-1>/lattice.1d
+        */
 
         std::ostringstream filename;
 
         filename << params.get<std::string>("output_directory")
-                 << "/FEM/step_"
-                 << time - 1
-                 << "/lattice.1d";
+                << "/FEM/step_"
+                << time - 1
+                << "/lattice.1d";
 
         fn = filename.str();
 
-        // Abort immediately if the expected FEM lattice file is missing.
+        // Confirm that the expected FEM scaffold file exists before parsing it.
         std::ifstream test_file(fn);
 
-        ASSERT_(test_file.good(),
-                "could not find expected FEM scaffold file: " + fn);
+        ASSERT_(
+          test_file.good(),
+          "could not find expected FEM scaffold file: " + fn
+        );
 
         test_file.close();
 
-      } else {
-        /*
-         * Non-mechanics mode:
-         *
-         * Preserve the original parameter-based scaffold loading behaviour.
-         */
+        load_new_scaffold = true;
+      }
 
+      // -------------------------------------------------------------------------
+      // Non-mechanics scaffold-update mode
+      // -------------------------------------------------------------------------
+
+      else {
         const std::string scaffold_param =
           "simulation_obstacle/" + oid + "/pattern/scaffold/" + T;
 
-        if (!params.have_parameter<std::string>(scaffold_param)) {
-          continue;
+        if (params.have_parameter<std::string>(scaffold_param)) {
+          fn = params.get<std::string>(scaffold_param);
+          load_new_scaffold = true;
         }
-
-        fn = params.get<std::string>(scaffold_param);
       }
 
-      // Load the scaffold obstacle.
-      ObstacleScaffold obs;
-      obs.init(pattern, fn);
+      // -------------------------------------------------------------------------
+      // No new scaffold was supplied
+      //
+      // In non-mechanics mode, preserve the previous active scaffold for this
+      // obstacle when no time-specific replacement was defined.
+      // -------------------------------------------------------------------------
 
-      // Preserve original behaviour: append rather than clear and replace.
-      obstacles.scaffold.push_back(obs);
+      if (!load_new_scaffold) {
 
-      // Save a copy of the scaffold file that was just processed.
-      const std::string cmd =
-        "cp " + fn + "  "
-        + params.get<std::string>("output_directory")
-        + "/in/simulation_obstacle." + oid + ".scaffold." + T;
+        ASSERT_(
+          existing_scaffold_index < obstacles.scaffold.size(),
+          "could not preserve scaffold obstacle "
+          + oid
+          + " because no existing active scaffold was found"
+        );
 
-      ASSERT_(0 == std::system(cmd.c_str()),
-              "could not save a copy of a scaffold data file");
+        updated_scaffolds.push_back(
+          obstacles.scaffold[existing_scaffold_index]
+        );
+
+        ++existing_scaffold_index;
+
+        continue;
+      }
+
+      // -------------------------------------------------------------------------
+      // Load the replacement scaffold into a temporary object
+      //
+      // ObstacleScaffold::init() performs the main file-format, node-ID,
+      // connectivity and geometry validation.
+      // -------------------------------------------------------------------------
+
+      ObstacleScaffold new_scaffold;
+
+      new_scaffold.init(pattern, fn);
+
+      // -------------------------------------------------------------------------
+      // Additional validation of the completed scaffold containers
+      // -------------------------------------------------------------------------
+
+      ASSERT_(
+        !new_scaffold.nodes_by_id.empty(),
+        "replacement scaffold contains no nodes: " + fn
+      );
+
+      ASSERT_(
+        !new_scaffold.segment.empty(),
+        "replacement scaffold contains no segments: " + fn
+      );
+
+      ASSERT_(
+        new_scaffold.segment_index_by_id.size()
+          == new_scaffold.segment.size(),
+        "replacement scaffold segment lookup does not match the segment count: "
+        + fn
+      );
+
+      // Store the validated scaffold in the temporary replacement vector.
+      updated_scaffolds.push_back(new_scaffold);
+
+      ++existing_scaffold_index;
+
     }
 
     // -------------------------------------------------------------------------
@@ -818,6 +892,25 @@ void reinit_obstacles(bdm::Simulation& sim,
       ABORT_("model parameter \"" + pattern + "\" is initialized wrong");
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Step 4: Replace the active scaffold collection
+  //
+  // Nothing in obstacles.scaffold is modified until every new scaffold has been
+  // read and validated successfully.
+  // ---------------------------------------------------------------------------
+
+  if (found_scaffold_obstacle) {
+
+    ASSERT_(
+      !updated_scaffolds.empty(),
+      "scaffold obstacles were configured but no active scaffolds were prepared"
+    );
+
+    obstacles.scaffold.swap(updated_scaffolds);
+
+  }
+
 }
 // =============================================================================
 inline
