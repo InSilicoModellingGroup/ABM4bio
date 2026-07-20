@@ -27,12 +27,12 @@
 #include "./biology4vessel-inline.h"
 #include "./obstacles.h"
 #include "./io_flux.h"
+#include "./cell_matrix_interaction.h"
 
 // =============================================================================
 // BioDynaMo model parameters
 static
 Parameters params;
-#include "./cell_matrix_interaction.h"
 static
 std::vector<bdm::Double3> all_agents;
 static
