@@ -100,67 +100,215 @@ public:
   //
   void SetCanMigrate(bool migrates) { can_migrate_ = migrates; }
   bool GetCanMigrate() const { return can_migrate_; }
-  // Define information for attachment points (ids, xyz, stiffness(kecm/k) )
-  void SetAttachmentPoints(const std::vector<bdm::Double3>& pts) {
-    if (!attachment_k_.empty()) {
-      ASSERT_(pts.size() == attachment_k_.size(),
-              "Attachment points size does not match attachment stiffness size");
-    }
-    attachment_points_ = pts;
-  }
-  const std::vector<bdm::Double3>& GetAttachmentPoints() const { return attachment_points_; }
-  const bdm::Double3& GetAttachmentPoint(size_t i) const { return attachment_points_[i]; }
-  void ClearAttachmentPoints() { attachment_points_.clear(); }
-  //
-  void SetAttachmentStiffness(const std::vector<double>& k) {
-    if (!attachment_points_.empty()) {
-      ASSERT_(k.size() == attachment_points_.size(),
-              "Attachment stiffness size does not match attachment points size");
-    }
-    attachment_k_ = k;
-  }
-  const std::vector<double>& GetAttachmentStiffness() const { return attachment_k_; }
-  double GetAttachmentStiffness(size_t i) const { return attachment_k_[i]; }
-  size_t GetNumberOfAttachments() const { return attachment_k_.size(); }
-  void ClearAttachmentStiffness() { attachment_k_.clear(); }
-  //
-  bool HasValidMechanicsAttachments() const {
-  if (attachment_node_ids_.empty()) return false;
-  if (attachment_points_.empty()) return false;
-  if (attachment_k_.empty()) return false;
   
-  if (attachment_node_ids_.size() != attachment_points_.size()) return false;
-  if (attachment_node_ids_.size() != attachment_k_.size()) return false;
+  // =============================================================================
+  // Cell-matrix mechanics: persistent attachment record
+  // =============================================================================
 
-  return true;
+  struct AttachmentRecord {
+    // Persistent one-based scaffold/FEM node identifier.
+    int node_id = -1;
+
+    // Current attachment coordinate on the deformed scaffold.
+    bdm::Double3 position = {0.0, 0.0, 0.0};
+
+    // Most recently calculated local scaffold stiffness, k_ecm.
+    double k_ecm = 0.0;
+
+    // True only after k_ecm has been calculated by the FEM.
+    bool has_valid_k_ecm = false;
+
+    // True when the attachment was formed by the ABM after the previous FEM step.
+    bool newly_formed = false;
+  };
+
+  // =============================================================================
+  // Cell-matrix mechanics: attachment-state queries
+  // =============================================================================
+
+  std::size_t GetNumberOfAttachments() const {
+    /*
+    * Function goal
+    * -------------
+    * Return the number of persistent attachment records stored by the cell.
+    */
+
+    return attachment_records_.size();
   }
+
+
   bool HasAttachments() const {
-    return !attachment_k_.empty() && !attachment_points_.empty();
+    /*
+    * Function goal
+    * -------------
+    * Return true when the cell has at least one persistent attachment record.
+    *
+    * A valid k_ecm value is not required because newly formed attachments have
+    * not yet been processed by the FEM.
+    */
+
+    return !attachment_records_.empty();
   }
-  void SetAttachmentNodeIds(const std::vector<int>& node_ids) {
-    if (!attachment_points_.empty()) {
+
+  
+  
+  // -----------------------------------------------------------------------------
+  // Clear all attachment data
+  // -----------------------------------------------------------------------------
+
+  void ClearAttachments() {
+  /*
+   * Function goal
+   * -------------
+   * Remove all persistent attachments from this cell.
+   */
+
+  attachment_records_.clear();
+}
+
+  // =============================================================================
+  // Cell-matrix mechanics: persistent attachment-record interface
+  // =============================================================================
+
+  // -----------------------------------------------------------------------------
+  // Store attachment records
+  // -----------------------------------------------------------------------------
+
+  void SetAttachmentRecords(
+      const std::vector<AttachmentRecord>& records) {
+    /*
+    * Function goal
+    * -------------
+    * Store the complete persistent attachment state for this cell.
+    *
+    * Each record keeps the scaffold node ID, attachment coordinate and local
+    * stiffness together, preventing the attachment data from becoming
+    * misaligned.
+    */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the records
+    // -------------------------------------------------------------------------
+
+    for (std::size_t i = 0; i < records.size(); ++i) {
       ASSERT_(
-          node_ids.size() == attachment_points_.size(),
-          "Attachment node IDs size does not match attachment points size"
+        records[i].node_id > 0,
+        "AttachmentRecord contains a non-positive scaffold node ID"
       );
+
+      // A cell must not attach to the same scaffold node more than once.
+      for (std::size_t j = i + 1; j < records.size(); ++j) {
+        ASSERT_(
+          records[i].node_id != records[j].node_id,
+          "AttachmentRecord contains duplicate scaffold node ID "
+          + std::to_string(records[i].node_id)
+        );
+      }
     }
-    if (!attachment_k_.empty()) {
-      ASSERT_(
-          node_ids.size() == attachment_k_.size(),
-          "Attachment node IDs size does not match attachment stiffness size"
-      );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Replace the current attachment state
+    // -------------------------------------------------------------------------
+
+    attachment_records_ = records;
+  }
+
+  // -----------------------------------------------------------------------------
+  // Retrieve attachment records
+  // -----------------------------------------------------------------------------
+
+  const std::vector<AttachmentRecord>& GetAttachmentRecords() const {
+    return attachment_records_;
+  }
+
+  const AttachmentRecord& GetAttachmentRecord(
+      const std::size_t index) const {
+    /*
+    * Function goal
+    * -------------
+    * Retrieve one attachment record using its position in the cell's
+    * attachment-record vector.
+    */
+
+    ASSERT_(
+      index < attachment_records_.size(),
+      "AttachmentRecord index is out of range"
+    );
+
+    return attachment_records_[index];
+  }
+
+  std::size_t GetNumberOfAttachmentRecords() const {
+    return attachment_records_.size();
+  }
+
+
+  // -----------------------------------------------------------------------------
+  // Attachment-record state queries
+  // -----------------------------------------------------------------------------
+
+  bool HasAttachmentRecords() const {
+    return !attachment_records_.empty();
+  }
+
+  bool HaveAllAttachmentRecordsValidKecm() const {
+    /*
+    * Function goal
+    * -------------
+    * Return true when every stored attachment record has a FEM-calculated
+    * k_ecm value.
+    */
+
+    if (attachment_records_.empty()) {
+      return false;
     }
-    attachment_node_ids_ = node_ids;
+
+    for (const auto& record : attachment_records_) {
+      if (!record.has_valid_k_ecm) {
+        return false;
+      }
+    }
+
+    return true;
   }
-  const std::vector<int>& GetAttachmentNodeIds() const {
-    return attachment_node_ids_;
+
+  bool HasValidAttachmentRecordsForMechanics() const {
+    /*
+    * Function goal
+    * -------------
+    * Return true when the cell has attachment records and every record contains
+    * the valid FEM-calculated mechanics data required for contraction.
+    */
+
+    // A cell without attachment records cannot contract.
+    if (attachment_records_.empty()) {
+      return false;
+    }
+
+    // Every attachment must have a valid persistent ID and k_ecm value.
+    for (const auto& record : attachment_records_) {
+      if (record.node_id <= 0) {
+        return false;
+      }
+
+      if (!record.has_valid_k_ecm) {
+        return false;
+      }
+    }
+
+    return true;
   }
-  int GetAttachmentNodeId(size_t i) const {
-    return attachment_node_ids_[i];
+
+
+
+  // -----------------------------------------------------------------------------
+  // Clear attachment records
+  // -----------------------------------------------------------------------------
+
+  void ClearAttachmentRecords() {
+    attachment_records_.clear();
   }
-  void ClearAttachmentNodeIds() {
-    attachment_node_ids_.clear();
-  }
+
   // Matrix stiffness perceived by a cell
   void SetKce(double k_ce) {
     k_ce_ = k_ce;
@@ -278,12 +426,17 @@ private:
   double k_ce_ = 0.0;
   double contractile_force_ = 0.0;
   bool moved_due_to_mechanics_ = false;
-  // FEM attachment node IDs
-  std::vector<int> attachment_node_ids_;
-  // Stiffness value kecm for each attachment point of this cell
-  std::vector<double> attachment_k_;
-  // Attachment points of a cell
-  std::vector<bdm::Double3> attachment_points_;
+  
+  // =============================================================================
+  // Cell-matrix mechanics: attachment data
+  // =============================================================================
+
+  // Persistent attachment records.
+  //
+  // Each record stores the one-based scaffold node ID, current attachment
+  // coordinate and associated local mechanics state.
+  std::vector<AttachmentRecord> attachment_records_;
+
 
 };
 // =============================================================================

@@ -960,11 +960,11 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
             this->GetCellState() == "contract";
 
           const bool has_valid_mechanics_attachments =
-            this->HasValidMechanicsAttachments();
+            this->HasValidAttachmentRecordsForMechanics();
 
           const bool has_enough_contract_attachments =
             has_valid_mechanics_attachments &&
-            this->GetAttachmentNodeIds().size() >= 2;
+            this->GetNumberOfAttachmentRecords() >= 2;
 
           double mechanics_migration_probability = 1.0;
 
@@ -991,63 +991,50 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
               mechanics_probability_allows_migration)
           {
             
+            /*
+            * Read the complete attachment state from persistent records.
+            *
+            * A record keeps the node ID, coordinate and k_ecm value together, removing
+            * the possibility of the parallel attachment vectors becoming misaligned.
+            */
 
-            const std::vector<double> k_vals = this->GetAttachmentStiffness();
-            const std::vector<bdm::Double3> pts = this->GetAttachmentPoints();
-            const std::vector<int> node_ids = this->GetAttachmentNodeIds();
+            const auto& attachment_records =
+              this->GetAttachmentRecords();
 
-            if (k_vals.size() != pts.size() || k_vals.size() != node_ids.size()) {
+            ASSERT_(
+              attachment_records.size() >= 2,
+              "Mechanics migration requires at least two attachment records"
+            );
 
-              const auto uid = this->GetUid();
+            for (const auto& record : attachment_records) {
+              ASSERT_(
+                record.node_id > 0,
+                "Mechanics migration encountered a non-positive attachment node ID"
+              );
 
-              std::cout << "\n[ATTACHMENT SIZE MISMATCH]\n";
-              std::cout << "UID: " << uid.GetIndex() << "\n";
-
-              std::cout << "k_vals.size()  = " << k_vals.size() << "\n";
-              std::cout << "pts.size()     = " << pts.size() << "\n";
-              std::cout << "node_ids.size() = " << node_ids.size() << "\n";
-
-              std::cout << "k_vals = [";
-              for (size_t i = 0; i < k_vals.size(); ++i) {
-                std::cout << k_vals[i];
-                if (i + 1 < k_vals.size()) std::cout << ", ";
-              }
-              std::cout << "]\n";
-
-              std::cout << "node_ids = [";
-              for (size_t i = 0; i < node_ids.size(); ++i) {
-                std::cout << node_ids[i];
-                if (i + 1 < node_ids.size()) std::cout << ", ";
-              }
-              std::cout << "]\n";
-
-              std::cout << "pts = [";
-              for (size_t i = 0; i < pts.size(); ++i) {
-                std::cout << "("
-                          << pts[i][0] << ", "
-                          << pts[i][1] << ", "
-                          << pts[i][2] << ")";
-                if (i + 1 < pts.size()) std::cout << ", ";
-              }
-              std::cout << "]\n";
-
-              ASSERT_(k_vals.size() == pts.size(),
-                      "Attachment stiffness and attachment points size mismatch in CheckMigration()");
-
-              ASSERT_(k_vals.size() == node_ids.size(),
-                      "Attachment stiffness and attachment node IDs size mismatch in CheckMigration()");
+              ASSERT_(
+                record.has_valid_k_ecm,
+                "Mechanics migration encountered an attachment without valid k_ecm"
+              );
             }
+  
 
-            if (!k_vals.empty())
+            if (!attachment_records.empty())
             {
-              size_t best_idx = 0;
+              std::size_t best_idx = 0;
 
-              for (size_t a = 1; a < k_vals.size(); ++a)
+              for (std::size_t a = 1;
+                  a < attachment_records.size();
+                  ++a)
               {
-                if (k_vals[a] > k_vals[best_idx]) {
+                if (attachment_records[a].k_ecm >
+                    attachment_records[best_idx].k_ecm) {
                   best_idx = a;
                 }
               }
+
+              const auto& best_attachment =
+                attachment_records[best_idx];
 
               const double strut_radius =
                 this->params()->get<double>(mech_base + "/strut_radius");
@@ -1058,7 +1045,8 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
               const double stop_distance =
                 strut_radius + 0.5 * min_cell_diameter;
 
-              bdm::Double3 dvec = pts[best_idx] - this->GetPosition();
+              bdm::Double3 dvec =
+                best_attachment.position - this->GetPosition();
 
               const double d_magn = L2norm(dvec);
 
@@ -1077,7 +1065,8 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
 
                   if (uid.GetIndex() < 5) {
                     const auto pos = this->GetPosition();
-                    const auto target = pts[best_idx];
+                    const auto target = 
+                      best_attachment.position;
 
                     {
 
@@ -1086,8 +1075,8 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
                     std::cout << "[MECH MIGRATION] UID " << uid.GetIndex()
                               << " state=" << this->GetCellState()
                               << " best_attach=" << best_idx
-                              << " node_id=" << node_ids[best_idx]
-                              << " k=" << k_vals[best_idx]
+                              << " node_id=" << best_attachment.node_id
+                              << " k=" << best_attachment.k_ecm
                               << " probability=" << mechanics_migration_probability
                               << " dist_to_attach=" << d_magn
                               << " stop_dist=" << stop_distance
@@ -1142,21 +1131,14 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
 
               std::cout << "[MECH MIGRATION SKIPPED] UID " << uid.GetIndex()
                         << " state=" << this->GetCellState()
-                        << " valid_attachments=" << has_valid_mechanics_attachments
-                        << " n_node_ids=" << this->GetAttachmentNodeIds().size()
+                        << " valid_attachments=" 
+                        << has_valid_mechanics_attachments
+                        << " n_attachment_records="
+                        << this->GetNumberOfAttachmentRecords()
                         << " probability=" << mechanics_migration_probability
                         << "\n";
             }
           }
-              // bdm::Double3 dvec = pts[best_idx] - this->GetPosition();
-              // const double d_magn = L2norm(dvec);
-
-              // if (d_magn > this->params()->get<double>("migration_tolerance"))
-              // {
-              //   // move directly to the selected attachment point
-              //   this->active_displacement_ += dvec;
-              //   has_migrated = true;
-              // }
             
           
           // Brownian cell motion

@@ -110,7 +110,7 @@ class CellMatrixInteraction {
 
     inline
     std::string FormatAttachmentNodeIdsJsonLike(
-        const std::vector<int>& node_ids) const
+        const std::vector<bdm::BiologicalCell::AttachmentRecord>& records) const
     {
     
     /*
@@ -139,10 +139,15 @@ class CellMatrixInteraction {
 
     oss << "[";
 
-    for (std::size_t i = 0; i < node_ids.size(); ++i) {
-        oss << node_ids[i];
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        ASSERT_(
+        records[i].node_id > 0,
+        "Cannot export an attachment record with a non-positive node ID"
+        );
 
-        if (i + 1 < node_ids.size()) {
+        oss << records[i].node_id;
+
+        if (i + 1 < records.size()) {
         oss << ", ";
         }
     }
@@ -179,7 +184,7 @@ class CellMatrixInteraction {
     * The explicit internal cell-matrix status to be introduced will later --------EDIT THIS COMMENT WHEN RELEVANT----------------------------------------------
     * replace some of these temporary attachment-count-based decisions.
     */
-
+    
     // -------------------------------------------------------------------------
     // Step 1: Validate the supplied cell pointer
     // -------------------------------------------------------------------------
@@ -188,6 +193,16 @@ class CellMatrixInteraction {
         cell != nullptr,
         "DetermineFemExportAction received a null BiologicalCell pointer"
     );
+
+    // -------------------------------------------------------------------------
+    // Temporary Stage 7 validation: force a zero-FEM-interaction timestep
+    // -------------------------------------------------------------------------
+
+    const bool force_zero_fem_interaction_test = true;
+
+    if (force_zero_fem_interaction_test) {
+    return FemExportAction::kSkip;
+    }
 
     // -------------------------------------------------------------------------
     // Step 2: Exclude necrotic cells
@@ -232,14 +247,14 @@ class CellMatrixInteraction {
     }
 
     // -------------------------------------------------------------------------
-    // Step 5: Read the current attachment state
+    // Step 5: Read the persistent attachment-record state
     // -------------------------------------------------------------------------
 
     const std::size_t attachment_count =
-        cell->GetAttachmentNodeIds().size();
+    cell->GetNumberOfAttachmentRecords();
 
     const bool has_valid_mechanics_attachments =
-        cell->HasValidMechanicsAttachments();
+    cell->HasValidAttachmentRecordsForMechanics();
 
     // -------------------------------------------------------------------------
     // Step 6: Keep single-attachment cells entirely within the ABM
@@ -420,7 +435,7 @@ class CellMatrixInteraction {
 
         attachment_node_ids_text =
             this->FormatAttachmentNodeIdsJsonLike(
-            cell->GetAttachmentNodeIds()
+                cell->GetAttachmentRecords()
             );
 
         contractile_force =
@@ -1341,63 +1356,107 @@ class CellMatrixInteraction {
         }
 
         // -------------------------------------------------------------------------
-        // Step 6d: Update the matched ABM cell
+        // Step 6d: Build persistent attachment records
+        // -------------------------------------------------------------------------
+
+        std::vector<bdm::BiologicalCell::AttachmentRecord>
+        attachment_records;
+
+        attachment_records.reserve(n_attach);
+
+        for (int a = 0; a < n_attach; ++a) {
+
+        bdm::BiologicalCell::AttachmentRecord record;
+
+        record.node_id = attachment_node_ids[a];
+        record.position = attachment_points[a];
+        record.k_ecm = k_values[a];
+
+        // FEM-returned attachments have a calculated k_ecm value.
+        record.has_valid_k_ecm = true;
+
+        // These attachments were returned by the FEM rather than newly formed
+        // during the current ABM step.
+        record.newly_formed = false;
+
+        attachment_records.push_back(record);
+        }
+
+        // -------------------------------------------------------------------------
+        // Step 6e: Update the cell and store the imported attachment state
+        //
+        // The legacy vectors remain populated for backward compatibility while the
+        // persistent attachment records are introduced gradually.
         // -------------------------------------------------------------------------
 
         cell->SetPosition(bdm::Double3{x, y, z});
 
-        cell->ClearAttachmentNodeIds();
-        cell->ClearAttachmentPoints();
-        cell->ClearAttachmentStiffness();
-
-        // Set points and stiffness before node IDs, or IDs before both, both are
-        // valid because the vectors are empty after clearing. This order keeps the
-        // geometry and stiffness assignment similar to the original implementation.
-        cell->SetAttachmentPoints(attachment_points);
-        cell->SetAttachmentStiffness(k_values);
-        cell->SetAttachmentNodeIds(attachment_node_ids);
+        // Store the persistent records and synchronise the compatibility vectors.
+        cell->SetAttachmentRecords(attachment_records);
 
         // -------------------------------------------------------------------------
-        // Temporary Stage 6 test: force one selected cell to retain one attachment
+        // Step 5f: Validate the stored persistent attachment state
         // -------------------------------------------------------------------------
 
-        const std::string single_attachment_test_uid = "0-0";
+        ASSERT_(
+        cell->GetNumberOfAttachmentRecords()
+            == attachment_records.size(),
+        "FEM import: stored attachment-record count does not match the imported "
+        "count for abm_cell_id = " + abm_cell_id
+        );
 
-        if (abm_cell_id == single_attachment_test_uid &&
-            cell->GetAttachmentNodeIds().size() > 1) {
+        ASSERT_(
+        cell->GetNumberOfAttachments()
+            == attachment_records.size(),
+        "FEM import: reported attachment count does not match the imported count "
+        "for abm_cell_id = " + abm_cell_id
+        );
 
-        const std::vector<int> test_node_ids = {
-            cell->GetAttachmentNodeIds().front()
-        };
+        for (std::size_t a = 0;
+            a < cell->GetNumberOfAttachmentRecords();
+            ++a) {
 
-        const std::vector<bdm::Double3> test_points = {
-            cell->GetAttachmentPoints().front()
-        };
+        const auto& record =
+            cell->GetAttachmentRecord(a);
 
-        const std::vector<double> test_stiffness = {
-            cell->GetAttachmentStiffness().front()
-        };
+        ASSERT_(
+            record.node_id == attachment_node_ids[a],
+            "FEM import: stored attachment node ID does not match the imported "
+            "node ID for abm_cell_id = " + abm_cell_id
+        );
 
-        cell->ClearAttachmentNodeIds();
-        cell->ClearAttachmentPoints();
-        cell->ClearAttachmentStiffness();
+        ASSERT_(
+            record.position[0] == attachment_points[a][0] &&
+            record.position[1] == attachment_points[a][1] &&
+            record.position[2] == attachment_points[a][2],
+            "FEM import: stored attachment position does not match the imported "
+            "position for abm_cell_id = " + abm_cell_id
+        );
 
-        cell->SetAttachmentPoints(test_points);
-        cell->SetAttachmentStiffness(test_stiffness);
-        cell->SetAttachmentNodeIds(test_node_ids);
+        ASSERT_(
+            record.k_ecm == k_values[a],
+            "FEM import: stored attachment k_ecm does not match the imported value "
+            "for abm_cell_id = " + abm_cell_id
+        );
 
-        std::cout
-            << "[STAGE 6 TEST] Forced cell "
-            << abm_cell_id
-            << " to retain one attachment at node "
-            << test_node_ids.front()
-            << "\n";
+        ASSERT_(
+            record.has_valid_k_ecm,
+            "FEM import: FEM-returned attachment does not have valid k_ecm for "
+            "abm_cell_id = " + abm_cell_id
+        );
+
+        ASSERT_(
+            !record.newly_formed,
+            "FEM import: FEM-returned attachment was incorrectly marked as newly "
+            "formed for abm_cell_id = " + abm_cell_id
+        );
         }
+        
 
         cell->SetKce(k_ce);
 
         // -------------------------------------------------------------------------
-        // Step 6e: Update adaptive cell-specific contractile force
+        // Step 6f: Update adaptive cell-specific contractile force
         // -------------------------------------------------------------------------
 
         double adaptive_contractile_force = 0.0;
