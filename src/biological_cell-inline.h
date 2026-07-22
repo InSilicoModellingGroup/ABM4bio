@@ -956,8 +956,9 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
             this->params()->have_parameter<bool>(mech_base + "/enabled") &&
             this->params()->get<bool>(mech_base + "/enabled");
 
-          const bool mechanics_state_allows_migration =
-            this->GetCellState() == "contract";
+          const bool mechanics_lifecycle_allows_migration =
+          this->GetCellMatrixLifecycleStatus() ==
+          CellMatrixLifecycleStatus::kEstablished;
 
           const bool has_valid_mechanics_attachments =
             this->HasValidAttachmentRecordsForMechanics();
@@ -965,6 +966,9 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
           const bool has_enough_contract_attachments =
             has_valid_mechanics_attachments &&
             this->GetNumberOfAttachmentRecords() >= 2;
+
+          const bool mechanics_are_current =
+            !this->RequiresMechanicsRecalculation();
 
           double mechanics_migration_probability = 1.0;
 
@@ -986,9 +990,10 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
           static std::mutex mechanics_debug_mutex;
 
           if (mechanics_enabled &&
-              mechanics_state_allows_migration &&
-              has_enough_contract_attachments &&
-              mechanics_probability_allows_migration)
+            mechanics_lifecycle_allows_migration &&
+            has_enough_contract_attachments &&
+            mechanics_are_current &&
+            mechanics_probability_allows_migration)
           {
             
             /*
@@ -1073,7 +1078,8 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
                     std::lock_guard<std::mutex> lock(mechanics_debug_mutex);
 
                     std::cout << "[MECH MIGRATION] UID " << uid.GetIndex()
-                              << " state=" << this->GetCellState()
+                              << " established="
+                              << mechanics_lifecycle_allows_migration
                               << " best_attach=" << best_idx
                               << " node_id=" << best_attachment.node_id
                               << " k=" << best_attachment.k_ecm
@@ -1114,9 +1120,12 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
 
                   has_migrated = true;
 
-                  // This flag tells the next ABM-to-FEM export that the cell must be
-                  // reattached before contracting again.
-                  this->SetMovedDueToMechanics(true);
+                  // The cell position has changed, so the stored cell-level mechanics no
+                  // longer correspond exactly to the current ABM configuration.
+                  //
+                  // Retained attachments remain under ABM control and must not be replaced
+                  // through FEM reattachment.
+                  this->MarkMechanicsForRecalculation();
                 }
               }
             }
@@ -1130,9 +1139,12 @@ bool bdm::BiologicalCell::CheckMigration() /////////////////////////////////////
               std::lock_guard<std::mutex> lock(mechanics_debug_mutex);
 
               std::cout << "[MECH MIGRATION SKIPPED] UID " << uid.GetIndex()
-                        << " state=" << this->GetCellState()
-                        << " valid_attachments=" 
+                        << " established=" 
+                        << mechanics_lifecycle_allows_migration
+                        << " valid_attachments="
                         << has_valid_mechanics_attachments
+                        << " requires_recalculation="
+                        << this->RequiresMechanicsRecalculation()
                         << " n_attachment_records="
                         << this->GetNumberOfAttachmentRecords()
                         << " probability=" << mechanics_migration_probability

@@ -3737,6 +3737,9 @@ int simulate(const std::string& fname, const int seed)
       int fem_rc = cell_matrix_interaction.RunFemSolver(sim, cells, time, &ran_any);
       ASSERT_(fem_rc == 0, "FEM solver failed");
 
+      // reset the data for the obstacles in the simulation
+      reinit_obstacles(sim, cells, time, cell_matrix_interaction);
+      
       if (ran_any) {
         // Only import if mechanics actually ran for at least one phenotype
         // (see note below: run_fem_solver should return 0 if nothing ran);
@@ -3751,9 +3754,7 @@ int simulate(const std::string& fname, const int seed)
       if (0==time%stat_step) save_stats(sim, cells, fstat);
       // output data for Paraview visualization
       if (0==time%viz_step) save_snapshot(sim, time);
-      // reset the data for the obstacles in the simulation
-      reinit_obstacles(sim, cells, time, cell_matrix_interaction);
-      // reset some data for all cells in the simulation
+            // reset some data for all cells in the simulation
       reinit_cells(sim, cells);
       // reset some data for biochemical species (if dynamic)
       reinit_biochemicals(sim, biochem, time);

@@ -31,6 +31,18 @@ public:
     Ap =-1,
     I0 =0, G1 =1, Sy =2, G2 =3, Di =4, Tr =5
   };
+
+  // =============================================================================
+  // Cell-matrix mechanics: attachment lifecycle
+  // =============================================================================
+
+  enum class CellMatrixLifecycleStatus {
+    kNeedsInitialAttachment,
+    kEstablished,
+    kInitialAttachmentRetry,
+    kMarkedForDeath
+  };
+
 //
 public:
   BiologicalCell() {}
@@ -122,50 +134,142 @@ public:
     bool newly_formed = false;
   };
 
-  // =============================================================================
-  // Cell-matrix mechanics: attachment-state queries
+    // =============================================================================
+  // Cell-matrix mechanics: internal lifecycle state
   // =============================================================================
 
-  std::size_t GetNumberOfAttachments() const {
+  void SetCellMatrixLifecycleStatus(
+      const CellMatrixLifecycleStatus status) {
     /*
-    * Function goal
-    * -------------
-    * Return the number of persistent attachment records stored by the cell.
-    */
+     * Function goal
+     * -------------
+     * Store the internal ABM attachment-lifecycle status of this cell.
+     *
+     * This status is separate from cell_state_, which is used only for FEM
+     * communication through the "attach" and "contract" strings.
+     */
 
-    return attachment_records_.size();
+    cell_matrix_lifecycle_status_ = status;
   }
 
-
-  bool HasAttachments() const {
-    /*
-    * Function goal
-    * -------------
-    * Return true when the cell has at least one persistent attachment record.
-    *
-    * A valid k_ecm value is not required because newly formed attachments have
-    * not yet been processed by the FEM.
-    */
-
-    return !attachment_records_.empty();
+  CellMatrixLifecycleStatus GetCellMatrixLifecycleStatus() const {
+    return cell_matrix_lifecycle_status_;
   }
 
-  
-  
+  bool RequiresMechanicsRecalculation() const {
+    /*
+     * Function goal
+     * -------------
+     * Return whether the current attachment set requires a new FEM mechanics
+     * calculation.
+     */
+
+    return requires_mechanics_recalculation_;
+  }
+
+  void MarkMechanicsForRecalculation() {
+    /*
+     * Function goal
+     * -------------
+     * Record that the attachment set has changed and its cell-level mechanics
+     * must be recalculated by the FEM.
+     *
+     * Existing k_ce, contractile force and retained attachment k_ecm values are
+     * deliberately preserved until the recalculation is completed.
+     */
+
+    requires_mechanics_recalculation_ = true;
+  }
+
+  void ClearMechanicsRecalculationRequirement() {
+    /*
+     * Function goal
+     * -------------
+     * Record that the current attachment set has completed its FEM mechanics
+     * calculation.
+     */
+
+    requires_mechanics_recalculation_ = false;
+  }
+
+    // -----------------------------------------------------------------------------
+  // Validate the internal cell-matrix state
   // -----------------------------------------------------------------------------
-  // Clear all attachment data
-  // -----------------------------------------------------------------------------
 
-  void ClearAttachments() {
-  /*
-   * Function goal
-   * -------------
-   * Remove all persistent attachments from this cell.
-   */
+  void ValidateCellMatrixState() const {
+    /*
+     * Function goal
+     * -------------
+     * Confirm that the attachment lifecycle, attachment records and mechanics
+     * recalculation state are internally consistent.
+     */
 
-  attachment_records_.clear();
-}
+    const CellMatrixLifecycleStatus lifecycle_status =
+        cell_matrix_lifecycle_status_;
 
+    const std::size_t attachment_count =
+        attachment_records_.size();
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate cells awaiting initial FEM attachment
+    // -------------------------------------------------------------------------
+
+    if (lifecycle_status ==
+            CellMatrixLifecycleStatus::kNeedsInitialAttachment ||
+        lifecycle_status ==
+            CellMatrixLifecycleStatus::kInitialAttachmentRetry) {
+
+      ASSERT_(
+          attachment_count == 0,
+          "A cell awaiting initial FEM attachment cannot already contain "
+          "persistent attachment records"
+      );
+
+      ASSERT_(
+          !requires_mechanics_recalculation_,
+          "A cell awaiting initial FEM attachment cannot require mechanics "
+          "recalculation"
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Validate established cells
+    // -------------------------------------------------------------------------
+
+    if (lifecycle_status ==
+        CellMatrixLifecycleStatus::kEstablished) {
+
+      ASSERT_(
+          attachment_count > 0,
+          "An established cell must retain at least one persistent attachment"
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3: Validate individual attachment records
+    // -------------------------------------------------------------------------
+
+    for (const auto& record : attachment_records_) {
+      ASSERT_(
+          record.node_id > 0,
+          "Cell-matrix state contains a non-positive attachment node ID"
+      );
+
+      ASSERT_(
+          !(record.newly_formed && record.has_valid_k_ecm),
+          "A newly formed ABM attachment cannot already contain valid FEM k_ecm"
+      );
+
+      if (record.newly_formed) {
+        ASSERT_(
+            requires_mechanics_recalculation_,
+            "A cell with a newly formed attachment must require mechanics "
+            "recalculation"
+        );
+      }
+    }
+  }
+  
   // =============================================================================
   // Cell-matrix mechanics: persistent attachment-record interface
   // =============================================================================
@@ -214,6 +318,52 @@ public:
   }
 
   // -----------------------------------------------------------------------------
+  // Update established attachments from the ABM
+  // -----------------------------------------------------------------------------
+
+  void UpdateAttachmentRecordsFromAbm(
+      const std::vector<AttachmentRecord>& records) {
+    /*
+     * Function goal
+     * -------------
+     * Replace an established cell's attachment set after an ABM-controlled
+     * attachment change.
+     *
+     * Existing k_ce, contractile force and retained attachment k_ecm values are
+     * preserved. The new attachment set is marked as requiring a FEM mechanics
+     * recalculation.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Confirm that the ABM owns this attachment set
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Only an established cell may update attachments through the ABM"
+    );
+
+    // A previously attached cell must always retain at least one attachment.
+    ASSERT_(
+        !records.empty(),
+        "An established cell cannot lose all persistent attachments"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Store the updated attachment records
+    // -------------------------------------------------------------------------
+
+    SetAttachmentRecords(records);
+
+    // -------------------------------------------------------------------------
+    // Step 3: Mark the cell-level mechanics as outdated
+    // -------------------------------------------------------------------------
+
+    MarkMechanicsForRecalculation();
+  }
+
+  // -----------------------------------------------------------------------------
   // Retrieve attachment records
   // -----------------------------------------------------------------------------
 
@@ -242,12 +392,20 @@ public:
     return attachment_records_.size();
   }
 
-
   // -----------------------------------------------------------------------------
   // Attachment-record state queries
   // -----------------------------------------------------------------------------
 
   bool HasAttachmentRecords() const {
+    /*
+    * Function goal
+    * -------------
+    * Return true when the cell has at least one persistent attachment record.
+    *
+    * A valid k_ecm value is not required because newly formed attachments have
+    * not yet been processed by the FEM.
+    */
+
     return !attachment_records_.empty();
   }
 
@@ -299,13 +457,17 @@ public:
     return true;
   }
 
-
-
   // -----------------------------------------------------------------------------
   // Clear attachment records
   // -----------------------------------------------------------------------------
 
   void ClearAttachmentRecords() {
+    /*
+    * Function goal
+    * -------------
+    * Remove all persistent attachment records from this cell.
+    */
+
     attachment_records_.clear();
   }
 
@@ -322,16 +484,6 @@ public:
   }
   double GetContractileForce() const {
     return contractile_force_;
-  }
-  // Cells moved due to mechanics
-  void SetMovedDueToMechanics(bool moved_due_to_mechanics) {
-    moved_due_to_mechanics_ = moved_due_to_mechanics;
-  }
-  bool GetMovedDueToMechanics() const {
-    return moved_due_to_mechanics_;
-  }
-  void ClearMovedDueToMechanics() {
-    moved_due_to_mechanics_ = false;
   }
   // Cell state for coupled fem solver (cell-matrix mechanics)
   void SetCellState(const std::string& state) {
@@ -421,15 +573,24 @@ private:
   Parameters* params_ = 0;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
-  // FEM mechanics state
-  std::string cell_state_ = "attach";
-  double k_ce_ = 0.0;
-  double contractile_force_ = 0.0;
-  bool moved_due_to_mechanics_ = false;
   
   // =============================================================================
   // Cell-matrix mechanics: attachment data
   // =============================================================================
+
+  
+  // FEM communication state.
+  std::string cell_state_ = "attach";
+
+  // Internal ABM attachment lifecycle.
+  CellMatrixLifecycleStatus cell_matrix_lifecycle_status_ =
+      CellMatrixLifecycleStatus::kNeedsInitialAttachment;
+
+  // True when the current attachment set requires a new FEM mechanics result.
+  bool requires_mechanics_recalculation_ = false;
+
+  double k_ce_ = 0.0;
+  double contractile_force_ = 0.0;
 
   // Persistent attachment records.
   //

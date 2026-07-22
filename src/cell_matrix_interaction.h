@@ -172,19 +172,11 @@ class CellMatrixInteraction {
     * Determine whether a cell should be omitted from the FEM input, sent for
     * initial attachment, or sent for contraction.
     *
-    * Current rules
-    * ---------------------
-    * - Necrotic cells are omitted.
-    * - Cells from phenotypes without cell-matrix mechanics are omitted.
-    * - Cells with exactly one attachment remain entirely within the ABM.
-    * - Cells with at least two valid attachments are sent as "contract",
-    *   unless the existing movement flag requires LEGACY FEM reattachment.
-    * - Cells with no attachments are sent as "attach".
-    *
-    * The explicit internal cell-matrix status to be introduced will later --------EDIT THIS COMMENT WHEN RELEVANT----------------------------------------------
-    * replace some of these temporary attachment-count-based decisions.
+    * The decision uses the internal ABM attachment lifecycle and the persistent
+    * attachment-record count. The FEM communication strings "attach" and
+    * "contract" are assigned later during export.
     */
-    
+
     // -------------------------------------------------------------------------
     // Step 1: Validate the supplied cell pointer
     // -------------------------------------------------------------------------
@@ -195,21 +187,10 @@ class CellMatrixInteraction {
     );
 
     // -------------------------------------------------------------------------
-    // Temporary Stage 7 validation: force a zero-FEM-interaction timestep
-    // -------------------------------------------------------------------------
-
-    const bool force_zero_fem_interaction_test = true;
-
-    if (force_zero_fem_interaction_test) {
-    return FemExportAction::kSkip;
-    }
-
-    // -------------------------------------------------------------------------
     // Step 2: Exclude necrotic cells
     // -------------------------------------------------------------------------
 
-    const int phenotype_id =
-        cell->GetPhenotype();
+    const int phenotype_id = cell->GetPhenotype();
 
     if (phenotype_id < 0) {
         return FemExportAction::kSkip;
@@ -219,8 +200,7 @@ class CellMatrixInteraction {
     // Step 3: Find the cell phenotype definition
     // -------------------------------------------------------------------------
 
-    const auto phenotype_it =
-        cells.find(phenotype_id);
+    const auto phenotype_it = cells.find(phenotype_id);
 
     ASSERT_(
         phenotype_it != cells.end(),
@@ -228,9 +208,7 @@ class CellMatrixInteraction {
         + std::to_string(phenotype_id)
     );
 
-    const std::string& phenotype_name =
-        phenotype_it->second;
-
+    const std::string& phenotype_name = phenotype_it->second;
     const std::string mech_base =
         phenotype_name + "/cell_matrix_mechanics";
 
@@ -246,21 +224,63 @@ class CellMatrixInteraction {
         return FemExportAction::kSkip;
     }
 
+    // Confirm that lifecycle and attachment data agree before export.
+    cell->ValidateCellMatrixState();
+
     // -------------------------------------------------------------------------
-    // Step 5: Read the persistent attachment-record state
+    // Step 5: Read the internal attachment lifecycle
     // -------------------------------------------------------------------------
+
+    using LifecycleStatus =
+        bdm::BiologicalCell::CellMatrixLifecycleStatus;
+
+    const LifecycleStatus lifecycle_status =
+        cell->GetCellMatrixLifecycleStatus();
 
     const std::size_t attachment_count =
-    cell->GetNumberOfAttachmentRecords();
-
-    const bool has_valid_mechanics_attachments =
-    cell->HasValidAttachmentRecordsForMechanics();
+        cell->GetNumberOfAttachmentRecords();
 
     // -------------------------------------------------------------------------
-    // Step 6: Keep single-attachment cells entirely within the ABM
-    // 
-    // Assumption: single-attachment cells are not expected to be able to 
-    // contract.
+    // Step 6: Exclude cells marked for death
+    // -------------------------------------------------------------------------
+
+    if (lifecycle_status == LifecycleStatus::kMarkedForDeath) {
+        return FemExportAction::kSkip;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 7: Send new or retrying cells for initial FEM attachment
+    // -------------------------------------------------------------------------
+
+    if (lifecycle_status == LifecycleStatus::kNeedsInitialAttachment ||
+        lifecycle_status == LifecycleStatus::kInitialAttachmentRetry) {
+
+        ASSERT_(
+            attachment_count == 0,
+            "A cell requiring initial FEM attachment already contains persistent "
+            "attachment records"
+        );
+
+        return FemExportAction::kAttach;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 8: Validate the established-cell attachment state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        lifecycle_status == LifecycleStatus::kEstablished,
+        "DetermineFemExportAction encountered an unsupported cell-matrix "
+        "lifecycle status"
+    );
+
+    ASSERT_(
+        attachment_count > 0,
+        "An established cell must retain at least one persistent attachment"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 9: Keep single-attachment cells entirely within the ABM
     // -------------------------------------------------------------------------
 
     if (attachment_count == 1) {
@@ -268,31 +288,14 @@ class CellMatrixInteraction {
     }
 
     // -------------------------------------------------------------------------
-    // Step 7: Contract using two or more valid retained attachments
+    // Step 10: Contract using the current persistent attachment set
     //
-    // The movement-flag condition is retained temporarily change remains 
-    // compatible with the existing migration workflow, attached cells did not 
-    // move.
+    // Stored k_ecm values may be invalid or awaiting recalculation. The FEM only
+    // requires the persistent node IDs and the carried-forward contractile force.
     // -------------------------------------------------------------------------
 
-    if (attachment_count >= 2 &&
-        has_valid_mechanics_attachments &&
-        !cell->GetMovedDueToMechanics()) {
-        return FemExportAction::kContract;
+    return FemExportAction::kContract;
     }
-
-    // -------------------------------------------------------------------------
-    // Step 8: Cells without usable contract attachments require FEM attachment
-    //
-    // At this stage this preserves the existing handling of:
-    // - newly introduced cells with no attachments;
-    // - cells moved by the legacy mechanics-migration behaviour (floating cells);
-    // - cells whose attachment data are not currently valid.
-    // -------------------------------------------------------------------------
-
-    return FemExportAction::kAttach;
-    }
-    
   
     // ---------------------------------------------------------------------------
     // ABM-to-FEM export
@@ -371,7 +374,7 @@ class CellMatrixInteraction {
         auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
 
         if (!cell) {
-        return;
+            return;
         }
 
         std::lock_guard<std::mutex> lock(biological_cells_mutex);
@@ -383,13 +386,13 @@ class CellMatrixInteraction {
         biological_cells.begin(),
         biological_cells.end(),
         [](bdm::BiologicalCell* a, bdm::BiologicalCell* b) {
-        std::ostringstream uid_a;
-        std::ostringstream uid_b;
+            std::ostringstream uid_a;
+            std::ostringstream uid_b;
 
-        uid_a << a->GetUid();
-        uid_b << b->GetUid();
+            uid_a << a->GetUid();
+            uid_b << b->GetUid();
 
-        return uid_a.str() < uid_b.str();
+            return uid_a.str() < uid_b.str();
         }
     );
 
@@ -414,11 +417,11 @@ class CellMatrixInteraction {
         // -------------------------------------------------------------------------
 
         const FemExportAction export_action =
-        this->DetermineFemExportAction(cell, cells);
+            this->DetermineFemExportAction(cell, cells);
 
         // Cells retained entirely within the ABM are not written to the FEM input.
         if (export_action == FemExportAction::kSkip) {
-        continue;
+            continue;
         }
 
         // -------------------------------------------------------------------------
@@ -468,14 +471,10 @@ class CellMatrixInteraction {
         }
 
         // -------------------------------------------------------------------------
-        // Step 5c: Record the FEM instruction on the cell
+        // Step 5c: Record the FEM communication state on the cell
         // -------------------------------------------------------------------------
 
         cell->SetCellState(cell_state);
-
-        // The movement flag has now been communicated to the FEM.
-        // Skipped cells do not reach this line, so their flag remains unchanged.
-        cell->ClearMovedDueToMechanics();
 
         // -------------------------------------------------------------------------
         // Step 5d: Record the exported ABM cell ID
@@ -1254,7 +1253,7 @@ class CellMatrixInteraction {
     }
 
     // ---------------------------------------------------------------------------
-    // Step 5: Track only the cells expected from the FEM
+    // Step 6: Track only the cells expected from the FEM
     //
     // Single-attachment cells are not exported to the FEM, so they are not expected 
     // to be present in the FEM result file. 
@@ -1308,7 +1307,7 @@ class CellMatrixInteraction {
         bdm::BiologicalCell* cell = cell_it->second;
 
         // -------------------------------------------------------------------------
-        // Step 6a: Read attachment node IDs
+        // Step 7a: Read attachment node IDs
         // -------------------------------------------------------------------------
 
         std::vector<int> attachment_node_ids(n_attach);
@@ -1322,7 +1321,7 @@ class CellMatrixInteraction {
         }
 
         // -------------------------------------------------------------------------
-        // Step 6b: Read attachment coordinates
+        // Step 7b: Read attachment coordinates
         // -------------------------------------------------------------------------
 
         std::vector<bdm::Double3> attachment_points(n_attach);
@@ -1342,7 +1341,7 @@ class CellMatrixInteraction {
         }
 
         // -------------------------------------------------------------------------
-        // Step 6c: Read attachment stiffness values
+        // Step 7c: Read attachment stiffness values
         // -------------------------------------------------------------------------
 
         std::vector<double> k_values(n_attach);
@@ -1356,7 +1355,7 @@ class CellMatrixInteraction {
         }
 
         // -------------------------------------------------------------------------
-        // Step 6d: Build persistent attachment records
+        // Step 7d: Build persistent attachment records
         // -------------------------------------------------------------------------
 
         std::vector<bdm::BiologicalCell::AttachmentRecord>
@@ -1383,7 +1382,7 @@ class CellMatrixInteraction {
         }
 
         // -------------------------------------------------------------------------
-        // Step 6e: Update the cell and store the imported attachment state
+        // Step 7e: Update the cell and store the imported attachment state
         //
         // The legacy vectors remain populated for backward compatibility while the
         // persistent attachment records are introduced gradually.
@@ -1395,21 +1394,14 @@ class CellMatrixInteraction {
         cell->SetAttachmentRecords(attachment_records);
 
         // -------------------------------------------------------------------------
-        // Step 5f: Validate the stored persistent attachment state
+        // Step 7f: Validate the stored persistent attachment state
         // -------------------------------------------------------------------------
 
         ASSERT_(
-        cell->GetNumberOfAttachmentRecords()
-            == attachment_records.size(),
-        "FEM import: stored attachment-record count does not match the imported "
-        "count for abm_cell_id = " + abm_cell_id
-        );
-
-        ASSERT_(
-        cell->GetNumberOfAttachments()
-            == attachment_records.size(),
-        "FEM import: reported attachment count does not match the imported count "
-        "for abm_cell_id = " + abm_cell_id
+            cell->GetNumberOfAttachmentRecords()
+                == attachment_records.size(),
+            "FEM import: stored attachment-record count does not match the imported "
+            "count for abm_cell_id = " + abm_cell_id
         );
 
         for (std::size_t a = 0;
@@ -1456,7 +1448,7 @@ class CellMatrixInteraction {
         cell->SetKce(k_ce);
 
         // -------------------------------------------------------------------------
-        // Step 6f: Update adaptive cell-specific contractile force
+        // Step 7g: Update adaptive cell-specific contractile force
         // -------------------------------------------------------------------------
 
         double adaptive_contractile_force = 0.0;
@@ -1501,12 +1493,27 @@ class CellMatrixInteraction {
 
         cell->SetContractileForce(adaptive_contractile_force);
 
+        // -------------------------------------------------------------------------
+        // Step 7h: Update the internal ABM mechanics state
+        // -------------------------------------------------------------------------
+
+        if (n_attach > 0) {
+        // The cell now has an established attachment set managed by the ABM.
+        cell->SetCellMatrixLifecycleStatus(
+            bdm::BiologicalCell::CellMatrixLifecycleStatus::kEstablished
+        );
+
+        // The imported k_ce, contractile force and attachment mechanics correspond
+        // to the attachment set returned by the FEM.
+        cell->ClearMechanicsRecalculationRequirement();
+        }
+
+        // Confirm that the imported mechanics and lifecycle state agree.
+        cell->ValidateCellMatrixState();
 
         // Do not update cell_state here.
         // cell_state_ represents the last ABM-to-FEM state exported by ABM.
-        // This prevents cells that were just attached by FEM from migrating before
-        // they have completed a dedicated "contract" step.
-
+        
         imported_flag_it->second = true;
 
         if (i < debug_cells_to_print) {
