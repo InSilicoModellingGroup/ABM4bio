@@ -1097,6 +1097,208 @@ class CellMatrixInteraction {
     }
   
     // ---------------------------------------------------------------------------
+    // Synchronise persistent attachment coordinates
+    // ---------------------------------------------------------------------------
+
+    inline
+    void SynchroniseAttachmentCoordinates(
+        bdm::Simulation& sim,
+        const std::map<int, std::string>& cells,
+        const std::vector<ObstacleScaffold>& active_scaffolds) const
+    {
+        /*
+        * Function goal
+        * -------------
+        * Update every retained attachment coordinate using its persistent scaffold
+        * node ID and the current active scaffold geometry.
+        *
+        * Only the attachment position is refreshed. The node ID, k_ecm validity,
+        * newly formed state and cell-level mechanics state remain unchanged.
+        */
+
+        // -------------------------------------------------------------------------
+        // Step 1: Exit when cell-matrix mechanics is not enabled
+        // -------------------------------------------------------------------------
+
+        if (!this->AnyCellMatrixMechanicsEnabled(cells)) {
+            return;
+        }
+
+        // -------------------------------------------------------------------------
+        // Step 2: Validate the active coupled scaffold
+        // -------------------------------------------------------------------------
+
+        ASSERT_(
+            this->params()->get<int>("simulation_obstacles") > 0,
+            "Cell-matrix mechanics requires at least one scaffold obstacle"
+        );
+
+        ASSERT_(
+            this->params()->get<bool>("simulation_obstacles/update"),
+            "Cell-matrix mechanics requires simulation_obstacles/update to be true "
+            "so attachment coordinates use the current scaffold geometry"
+        );
+        
+        ASSERT_(
+            active_scaffolds.size() == 1,
+            "Attachment synchronisation requires exactly one active scaffold when "
+            "cell-matrix mechanics is enabled"
+        );
+
+        const ObstacleScaffold& active_scaffold =
+            active_scaffolds.front();
+
+        ASSERT_(
+            !active_scaffold.nodes_by_id.empty(),
+            "Attachment synchronisation received an active scaffold with no nodes"
+        );
+        
+        // -------------------------------------------------------------------------
+        // Step 3: Collect BiologicalCell agents
+        // -------------------------------------------------------------------------
+
+        std::vector<bdm::BiologicalCell*> biological_cells;
+        std::mutex biological_cells_mutex;
+
+        auto* rm = sim.GetResourceManager();
+
+        rm->ForEachAgent([&](bdm::Agent* agent) {
+        auto* cell =
+            dynamic_cast<bdm::BiologicalCell*>(agent);
+
+        if (!cell) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(
+            biological_cells_mutex
+        );
+
+        biological_cells.push_back(cell);
+        });
+
+        // -------------------------------------------------------------------------
+        // Step 4: Refresh each retained attachment coordinate
+        // -------------------------------------------------------------------------
+
+        for (auto* cell : biological_cells) {
+        if (!cell->HasAttachmentRecords()) {
+            continue;
+        }
+
+        std::ostringstream uid_stream;
+        uid_stream << cell->GetUid();
+
+        const std::string abm_cell_id =
+            uid_stream.str();
+
+        // Preserve the cell-level mechanics state so coordinate-only
+        // synchronisation can be validated.
+        const auto lifecycle_status_before =
+            cell->GetCellMatrixLifecycleStatus();
+
+        const bool requires_recalculation_before =
+            cell->RequiresMechanicsRecalculation();
+
+        const double k_ce_before =
+            cell->GetKce();
+
+        const double contractile_force_before =
+            cell->GetContractileForce();
+
+        // Work on a copy so only the attachment coordinates are changed.
+        const auto original_attachment_records =
+            cell->GetAttachmentRecords();
+
+        const auto attachment_records =
+            this->RefreshAttachmentRecordCoordinates(
+                original_attachment_records,
+                active_scaffold,
+                abm_cell_id
+            );
+
+        // SetAttachmentRecords validates persistent IDs and duplicate nodes.
+        cell->SetAttachmentRecords(attachment_records);
+
+        // -----------------------------------------------------------------------
+        // Step 5: Confirm that only attachment coordinates changed
+        // -----------------------------------------------------------------------
+
+        ASSERT_(
+            cell->GetNumberOfAttachmentRecords()
+                == original_attachment_records.size(),
+            "Attachment synchronisation changed the attachment count for cell "
+            + abm_cell_id
+        );
+
+        for (std::size_t i = 0;
+            i < original_attachment_records.size();
+            ++i) {
+
+        const auto& before =
+            original_attachment_records[i];
+
+        const auto& after =
+            cell->GetAttachmentRecord(i);
+
+        ASSERT_(
+            after.node_id == before.node_id,
+            "Attachment synchronisation changed the persistent node ID for cell "
+            + abm_cell_id
+        );
+
+        ASSERT_(
+            after.k_ecm == before.k_ecm,
+            "Attachment synchronisation changed k_ecm for cell "
+            + abm_cell_id
+        );
+
+        ASSERT_(
+            after.has_valid_k_ecm == before.has_valid_k_ecm,
+            "Attachment synchronisation changed k_ecm validity for cell "
+            + abm_cell_id
+        );
+
+        ASSERT_(
+            after.newly_formed == before.newly_formed,
+            "Attachment synchronisation changed newly_formed for cell "
+            + abm_cell_id
+        );
+        }
+
+        ASSERT_(
+            cell->GetCellMatrixLifecycleStatus()
+                == lifecycle_status_before,
+            "Attachment synchronisation changed the lifecycle status for cell "
+            + abm_cell_id
+        );
+
+        ASSERT_(
+            cell->RequiresMechanicsRecalculation()
+                == requires_recalculation_before,
+            "Attachment synchronisation changed the mechanics-recalculation state "
+            "for cell " + abm_cell_id
+        );
+
+        ASSERT_(
+            cell->GetKce() == k_ce_before,
+            "Attachment synchronisation changed k_ce for cell "
+            + abm_cell_id
+        );
+
+        ASSERT_(
+            cell->GetContractileForce()
+                == contractile_force_before,
+            "Attachment synchronisation changed the contractile force for cell "
+            + abm_cell_id
+        );
+
+        // Coordinate refresh must not create an inconsistent lifecycle state.
+        cell->ValidateCellMatrixState();
+        }
+    }
+    
+    // ---------------------------------------------------------------------------
     // FEM-to-ABM import
     // ---------------------------------------------------------------------------
 
@@ -1543,18 +1745,66 @@ class CellMatrixInteraction {
     }
 
     private:
+    
+    // ---------------------------------------------------------------------------
+    // Refresh attachment-record coordinates
+    // ---------------------------------------------------------------------------
+
+    inline
+    std::vector<bdm::BiologicalCell::AttachmentRecord>
+    RefreshAttachmentRecordCoordinates(
+        const std::vector<bdm::BiologicalCell::AttachmentRecord>& records,
+        const ObstacleScaffold& active_scaffold,
+        const std::string& abm_cell_id) const
+    {
+        /*
+        * Function goal
+        * -------------
+        * Return a copy of the supplied attachment records with each coordinate
+        * refreshed from the active scaffold using its persistent node ID.
+        *
+        * All non-coordinate attachment fields remain unchanged.
+        */
+        
+        auto refreshed_records = records;
+
+        for (auto& record : refreshed_records) {
+        ASSERT_(
+            record.node_id > 0,
+            "Attachment synchronisation encountered a non-positive node ID "
+            "for cell " + abm_cell_id
+        );
+
+        ASSERT_(
+            active_scaffold.HasNode(record.node_id),
+            "Attachment synchronisation could not find scaffold node ID "
+            + std::to_string(record.node_id)
+            + " for cell "
+            + abm_cell_id
+        );
+
+        ASSERT_(
+            !active_scaffold
+                .GetConnectedNodeIds(record.node_id)
+                .empty(),
+            "Attachment synchronisation found an unconnected scaffold node ID "
+            + std::to_string(record.node_id)
+            + " for cell "
+            + abm_cell_id
+        );
+
+        record.position =
+            active_scaffold.GetNodePosition(record.node_id);
+        }
+
+        return refreshed_records;
+    }
+    
     // Model parameters are owned by ABM4bio, not by this class.
     Parameters* params_;
 
-    /*
-    * This will be populated during Stage 6.
-    *
-    * It will allow ImportFemCells() to validate exactly which ABM cells were
-    * exported to and returned by the FEM.
-    */
     std::unordered_set<std::string> exported_cell_ids_;
 };
-
 
 // =============================================================================
 // Method definitions

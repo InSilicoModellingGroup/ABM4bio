@@ -3742,9 +3742,15 @@ int simulate(const std::string& fname, const int seed)
       
       if (ran_any) {
         // Only import if mechanics actually ran for at least one phenotype
-        // (see note below: run_fem_solver should return 0 if nothing ran);
         cell_matrix_interaction.ImportFemCells(sim, cells, time);
       }
+
+      // Refresh retained attachment coordinates from the current active scaffold.
+      cell_matrix_interaction.SynchroniseAttachmentCoordinates(
+          sim,
+          cells,
+          obstacles.scaffold
+      );
 
       // run the BioDynaMo simulator for one step
       sim.GetScheduler()->Simulate(1);
