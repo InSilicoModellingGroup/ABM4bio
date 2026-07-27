@@ -496,6 +496,15 @@ public:
   const std::string& GetCellState() const {
     return cell_state_;
   }
+
+  // -----------------------------------------------------------------------------
+  // Follow a retained single scaffold attachment
+  // -----------------------------------------------------------------------------
+
+  void FollowSingleAttachmentScaffold(
+      const ObstacleScaffold& scaffold,
+      const bdm::Double3& previous_attachment_position);
+  
   //
   void SetCanTransform(bool transforms) { can_transform_ = transforms; }
   bool GetCanTransform() const { return can_transform_; }
@@ -548,6 +557,16 @@ private:
   //
   void CheckAndFixDiameter();
   bool CheckProtrusionAxis(bdm::Double3 axis);
+  bdm::Double3 CalculateSingleAttachmentStrutDirection(
+      const ObstacleScaffold& scaffold,
+      int attachment_node_id) const;
+  bdm::Double3 CalculateSingleAttachmentRadialDirection(
+    const bdm::Double3& previous_attachment_position,
+    const bdm::Double3& strut_direction) const;
+  bdm::Double3 CalculateSingleAttachmentTargetPosition(
+    const ObstacleScaffold& scaffold,
+    int attachment_node_id,
+    const bdm::Double3& radial_direction) const;
   //
 //
 private:

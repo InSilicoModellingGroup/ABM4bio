@@ -862,7 +862,567 @@ bool bdm::BiologicalCell::CheckQuiescenceAfterDivision()
 }
 // -----------------------------------------------------------------------------
 inline
-bool bdm::BiologicalCell::CheckMigration() ///////////////////////////////////////////////
+bdm::Double3
+bdm::BiologicalCell::CalculateSingleAttachmentStrutDirection(
+    const ObstacleScaffold& scaffold,
+    const int attachment_node_id) const
+{
+  /*
+   * Function goal
+   * -------------
+   * Return a unit direction along the scaffold segment most closely associated
+   * with the cell at a retained attachment node.
+   *
+   * At a junction, select the connected segment closest to the current cell
+   * centre. Resolve equal-distance cases using the smallest persistent
+   * connected-node ID.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the retained attachment node
+  // ---------------------------------------------------------------------------
+
+  ASSERT_(
+      attachment_node_id > 0,
+      "Single-attachment strut direction requires a positive node ID"
+  );
+
+  ASSERT_(
+      scaffold.HasNode(attachment_node_id),
+      "Single-attachment strut direction could not find scaffold node ID "
+      + std::to_string(attachment_node_id)
+  );
+
+  const bdm::Double3& attachment_position =
+      scaffold.GetNodePosition(attachment_node_id);
+
+  std::vector<int> connected_node_ids =
+      scaffold.GetConnectedNodeIds(attachment_node_id);
+
+  ASSERT_(
+      !connected_node_ids.empty(),
+      "Single-attachment strut direction found no connected scaffold nodes "
+      "for node ID "
+      + std::to_string(attachment_node_id)
+  );
+
+  // Ensure deterministic junction handling independent of file row order.
+  std::sort(
+      connected_node_ids.begin(),
+      connected_node_ids.end()
+  );
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Select the connected segment closest to the cell centre
+  // ---------------------------------------------------------------------------
+
+  const bdm::Double3 cell_position =
+      this->GetPosition();
+
+  bool found_direction = false;
+  double best_distance_squared = 0.0;
+  int selected_connected_node_id = -1;
+
+  bdm::Double3 selected_direction =
+      {0.0, 0.0, 0.0};
+
+  for (const int connected_node_id : connected_node_ids) {
+    ASSERT_(
+        connected_node_id > 0,
+        "Single-attachment strut direction encountered a non-positive "
+        "connected node ID"
+    );
+
+    ASSERT_(
+        connected_node_id != attachment_node_id,
+        "Single-attachment strut direction encountered self-connectivity for "
+        "node ID "
+        + std::to_string(attachment_node_id)
+    );
+
+    ASSERT_(
+        scaffold.HasNode(connected_node_id),
+        "Single-attachment strut direction could not find connected node ID "
+        + std::to_string(connected_node_id)
+    );
+
+    const bdm::Double3 segment_vector =
+        scaffold.GetNodePosition(connected_node_id)
+        - attachment_position;
+
+    const double segment_length_squared =
+        segment_vector[0] * segment_vector[0]
+        + segment_vector[1] * segment_vector[1]
+        + segment_vector[2] * segment_vector[2];
+
+    ASSERT_(
+        segment_length_squared > 0.0,
+        "Single-attachment strut direction encountered a zero-length segment "
+        "between node IDs "
+        + std::to_string(attachment_node_id)
+        + " and "
+        + std::to_string(connected_node_id)
+    );
+
+    const bdm::Double3 cell_offset =
+        cell_position - attachment_position;
+
+    double projection =
+        (
+          cell_offset[0] * segment_vector[0]
+          + cell_offset[1] * segment_vector[1]
+          + cell_offset[2] * segment_vector[2]
+        )
+        / segment_length_squared;
+
+    // Clamp the projection to the finite connected segment.
+    if (projection < 0.0) {
+      projection = 0.0;
+    }
+
+    if (projection > 1.0) {
+      projection = 1.0;
+    }
+
+    const bdm::Double3 closest_point =
+        attachment_position
+        + segment_vector * projection;
+
+    const bdm::Double3 separation =
+        cell_position - closest_point;
+
+    const double distance_squared =
+        separation[0] * separation[0]
+        + separation[1] * separation[1]
+        + separation[2] * separation[2];
+
+    const bool is_closer =
+        !found_direction ||
+        distance_squared < best_distance_squared - 1.0e-12;
+
+    const bool is_equal_but_lower_id =
+        found_direction &&
+        std::fabs(distance_squared - best_distance_squared) <= 1.0e-12 &&
+        connected_node_id < selected_connected_node_id;
+
+    if (is_closer || is_equal_but_lower_id) {
+      const double segment_length =
+          std::sqrt(segment_length_squared);
+
+      selected_direction = segment_vector;
+      selected_direction /= segment_length;
+
+      best_distance_squared =
+          distance_squared;
+
+      selected_connected_node_id =
+          connected_node_id;
+
+      found_direction = true;
+    }
+  }
+
+  ASSERT_(
+      found_direction,
+      "Single-attachment strut direction could not select a connected segment "
+      "for node ID "
+      + std::to_string(attachment_node_id)
+  );
+
+  return selected_direction;
+}
+// ----------------------------------------------------------------------------
+inline
+bdm::Double3
+bdm::BiologicalCell::CalculateSingleAttachmentRadialDirection(
+    const bdm::Double3& previous_attachment_position,
+    const bdm::Double3& strut_direction) const
+{
+  /*
+  * Function goal
+  * -------------
+  * Return a unit direction representing the radial side occupied by the cell
+  * before the active scaffold geometry was replaced.
+  *
+  * The previous attachment coordinate is used so scaffold deformation or
+  * snap-back does not arbitrarily change the side of the strut occupied by
+  * the cell.
+  */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the attachment node and strut direction
+  // ---------------------------------------------------------------------------
+
+  bdm::Double3 unit_tangent =
+      strut_direction;
+
+  const double tangent_magnitude =
+      L2norm(unit_tangent);
+
+  ASSERT_(
+      tangent_magnitude > 0.0,
+      "Single-attachment radial direction received a zero strut direction"
+  );
+
+  unit_tangent /= tangent_magnitude;
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Remove the axial component of the cell offset
+  // ---------------------------------------------------------------------------
+
+  const bdm::Double3 cell_offset =
+    this->GetPosition() - previous_attachment_position;
+
+  const double axial_component =
+      cell_offset[0] * unit_tangent[0]
+      + cell_offset[1] * unit_tangent[1]
+      + cell_offset[2] * unit_tangent[2];
+
+  bdm::Double3 radial_direction = {
+      cell_offset[0] - axial_component * unit_tangent[0],
+      cell_offset[1] - axial_component * unit_tangent[1],
+      cell_offset[2] - axial_component * unit_tangent[2]
+  };
+
+  double radial_magnitude =
+      L2norm(radial_direction);
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Use a deterministic fallback when no previous side is available
+  // ---------------------------------------------------------------------------
+
+  if (radial_magnitude <= 1.0e-12) {
+    bdm::Double3 reference_axis =
+        {0.0, 0.0, 0.0};
+
+    const double abs_x =
+        std::fabs(unit_tangent[0]);
+
+    const double abs_y =
+        std::fabs(unit_tangent[1]);
+
+    const double abs_z =
+        std::fabs(unit_tangent[2]);
+
+    // Select the global axis least aligned with the strut tangent.
+    if (abs_x <= abs_y && abs_x <= abs_z) {
+      reference_axis = {1.0, 0.0, 0.0};
+    } else if (abs_y <= abs_z) {
+      reference_axis = {0.0, 1.0, 0.0};
+    } else {
+      reference_axis = {0.0, 0.0, 1.0};
+    }
+
+    radial_direction = {
+        unit_tangent[1] * reference_axis[2]
+            - unit_tangent[2] * reference_axis[1],
+
+        unit_tangent[2] * reference_axis[0]
+            - unit_tangent[0] * reference_axis[2],
+
+        unit_tangent[0] * reference_axis[1]
+            - unit_tangent[1] * reference_axis[0]
+    };
+
+    radial_magnitude =
+        L2norm(radial_direction);
+
+    ASSERT_(
+        radial_magnitude > 0.0,
+        "Single-attachment radial direction could not construct a "
+        "perpendicular fallback direction"
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 4: Return the unit radial direction
+  // ---------------------------------------------------------------------------
+
+  radial_direction /= radial_magnitude;
+
+  return radial_direction;
+}
+// ----------------------------------------------------------------------------
+inline
+bdm::Double3
+bdm::BiologicalCell::CalculateSingleAttachmentTargetPosition(
+    const ObstacleScaffold& scaffold,
+    const int attachment_node_id,
+    const bdm::Double3& radial_direction) const
+{
+  /*
+   * Function goal
+   * -------------
+   * Calculate a cell-centre position outside the scaffold at a retained
+   * attachment node while preserving the cell's radial side.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the retained attachment node
+  // ---------------------------------------------------------------------------
+
+  ASSERT_(
+      attachment_node_id > 0,
+      "Single-attachment target position requires a positive node ID"
+  );
+
+  ASSERT_(
+      scaffold.HasNode(attachment_node_id),
+      "Single-attachment target position could not find scaffold node ID "
+      + std::to_string(attachment_node_id)
+  );
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Validate and normalise the radial direction
+  // ---------------------------------------------------------------------------
+
+  bdm::Double3 unit_radial_direction =
+      radial_direction;
+
+  const double radial_magnitude =
+      L2norm(unit_radial_direction);
+
+  ASSERT_(
+      radial_magnitude > 0.0,
+      "Single-attachment target position received a zero radial direction"
+  );
+
+  unit_radial_direction /= radial_magnitude;
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Calculate the required scaffold clearance
+  // ---------------------------------------------------------------------------
+
+  const double strut_radius =
+      scaffold.GetNodeRadius(attachment_node_id);
+
+  const double cell_radius =
+      0.5 * this->GetDiameter();
+
+  ASSERT_(
+      strut_radius >= 0.0,
+      "Single-attachment target position encountered a negative strut radius"
+  );
+
+  ASSERT_(
+      cell_radius > 0.0,
+      "Single-attachment target position requires a positive cell radius"
+  );
+
+  const double centreline_clearance =
+      strut_radius + cell_radius;
+
+  // ---------------------------------------------------------------------------
+  // Step 4: Calculate the target cell-centre position
+  // ---------------------------------------------------------------------------
+
+  const bdm::Double3& attachment_position =
+      scaffold.GetNodePosition(attachment_node_id);
+
+  const bdm::Double3 target_position = {
+      attachment_position[0]
+          + centreline_clearance * unit_radial_direction[0],
+
+      attachment_position[1]
+          + centreline_clearance * unit_radial_direction[1],
+
+      attachment_position[2]
+          + centreline_clearance * unit_radial_direction[2]
+  };
+
+  return target_position;
+}
+// -----------------------------------------------------------------------------
+inline
+void bdm::BiologicalCell::FollowSingleAttachmentScaffold(
+    const ObstacleScaffold& scaffold,
+    const bdm::Double3& previous_attachment_position)
+{
+  /*
+   * Function goal
+   * -------------
+   * Reposition an established single-attachment cell so that it follows its
+   * retained scaffold node while remaining outside the local strut surface.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the cell attachment state
+  // ---------------------------------------------------------------------------
+
+  ASSERT_(
+      this->GetCellMatrixLifecycleStatus() ==
+          CellMatrixLifecycleStatus::kEstablished,
+      "Only an established cell may follow a retained scaffold attachment"
+  );
+
+  ASSERT_(
+      this->GetNumberOfAttachmentRecords() == 1,
+      "Single-attachment scaffold tracking requires exactly one attachment"
+  );
+
+  const AttachmentRecord& attachment =
+      this->GetAttachmentRecord(0);
+
+  ASSERT_(
+      attachment.node_id > 0,
+      "Single-attachment scaffold tracking encountered an invalid node ID"
+  );
+
+  ASSERT_(
+      scaffold.HasNode(attachment.node_id),
+      "Single-attachment scaffold tracking could not find scaffold node ID "
+      + std::to_string(attachment.node_id)
+  );
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Determine the local strut and retained radial side
+  // ---------------------------------------------------------------------------
+
+  const bdm::Double3 strut_direction =
+      this->CalculateSingleAttachmentStrutDirection(
+          scaffold,
+          attachment.node_id
+      );
+
+  const bdm::Double3 radial_direction =
+      this->CalculateSingleAttachmentRadialDirection(
+          previous_attachment_position,
+          strut_direction
+      );
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Calculate and apply the current target position
+  // ---------------------------------------------------------------------------
+
+  const bdm::Double3 target_position =
+      this->CalculateSingleAttachmentTargetPosition(
+          scaffold,
+          attachment.node_id,
+          radial_direction
+      );
+
+  const bdm::Double3 displacement =
+      target_position - this->GetPosition();
+
+  // Preserve the attachment and mechanics state before repositioning.
+  const int node_id_before =
+      attachment.node_id;
+
+  const double k_ecm_before =
+      attachment.k_ecm;
+
+  const bool has_valid_k_ecm_before =
+      attachment.has_valid_k_ecm;
+
+  const bool newly_formed_before =
+      attachment.newly_formed;
+
+  const double k_ce_before =
+      this->GetKce();
+
+  const double contractile_force_before =
+      this->GetContractileForce();
+
+  const bool requires_recalculation_before =
+      this->RequiresMechanicsRecalculation();
+
+  const double displacement_magnitude =
+      L2norm(displacement);
+
+  const double tolerance =
+      this->params()->get<double>("migration_tolerance");
+
+  if (displacement_magnitude <= tolerance) {
+    return;
+  }
+
+  // This is scaffold-following displacement rather than active migration.
+  // Attachment identity and stored mechanics values remain unchanged.
+  this->SetPosition(target_position);
+
+  // ---------------------------------------------------------------------------
+  // Step 4: Validate the applied scaffold-following position
+  // ---------------------------------------------------------------------------
+
+  const bdm::Double3& current_attachment_position =
+      scaffold.GetNodePosition(attachment.node_id);
+
+  const bdm::Double3 cell_offset =
+      this->GetPosition() - current_attachment_position;
+
+  const double expected_clearance =
+      scaffold.GetNodeRadius(attachment.node_id)
+      + 0.5 * this->GetDiameter();
+
+  const double actual_clearance =
+      L2norm(cell_offset);
+
+  ASSERT_(
+      std::fabs(actual_clearance - expected_clearance) <= 1.0e-9,
+      "Single-attachment scaffold tracking produced incorrect "
+      "cell-strut clearance"
+  );
+
+  const double axial_offset =
+      cell_offset[0] * strut_direction[0]
+      + cell_offset[1] * strut_direction[1]
+      + cell_offset[2] * strut_direction[2];
+
+  ASSERT_(
+      std::fabs(axial_offset) <= 1.0e-9,
+      "Single-attachment scaffold tracking produced an axial cell offset"
+  );
+
+  // ---------------------------------------------------------------------------
+  // Step 5: Confirm that mechanics and attachment state were preserved
+  // ---------------------------------------------------------------------------
+
+  const AttachmentRecord& updated_attachment =
+      this->GetAttachmentRecord(0);
+
+  ASSERT_(
+      updated_attachment.node_id == node_id_before,
+      "Single-attachment scaffold tracking changed the persistent node ID"
+  );
+
+  ASSERT_(
+      updated_attachment.k_ecm == k_ecm_before,
+      "Single-attachment scaffold tracking changed k_ecm"
+  );
+
+  ASSERT_(
+      updated_attachment.has_valid_k_ecm ==
+          has_valid_k_ecm_before,
+      "Single-attachment scaffold tracking changed k_ecm validity"
+  );
+
+  ASSERT_(
+      updated_attachment.newly_formed ==
+          newly_formed_before,
+      "Single-attachment scaffold tracking changed newly_formed"
+  );
+
+  ASSERT_(
+      this->GetKce() == k_ce_before,
+      "Single-attachment scaffold tracking changed k_ce"
+  );
+
+  ASSERT_(
+      this->GetContractileForce() ==
+          contractile_force_before,
+      "Single-attachment scaffold tracking changed contractile force"
+  );
+
+  ASSERT_(
+      this->RequiresMechanicsRecalculation() ==
+          requires_recalculation_before,
+      "Single-attachment scaffold tracking changed the mechanics "
+      "recalculation state"
+  );
+}
+// -----------------------------------------------------------------------------
+inline
+bool bdm::BiologicalCell::CheckMigration() 
 {
   if (!this->GetCanMigrate()) return false;
   // by design only viable (non-necrotic) cells could migrate

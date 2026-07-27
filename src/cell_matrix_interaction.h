@@ -1152,7 +1152,7 @@ class CellMatrixInteraction {
             !active_scaffold.nodes_by_id.empty(),
             "Attachment synchronisation received an active scaffold with no nodes"
         );
-        
+
         // -------------------------------------------------------------------------
         // Step 3: Collect BiologicalCell agents
         // -------------------------------------------------------------------------
@@ -1295,6 +1295,33 @@ class CellMatrixInteraction {
 
         // Coordinate refresh must not create an inconsistent lifecycle state.
         cell->ValidateCellMatrixState();
+
+        // -----------------------------------------------------------------------
+        // Step 6: Reposition established single-attachment cells
+        // -----------------------------------------------------------------------
+
+        using LifecycleStatus =
+            bdm::BiologicalCell::CellMatrixLifecycleStatus;
+
+        if (lifecycle_status_before == LifecycleStatus::kEstablished &&
+            original_attachment_records.size() == 1) {
+
+        const int attachment_node_id =
+            original_attachment_records.front().node_id;
+
+        const bdm::Double3 previous_attachment_position =
+            original_attachment_records.front().position;
+
+        const bdm::Double3 cell_position_before =
+            cell->GetPosition();
+
+        cell->FollowSingleAttachmentScaffold(
+            active_scaffold,
+            previous_attachment_position
+        );
+
+        }
+
         }
     }
     
