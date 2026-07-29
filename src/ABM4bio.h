@@ -3739,6 +3739,12 @@ int simulate(const std::string& fname, const int seed)
 
       // reset the data for the obstacles in the simulation
       reinit_obstacles(sim, cells, time, cell_matrix_interaction);
+
+      // Build the node spatial index once for the current scaffold geometry.
+      cell_matrix_interaction.PrepareActiveScaffoldSpatialIndex(
+          cells,
+          obstacles.scaffold
+      );
       
       if (ran_any) {
         // Only import if mechanics actually ran for at least one phenotype

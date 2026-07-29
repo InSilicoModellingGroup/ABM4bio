@@ -28,6 +28,51 @@ public:
 // -----------------------------------------------------------------------------
 class ObstacleScaffold : public Obstacle {
  public:
+  
+  // ---------------------------------------------------------------------------
+  // Spatial node-index bucket
+  // ---------------------------------------------------------------------------
+
+  struct SpatialBucketKey {
+    int x;
+    int y;
+    int z;
+
+    bool operator==(const SpatialBucketKey& other) const {
+      return x == other.x &&
+              y == other.y &&
+              z == other.z;
+    }
+  };
+
+  struct SpatialBucketKeyHash {
+    std::size_t operator()(
+        const SpatialBucketKey& key) const {
+      /*
+        * Combine the three integer bucket coordinates into one hash value.
+        */
+
+      std::size_t seed = 0;
+
+      seed ^= std::hash<int>()(key.x)
+              + 0x9e3779b9
+              + (seed << 6)
+              + (seed >> 2);
+
+      seed ^= std::hash<int>()(key.y)
+              + 0x9e3779b9
+              + (seed << 6)
+              + (seed >> 2);
+
+      seed ^= std::hash<int>()(key.z)
+              + 0x9e3779b9
+              + (seed << 6)
+              + (seed >> 2);
+
+      return seed;
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Persistent scaffold node
   // ---------------------------------------------------------------------------
@@ -106,6 +151,8 @@ class ObstacleScaffold : public Obstacle {
     segment.clear();
     nodes_by_id.clear();
     segment_index_by_id.clear();
+    node_spatial_index.clear();
+    node_spatial_bucket_size = 0.0;
 
     // -------------------------------------------------------------------------
     // Step 3: Read and validate file version
@@ -417,6 +464,194 @@ class ObstacleScaffold : public Obstacle {
     return segment[index_it->second];
   }
 
+  inline
+  void BuildNodeSpatialIndex(
+      const double bucket_size) {
+    /*
+     * Function goal
+     * -------------
+     * Group persistent scaffold node IDs into uniform spatial buckets so later
+     * radius searches inspect only nearby scaffold regions.
+     */
+
+    ASSERT_(
+        bucket_size > 0.0,
+        "Scaffold spatial-index bucket size must be positive"
+    );
+
+    ASSERT_(
+        !nodes_by_id.empty(),
+        "Cannot build a spatial index for a scaffold with no nodes"
+    );
+
+    node_spatial_index.clear();
+    node_spatial_bucket_size = bucket_size;
+
+    for (const auto& node_entry : nodes_by_id) {
+      const int node_id =
+          node_entry.first;
+
+      const bdm::Double3& position =
+          node_entry.second.position;
+
+      const SpatialBucketKey bucket_key = {
+          static_cast<int>(
+              std::floor(position[0] / bucket_size)
+          ),
+          static_cast<int>(
+              std::floor(position[1] / bucket_size)
+          ),
+          static_cast<int>(
+              std::floor(position[2] / bucket_size)
+          )
+      };
+
+      node_spatial_index[bucket_key].push_back(
+          node_id
+      );
+    }
+
+    // Keep node processing deterministic within every bucket.
+    for (auto& bucket_entry : node_spatial_index) {
+      std::sort(
+          bucket_entry.second.begin(),
+          bucket_entry.second.end()
+      );
+    }
+  }
+
+  inline
+  std::vector<int> GetNodeIdsWithinRadius(
+      const bdm::Double3& centre,
+      const double search_radius) const {
+    /*
+     * Function goal
+     * -------------
+     * Return the persistent scaffold node IDs lying within a specified radius
+     * of a point using the prebuilt spatial node index.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the spatial index and search radius
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        search_radius > 0.0,
+        "Scaffold node-radius search requires a positive radius"
+    );
+
+    ASSERT_(
+        node_spatial_bucket_size > 0.0,
+        "Scaffold node-radius search requires a built spatial index"
+    );
+
+    ASSERT_(
+        !node_spatial_index.empty(),
+        "Scaffold node-radius search encountered an empty spatial index"
+    );
+
+    const double radius_squared =
+        search_radius * search_radius;
+
+    // -------------------------------------------------------------------------
+    // Step 2: Identify the centre bucket and search range
+    // -------------------------------------------------------------------------
+
+    const SpatialBucketKey centre_bucket = {
+        static_cast<int>(
+            std::floor(
+                centre[0] / node_spatial_bucket_size
+            )
+        ),
+        static_cast<int>(
+            std::floor(
+                centre[1] / node_spatial_bucket_size
+            )
+        ),
+        static_cast<int>(
+            std::floor(
+                centre[2] / node_spatial_bucket_size
+            )
+        )
+    };
+
+    const int bucket_search_radius =
+        static_cast<int>(
+            std::ceil(
+                search_radius / node_spatial_bucket_size
+            )
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 3: Inspect only nearby spatial buckets
+    // -------------------------------------------------------------------------
+
+    std::vector<int> nearby_node_ids;
+
+    for (int dx = -bucket_search_radius;
+         dx <= bucket_search_radius;
+         ++dx) {
+
+      for (int dy = -bucket_search_radius;
+           dy <= bucket_search_radius;
+           ++dy) {
+
+        for (int dz = -bucket_search_radius;
+             dz <= bucket_search_radius;
+             ++dz) {
+
+          const SpatialBucketKey bucket_key = {
+              centre_bucket.x + dx,
+              centre_bucket.y + dy,
+              centre_bucket.z + dz
+          };
+
+          const auto bucket_it =
+              node_spatial_index.find(bucket_key);
+
+          if (bucket_it == node_spatial_index.end()) {
+            continue;
+          }
+
+          // -----------------------------------------------------------------
+          // Step 4: Apply the exact spherical-distance check
+          // -----------------------------------------------------------------
+
+          for (const int node_id : bucket_it->second) {
+            const bdm::Double3& node_position =
+                this->GetNodePosition(node_id);
+
+            const double dx_node =
+                node_position[0] - centre[0];
+
+            const double dy_node =
+                node_position[1] - centre[1];
+
+            const double dz_node =
+                node_position[2] - centre[2];
+
+            const double distance_squared =
+                dx_node * dx_node
+                + dy_node * dy_node
+                + dz_node * dz_node;
+
+            if (distance_squared <= radius_squared) {
+              nearby_node_ids.push_back(node_id);
+            }
+          }
+        }
+      }
+    }
+
+    // Preserve deterministic processing independent of bucket traversal order.
+    std::sort(
+        nearby_node_ids.begin(),
+        nearby_node_ids.end()
+    );
+
+    return nearby_node_ids;
+  }
+
  public:
   // Scaffold nodes stored by persistent one-based node ID.
   std::unordered_map<int, ScaffoldNode> nodes_by_id;
@@ -426,6 +661,17 @@ class ObstacleScaffold : public Obstacle {
 
   // Existing segment representation used by obstacle calculations.
   std::vector<ObstacleScaffold::Segment> segment;
+
+  // Persistent node IDs grouped into uniform spatial buckets.
+  std::unordered_map<
+      SpatialBucketKey,
+      std::vector<int>,
+      SpatialBucketKeyHash
+  > node_spatial_index;
+
+  // Width of one spatial-index bucket.
+  double node_spatial_bucket_size = 0.0;
+
 };
 // -----------------------------------------------------------------------------
 class ObstacleBox : public Obstacle {

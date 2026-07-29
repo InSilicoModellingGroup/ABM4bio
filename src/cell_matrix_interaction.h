@@ -1096,9 +1096,104 @@ class CellMatrixInteraction {
     std::remove(mechanics_file_path.c_str());
     }
   
-    // ---------------------------------------------------------------------------
-    // Synchronise persistent attachment coordinates
-    // ---------------------------------------------------------------------------
+    inline
+    void PrepareActiveScaffoldSpatialIndex(
+        const std::map<int, std::string>& cells,
+        std::vector<ObstacleScaffold>& active_scaffolds) const
+    {
+        /*
+        * Function goal
+        * -------------
+        * Build the reusable spatial node index for the current active scaffold.
+        *
+        * The index is rebuilt once after each scaffold replacement and is reused
+        * by all cell candidate-radius searches during that timestep.
+        */
+
+        // -------------------------------------------------------------------------
+        // Step 1: Exit when cell-matrix mechanics is disabled
+        // -------------------------------------------------------------------------
+
+        if (!this->AnyCellMatrixMechanicsEnabled(cells)) {
+        return;
+        }
+
+        ASSERT_(
+            active_scaffolds.size() == 1,
+            "Scaffold spatial-index preparation requires exactly one active "
+            "scaffold when cell-matrix mechanics is enabled"
+        );
+
+        // -------------------------------------------------------------------------
+        // Step 2: Find the mechanics-enabled phenotype
+        // -------------------------------------------------------------------------
+
+        bool found_mechanics_phenotype = false;
+        double max_cell_reach_radius = 0.0;
+
+        for (const auto& cell_type : cells) {
+        const int phenotype_id =
+            cell_type.first;
+
+        if (phenotype_id < 1) {
+            continue;
+        }
+
+        const std::string& phenotype_name =
+            cell_type.second;
+
+        const std::string mech_base =
+            phenotype_name + "/cell_matrix_mechanics";
+
+        const bool mechanics_enabled =
+            this->params()->have_parameter<bool>(
+                mech_base + "/enabled"
+            ) &&
+            this->params()->get<bool>(
+                mech_base + "/enabled"
+            );
+
+        if (!mechanics_enabled) {
+            continue;
+        }
+
+        ASSERT_(
+            !found_mechanics_phenotype,
+            "Scaffold spatial-index preparation currently supports only one "
+            "mechanics-enabled phenotype"
+        );
+
+        max_cell_reach_radius =
+            this->params()->get<double>(
+                mech_base + "/max_cell_reach_radius"
+            );
+
+        found_mechanics_phenotype = true;
+        }
+
+        ASSERT_(
+            found_mechanics_phenotype,
+            "Scaffold spatial-index preparation could not find a "
+            "mechanics-enabled phenotype"
+        );
+
+        ASSERT_(
+            max_cell_reach_radius > 0.0,
+            "Scaffold spatial-index preparation requires a positive maximum "
+            "cell reach radius"
+        );
+
+        // -------------------------------------------------------------------------
+        // Step 3: Build the index using the maximum pairwise search distance
+        // -------------------------------------------------------------------------
+
+        const double bucket_size =
+            2.0 * max_cell_reach_radius;
+
+        active_scaffolds.front().BuildNodeSpatialIndex(
+            bucket_size
+        );
+    }    
 
     inline
     void SynchroniseAttachmentCoordinates(
@@ -1773,10 +1868,6 @@ class CellMatrixInteraction {
 
     private:
     
-    // ---------------------------------------------------------------------------
-    // Refresh attachment-record coordinates
-    // ---------------------------------------------------------------------------
-
     inline
     std::vector<bdm::BiologicalCell::AttachmentRecord>
     RefreshAttachmentRecordCoordinates(
