@@ -1696,10 +1696,61 @@ void init_cells(bdm::Simulation& sim,
             );
           }
 
+          // ---------------------------------------------------------------------
+          // Attachment formation count parameters
+          // ---------------------------------------------------------------------
+
+          if (!params.have_parameter<double>(
+                  mech_base +
+                  "/mean_attachment_additions_per_reference_time")) {
+            params.set<double>(
+                mech_base +
+                "/mean_attachment_additions_per_reference_time"
+            ) = 1.0;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base +
+                  "/reference_attachment_formation_time")) {
+            params.set<double>(
+                mech_base +
+                "/reference_attachment_formation_time"
+            ) = 600.0;
+          }
+
+          // ---------------------------------------------------------------------
+          // Validate attachment formation count parameters
+          // ---------------------------------------------------------------------
+
+          const double mean_attachment_additions_per_reference_time =
+              params.get<double>(
+                  mech_base +
+                  "/mean_attachment_additions_per_reference_time"
+              );
+
+          const double reference_attachment_formation_time =
+              params.get<double>(
+                  mech_base +
+                  "/reference_attachment_formation_time"
+              );
+
+          if (mean_attachment_additions_per_reference_time < 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/mean_attachment_additions_per_reference_time\" must be >= 0"
+            );
+          }
+
+          if (reference_attachment_formation_time <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/reference_attachment_formation_time\" must be > 0"
+            );
+          }
+
         
           if (!params.have_parameter<bool>(mech_base + "/verbose"))
           params.set<bool>(mech_base + "/verbose") = false;
-
       }
       //
       // ...end of cell phenotypes loop

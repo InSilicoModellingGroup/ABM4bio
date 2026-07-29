@@ -1392,6 +1392,263 @@ private:
     );
   }
 
+  inline
+  double CalculateTimeAdjustedAttachmentFormationMean(
+      const double mean_additions_per_reference_time,
+      const double time_step,
+      const double reference_attachment_formation_time) const {
+    /*
+     * Function goal
+     * -------------
+     * Scale the expected number of attachment additions from its configured
+     * reference interval to the current ABM timestep.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the inputs
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        mean_additions_per_reference_time >= 0.0,
+        "Mean attachment additions per reference time must be non-negative"
+    );
+
+    ASSERT_(
+        time_step > 0.0,
+        "Attachment formation requires a positive timestep"
+    );
+
+    ASSERT_(
+        reference_attachment_formation_time > 0.0,
+        "Attachment formation requires a positive reference time"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Scale the mean to the current timestep
+    // -------------------------------------------------------------------------
+
+    const double time_adjusted_mean =
+        mean_additions_per_reference_time *
+        time_step /
+        reference_attachment_formation_time;
+
+    ASSERT_(
+        std::isfinite(time_adjusted_mean) &&
+        time_adjusted_mean >= 0.0,
+        "Calculated attachment formation mean is invalid"
+    );
+
+    return time_adjusted_mean;
+  }
+
+  inline
+  std::size_t SampleAttachmentAdditionCount(
+      const double time_adjusted_mean,
+      const std::size_t available_attachment_slots) const {
+    /*
+     * Function goal
+     * -------------
+     * Sample the number of attachment additions from a Poisson distribution
+     * and limit the result to the number of available attachment slots.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the inputs
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        std::isfinite(time_adjusted_mean) &&
+        time_adjusted_mean >= 0.0,
+        "Attachment addition sampling requires a valid non-negative mean"
+    );
+
+    // A cell at its maximum attachment count cannot form more attachments.
+    if (available_attachment_slots == 0) {
+      return 0;
+    }
+
+    // A zero mean disables attachment formation without requiring a draw.
+    if (time_adjusted_mean == 0.0) {
+      return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Access BioDynaMo's random-number generator
+    // -------------------------------------------------------------------------
+
+    auto* simulation =
+        bdm::Simulation::GetActive();
+
+    ASSERT_(
+        simulation != nullptr,
+        "Attachment addition sampling requires an active simulation"
+    );
+
+    auto* random_generator =
+        simulation->GetRandom();
+
+    ASSERT_(
+        random_generator != nullptr,
+        "Attachment addition sampling requires a random-number generator"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 3: Draw the requested number of attachment additions
+    // -------------------------------------------------------------------------
+
+    const int sampled_addition_count =
+        random_generator->Poisson(
+            time_adjusted_mean
+        );
+
+    ASSERT_(
+        sampled_addition_count >= 0,
+        "Poisson sampling returned a negative attachment addition count"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 4: Cap the count by the available attachment slots
+    // -------------------------------------------------------------------------
+
+    const std::size_t capped_addition_count =
+        std::min(
+            static_cast<std::size_t>(
+                sampled_addition_count
+            ),
+            available_attachment_slots
+        );
+
+    ASSERT_(
+        capped_addition_count <= available_attachment_slots,
+        "Attachment addition count exceeds the available attachment slots"
+    );
+
+    return capped_addition_count;
+  }
+
+  inline
+  std::size_t DetermineAttachmentAdditionCount() const {
+    /*
+     * Function goal
+     * -------------
+     * Determine how many new attachments the cell should attempt to form
+     * during the current timestep, limited by its available attachment slots.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Confirm that attachment formation is applicable
+    // -------------------------------------------------------------------------
+
+    if (this->GetPhenotype() < 1) {
+      return 0;
+    }
+
+    if (cell_matrix_lifecycle_status_ !=
+        CellMatrixLifecycleStatus::kEstablished) {
+      return 0;
+    }
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Attachment addition count requires at least one retained attachment"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Read the phenotype mechanics configuration
+    // -------------------------------------------------------------------------
+
+    const std::string& phenotype_name =
+        this->params()->get<std::string>(
+            "phenotype_ID/" +
+            std::to_string(this->GetPhenotype())
+        );
+
+    const std::string mech_base =
+        phenotype_name + "/cell_matrix_mechanics";
+
+    const bool mechanics_enabled =
+        this->params()->have_parameter<bool>(
+            mech_base + "/enabled"
+        ) &&
+        this->params()->get<bool>(
+            mech_base + "/enabled"
+        );
+
+    if (!mechanics_enabled) {
+      return 0;
+    }
+
+    const int maximum_attachment_count =
+        this->params()->get<int>(
+            mech_base + "/num_attachments"
+        );
+
+    ASSERT_(
+        maximum_attachment_count > 0,
+        "Maximum attachment count must be positive"
+    );
+
+    ASSERT_(
+        attachment_records_.size() <=
+            static_cast<std::size_t>(
+                maximum_attachment_count
+            ),
+        "Current attachment count exceeds the configured maximum"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 3: Calculate the number of available attachment slots
+    // -------------------------------------------------------------------------
+
+    const std::size_t available_attachment_slots =
+        static_cast<std::size_t>(
+            maximum_attachment_count
+        ) -
+        attachment_records_.size();
+
+    // Avoid probability calculations and random sampling when the cell is full.
+    if (available_attachment_slots == 0) {
+      return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: Calculate the timestep-adjusted Poisson mean
+    // -------------------------------------------------------------------------
+
+    const double mean_additions_per_reference_time =
+        this->params()->get<double>(
+            mech_base +
+            "/mean_attachment_additions_per_reference_time"
+        );
+
+    const double reference_attachment_formation_time =
+        this->params()->get<double>(
+            mech_base +
+            "/reference_attachment_formation_time"
+        );
+
+    const double time_step =
+        this->params()->get<double>(
+            "time_step"
+        );
+
+    const double time_adjusted_mean =
+        this->CalculateTimeAdjustedAttachmentFormationMean(
+            mean_additions_per_reference_time,
+            time_step,
+            reference_attachment_formation_time
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 5: Sample and cap the requested addition count
+    // -------------------------------------------------------------------------
+
+    return this->SampleAttachmentAdditionCount(
+        time_adjusted_mean,
+        available_attachment_slots
+    );
+  }
+
 };
 // =============================================================================
 } // ...end of namespace
