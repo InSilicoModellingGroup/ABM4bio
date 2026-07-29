@@ -1193,6 +1193,7 @@ class CellMatrixInteraction {
         active_scaffolds.front().BuildNodeSpatialIndex(
             bucket_size
         );
+
     }    
 
     inline

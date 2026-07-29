@@ -457,10 +457,6 @@ public:
     return true;
   }
 
-  // -----------------------------------------------------------------------------
-  // Clear attachment records
-  // -----------------------------------------------------------------------------
-
   void ClearAttachmentRecords() {
     /*
     * Function goal
@@ -880,6 +876,520 @@ private:
     );
 
     return detachment_probabilities;
+  }
+
+  inline
+  std::vector<std::size_t> SelectAttachmentIndicesForDetachment(
+      const std::vector<double>& detachment_probabilities,
+      const std::vector<double>& random_draws) const {
+    /*
+     * Function goal
+     * -------------
+     * Select attachments for detachment using one random draw per attachment,
+     * while ensuring that an established cell always retains at least one.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the current attachment state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Attachment detachment selection requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Attachment detachment selection requires attachment records"
+    );
+
+    ASSERT_(
+        detachment_probabilities.size() ==
+            attachment_records_.size(),
+        "Detachment probability count does not match attachment count"
+    );
+
+    ASSERT_(
+        random_draws.size() ==
+            attachment_records_.size(),
+        "Detachment random-draw count does not match attachment count"
+    );
+
+    // A previously attached cell must never lose its final attachment.
+    if (attachment_records_.size() == 1) {
+      ASSERT_(
+          detachment_probabilities.front() == 0.0,
+          "A single attachment must have zero detachment probability"
+      );
+
+      return {};
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Apply one stochastic draw to each attachment
+    // -------------------------------------------------------------------------
+
+    std::vector<std::size_t> selected_indices;
+
+    selected_indices.reserve(
+        attachment_records_.size() - 1
+    );
+
+    for (std::size_t i = 0;
+         i < attachment_records_.size();
+         ++i) {
+      const double probability =
+          detachment_probabilities[i];
+
+      const double random_draw =
+          random_draws[i];
+
+      ASSERT_(
+          std::isfinite(probability) &&
+          probability >= 0.0 &&
+          probability <= 1.0,
+          "Attachment detachment selection encountered an invalid probability"
+      );
+
+      ASSERT_(
+          std::isfinite(random_draw) &&
+          random_draw >= 0.0 &&
+          random_draw <= 1.0,
+          "Attachment detachment selection encountered an invalid random draw"
+      );
+
+      // Use < so that an attachment with probability zero can never detach.
+      if (random_draw < probability) {
+        selected_indices.push_back(i);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3: Preserve one attachment if every draw selected detachment
+    // -------------------------------------------------------------------------
+
+    if (selected_indices.size() ==
+        attachment_records_.size()) {
+      std::size_t retained_index =
+          selected_indices.front();
+
+      double smallest_selection_margin =
+          detachment_probabilities[retained_index] -
+          random_draws[retained_index];
+
+      for (const std::size_t index : selected_indices) {
+        const double selection_margin =
+            detachment_probabilities[index] -
+            random_draws[index];
+
+        const bool has_smaller_margin =
+            selection_margin < smallest_selection_margin;
+
+        const bool equal_margin_lower_node_id =
+            selection_margin == smallest_selection_margin &&
+            attachment_records_[index].node_id <
+                attachment_records_[retained_index].node_id;
+
+        if (has_smaller_margin ||
+            equal_margin_lower_node_id) {
+          retained_index = index;
+          smallest_selection_margin =
+              selection_margin;
+        }
+      }
+
+      selected_indices.erase(
+          std::remove(
+              selected_indices.begin(),
+              selected_indices.end(),
+              retained_index
+          ),
+          selected_indices.end()
+      );
+    }
+
+    ASSERT_(
+        selected_indices.size() <
+            attachment_records_.size(),
+        "Attachment detachment selection attempted to remove every attachment"
+    );
+
+    return selected_indices;
+  }
+
+  inline
+  bool ApplySelectedAttachmentDetachments(
+      const std::vector<std::size_t>& selected_indices) {
+    /*
+     * Function goal
+     * -------------
+     * Remove the attachments selected for detachment while preserving at least
+     * one retained attachment and marking the cell mechanics as outdated.
+     *
+     * Returns true when the attachment set changes.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the current cell state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Attachment detachment requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Attachment detachment requires attachment records"
+    );
+
+    // No selected attachments means that no update is required.
+    if (selected_indices.empty()) {
+      return false;
+    }
+
+    ASSERT_(
+        selected_indices.size() <
+            attachment_records_.size(),
+        "Attachment detachment cannot remove every attachment"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Validate and record the selected indices
+    // -------------------------------------------------------------------------
+
+    std::unordered_set<std::size_t> selected_index_set;
+
+    for (const std::size_t index : selected_indices) {
+      ASSERT_(
+          index < attachment_records_.size(),
+          "Attachment detachment encountered an out-of-range index"
+      );
+
+      const bool inserted =
+          selected_index_set.insert(index).second;
+
+      ASSERT_(
+          inserted,
+          "Attachment detachment received a duplicate selected index"
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3: Preserve the retained attachment records
+    // -------------------------------------------------------------------------
+
+    std::vector<AttachmentRecord> retained_attachments;
+
+    retained_attachments.reserve(
+        attachment_records_.size() -
+        selected_indices.size()
+    );
+
+    for (std::size_t index = 0;
+         index < attachment_records_.size();
+         ++index) {
+      if (selected_index_set.find(index) !=
+          selected_index_set.end()) {
+        continue;
+      }
+
+      retained_attachments.push_back(
+          attachment_records_[index]
+      );
+    }
+
+    ASSERT_(
+        !retained_attachments.empty(),
+        "Attachment detachment produced an empty retained attachment set"
+    );
+
+    ASSERT_(
+        retained_attachments.size() +
+            selected_indices.size() ==
+            attachment_records_.size(),
+        "Attachment detachment produced an inconsistent attachment count"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 4: Update the attachment set
+    // -------------------------------------------------------------------------
+
+    this->SetAttachmentRecords(
+        retained_attachments
+    );
+
+    this->MarkMechanicsForRecalculation();
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Attachment detachment unexpectedly changed the cell lifecycle"
+    );
+
+    ASSERT_(
+        requires_mechanics_recalculation_,
+        "Attachment detachment must request mechanics recalculation"
+    );
+
+    return true;
+  }
+
+  inline
+  bool AttemptAttachmentDetachment(
+      const double optimum_k_ecm,
+      const double low_k_ecm_slope,
+      const double high_k_ecm_slope,
+      const double min_probability,
+      const double max_probability,
+      const double k_ecm_weight,
+      const double time_step,
+      const double reference_detachment_time) {
+    /*
+     * Function goal
+     * -------------
+     * Calculate attachment-level detachment probabilities, perform one random
+     * draw per attachment and remove the selected attachments.
+     *
+     * Returns true when at least one attachment is removed.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the current attachment state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Stochastic attachment detachment requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Stochastic attachment detachment requires attachment records"
+    );
+
+    // The final retained attachment cannot detach.
+    if (attachment_records_.size() == 1) {
+      return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Calculate one probability per attachment
+    // -------------------------------------------------------------------------
+
+    const std::vector<double> detachment_probabilities =
+        this->CalculateAttachmentDetachmentProbabilities(
+            optimum_k_ecm,
+            low_k_ecm_slope,
+            high_k_ecm_slope,
+            min_probability,
+            max_probability,
+            k_ecm_weight,
+            time_step,
+            reference_detachment_time
+        );
+
+    ASSERT_(
+        detachment_probabilities.size() ==
+            attachment_records_.size(),
+        "Stochastic detachment probability count does not match attachment "
+        "count"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 3: Generate one random draw per attachment
+    // -------------------------------------------------------------------------
+
+    auto* simulation =
+        bdm::Simulation::GetActive();
+
+    ASSERT_(
+        simulation != nullptr,
+        "Stochastic attachment detachment requires an active simulation"
+    );
+
+    auto* random_generator =
+        simulation->GetRandom();
+
+    ASSERT_(
+        random_generator != nullptr,
+        "Stochastic attachment detachment requires a random-number generator"
+    );
+
+    std::vector<double> random_draws;
+
+    random_draws.reserve(
+        attachment_records_.size()
+    );
+
+    for (std::size_t index = 0;
+         index < attachment_records_.size();
+         ++index) {
+      random_draws.push_back(
+          random_generator->Uniform(0.0, 1.0)
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: Select the attachments whose draws permit detachment
+    // -------------------------------------------------------------------------
+
+    const std::vector<std::size_t> selected_indices =
+        this->SelectAttachmentIndicesForDetachment(
+            detachment_probabilities,
+            random_draws
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 5: Apply the selected detachments
+    // -------------------------------------------------------------------------
+
+    return this->ApplySelectedAttachmentDetachments(
+        selected_indices
+    );
+  }
+
+  inline
+  bool ProcessAttachmentDetachment() {
+    /*
+     * Function goal
+     * -------------
+     * Confirm that the cell is eligible for attachment turnover, read the
+     * phenotype-specific detachment parameters and attempt stochastic
+     * detachment.
+     *
+     * Returns true when at least one attachment is removed.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Exclude cells that cannot undergo attachment turnover
+    // -------------------------------------------------------------------------
+
+    if (this->GetPhenotype() < 1) {
+      return false;
+    }
+
+    if (cell_matrix_lifecycle_status_ !=
+        CellMatrixLifecycleStatus::kEstablished) {
+      return false;
+    }
+
+    if (attachment_records_.size() <= 1) {
+      return false;
+    }
+
+    // Do not use attachment mechanics that are waiting for FEM recalculation.
+    if (requires_mechanics_recalculation_) {
+      return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Read the phenotype mechanics configuration
+    // -------------------------------------------------------------------------
+
+    const std::string& phenotype_name =
+        this->params()->get<std::string>(
+            "phenotype_ID/" +
+            std::to_string(this->GetPhenotype())
+        );
+
+    const std::string mech_base =
+        phenotype_name + "/cell_matrix_mechanics";
+
+    const bool mechanics_enabled =
+        this->params()->have_parameter<bool>(
+            mech_base + "/enabled"
+        ) &&
+        this->params()->get<bool>(
+            mech_base + "/enabled"
+        );
+
+    if (!mechanics_enabled) {
+      return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3: Confirm that current attachment stiffness values are usable
+    // -------------------------------------------------------------------------
+
+    for (const auto& attachment : attachment_records_) {
+      ASSERT_(
+          attachment.node_id > 0,
+          "Attachment detachment encountered a non-positive node ID"
+      );
+
+      if (!attachment.has_valid_k_ecm) {
+        return false;
+      }
+
+      ASSERT_(
+          std::isfinite(attachment.k_ecm) &&
+          attachment.k_ecm >= 0.0,
+          "Attachment detachment encountered invalid k_ecm"
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: Read the detachment parameters
+    // -------------------------------------------------------------------------
+
+    const double optimum_k_ecm =
+        this->params()->get<double>(
+            mech_base + "/detachment_optimum_kecm"
+        );
+
+    const double low_k_ecm_slope =
+        this->params()->get<double>(
+            mech_base + "/detachment_low_kecm_slope"
+        );
+
+    const double high_k_ecm_slope =
+        this->params()->get<double>(
+            mech_base + "/detachment_high_kecm_slope"
+        );
+
+    const double min_probability =
+        this->params()->get<double>(
+            mech_base + "/detachment_min_probability"
+        );
+
+    const double max_probability =
+        this->params()->get<double>(
+            mech_base + "/detachment_max_probability"
+        );
+
+    const double k_ecm_weight =
+        this->params()->get<double>(
+            mech_base + "/detachment_kecm_weight"
+        );
+
+    const double reference_detachment_time =
+        this->params()->get<double>(
+            mech_base + "/reference_detachment_time"
+        );
+
+    const double time_step =
+        this->params()->get<double>(
+            "time_step"
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 5: Attempt stochastic detachment
+    // -------------------------------------------------------------------------
+
+    return this->AttemptAttachmentDetachment(
+        optimum_k_ecm,
+        low_k_ecm_slope,
+        high_k_ecm_slope,
+        min_probability,
+        max_probability,
+        k_ecm_weight,
+        time_step,
+        reference_detachment_time
+    );
   }
 
 };

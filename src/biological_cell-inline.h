@@ -1422,11 +1422,45 @@ void bdm::BiologicalCell::FollowSingleAttachmentScaffold(
 }
 // -----------------------------------------------------------------------------
 inline
-bool bdm::BiologicalCell::CheckMigration() 
+bool bdm::BiologicalCell::CheckMigration()
 {
-  if (!this->GetCanMigrate()) return false;
-  // by design only viable (non-necrotic) cells could migrate
-  if (!this->GetPhenotype()) return false;
+  // Only cells permitted to migrate can undergo attachment turnover.
+  if (!this->GetCanMigrate()) {
+    return false;
+  }
+
+  // Only viable cells can undergo attachment turnover or migration.
+  if (!this->GetPhenotype()) {
+    return false;
+  }
+
+  const bool attachments_detached =
+      this->ProcessAttachmentDetachment();
+
+  if (attachments_detached) {
+    /*
+     * The attachment geometry has changed, so its FEM-derived mechanics are
+     * outdated.
+     */
+
+    // Prevent displacement values from an earlier timestep being reused.
+    this->passive_displacement_ = {
+        0.0,
+        0.0,
+        0.0
+    };
+
+    this->active_displacement_ = {
+        0.0,
+        0.0,
+        0.0
+    };
+
+    this->ValidateCellMatrixState();
+
+    // Attachment loss alone does not mean that the cell position changed.
+    return false;
+  }
   //
   // access BioDynaMo's resource manager
   auto* rm = bdm::Simulation::GetActive()->GetResourceManager();

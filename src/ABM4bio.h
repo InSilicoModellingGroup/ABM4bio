@@ -1559,6 +1559,43 @@ void init_cells(bdm::Simulation& sim,
             ) = 600.0;
           }
 
+          if (!params.have_parameter<double>(
+                  mech_base +
+                  "/recommended_max_cell_matrix_time_step")) {
+            params.set<double>(
+                mech_base +
+                "/recommended_max_cell_matrix_time_step"
+            ) = 3600.0;
+          }
+
+          const double recommended_max_cell_matrix_time_step =
+              params.get<double>(
+                  mech_base +
+                  "/recommended_max_cell_matrix_time_step"
+              );
+
+          if (recommended_max_cell_matrix_time_step <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/recommended_max_cell_matrix_time_step\" must be > 0"
+            );
+          }
+
+          if (time_step >
+              recommended_max_cell_matrix_time_step) {
+            std::cerr
+                << "[CELL-MATRIX WARNING] The simulation timestep is "
+                << time_step
+                << " seconds, which exceeds the recommended maximum "
+                << recommended_max_cell_matrix_time_step
+                << " seconds for attachment turnover and cell-matrix "
+                  "migration. The current model represents at most one "
+                  "detachment-reattachment and migration event per timestep. "
+                  "Consider reducing time_step for a more realistic temporal "
+                  "resolution."
+                << std::endl;
+          }
+
           // ---------------------------------------------------------------------
           // Validate detachment probability parameters
           // ---------------------------------------------------------------------
