@@ -1505,7 +1505,162 @@ void init_cells(bdm::Simulation& sim,
         if (!params.have_parameter<double>(mech_base + "/mechanics_migration_probability"))
           params.set<double>(mech_base + "/mechanics_migration_probability") = 1.0;
 
-        if (!params.have_parameter<bool>(mech_base + "/verbose"))
+        
+          // ---------------------------------------------------------------------
+          // Attachment detachment probability parameters
+          // ---------------------------------------------------------------------
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_optimum_kecm")) {
+            params.set<double>(
+                mech_base + "/detachment_optimum_kecm"
+            ) = 50.0;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_low_kecm_slope")) {
+            params.set<double>(
+                mech_base + "/detachment_low_kecm_slope"
+            ) = 0.05;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_high_kecm_slope")) {
+            params.set<double>(
+                mech_base + "/detachment_high_kecm_slope"
+            ) = 0.05;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_min_probability")) {
+            params.set<double>(
+                mech_base + "/detachment_min_probability"
+            ) = 0.05;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_max_probability")) {
+            params.set<double>(
+                mech_base + "/detachment_max_probability"
+            ) = 0.50;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_kecm_weight")) {
+            params.set<double>(
+                mech_base + "/detachment_kecm_weight"
+            ) = 1.0;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/reference_detachment_time")) {
+            params.set<double>(
+                mech_base + "/reference_detachment_time"
+            ) = 600.0;
+          }
+
+          // ---------------------------------------------------------------------
+          // Validate detachment probability parameters
+          // ---------------------------------------------------------------------
+
+          const double detachment_optimum_kecm =
+              params.get<double>(
+                  mech_base + "/detachment_optimum_kecm"
+              );
+
+          const double detachment_low_kecm_slope =
+              params.get<double>(
+                  mech_base + "/detachment_low_kecm_slope"
+              );
+
+          const double detachment_high_kecm_slope =
+              params.get<double>(
+                  mech_base + "/detachment_high_kecm_slope"
+              );
+
+          const double detachment_min_probability =
+              params.get<double>(
+                  mech_base + "/detachment_min_probability"
+              );
+
+          const double detachment_max_probability =
+              params.get<double>(
+                  mech_base + "/detachment_max_probability"
+              );
+
+          const double detachment_kecm_weight =
+              params.get<double>(
+                  mech_base + "/detachment_kecm_weight"
+              );
+
+          const double reference_detachment_time =
+              params.get<double>(
+                  mech_base + "/reference_detachment_time"
+              );
+
+          if (detachment_optimum_kecm <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_optimum_kecm\" must be > 0"
+            );
+          }
+
+          if (detachment_low_kecm_slope <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_low_kecm_slope\" must be > 0"
+            );
+          }
+
+          if (detachment_high_kecm_slope <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_high_kecm_slope\" must be > 0"
+            );
+          }
+
+          if (detachment_min_probability < 0.0 ||
+              detachment_min_probability > 1.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_min_probability\" must be between 0 and 1"
+            );
+          }
+
+          if (detachment_max_probability < 0.0 ||
+              detachment_max_probability > 1.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_max_probability\" must be between 0 and 1"
+            );
+          }
+
+          if (detachment_min_probability >
+              detachment_max_probability) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_min_probability\" cannot exceed \"" +
+                mech_base + "/detachment_max_probability\""
+            );
+          }
+
+          if (detachment_kecm_weight < 0.0 ||
+              detachment_kecm_weight > 1.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_kecm_weight\" must be between 0 and 1"
+            );
+          }
+
+          if (reference_detachment_time <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/reference_detachment_time\" must be > 0"
+            );
+          }
+
+        
+          if (!params.have_parameter<bool>(mech_base + "/verbose"))
           params.set<bool>(mech_base + "/verbose") = false;
 
       }

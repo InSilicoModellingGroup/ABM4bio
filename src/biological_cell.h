@@ -192,7 +192,7 @@ public:
     requires_mechanics_recalculation_ = false;
   }
 
-    // -----------------------------------------------------------------------------
+  // -----------------------------------------------------------------------------
   // Validate the internal cell-matrix state
   // -----------------------------------------------------------------------------
 
@@ -596,7 +596,6 @@ private:
   // =============================================================================
   // Cell-matrix mechanics: attachment data
   // =============================================================================
-
   
   // FEM communication state.
   std::string cell_state_ = "attach";
@@ -617,6 +616,271 @@ private:
   // coordinate and associated local mechanics state.
   std::vector<AttachmentRecord> attachment_records_;
 
+  inline
+  double CalculateReferenceDetachmentProbability(
+      const double k_ecm,
+      const double optimum_k_ecm,
+      const double low_k_ecm_slope,
+      const double high_k_ecm_slope,
+      const double min_probability,
+      const double max_probability,
+      const double k_ecm_weight) const {
+    /*
+     * Function goal
+     * -------------
+     * Calculate the reference detachment probability for one attachment from
+     * its local scaffold stiffness (k_ecm).
+     *
+     * Detachment is least likely near the optimum stiffness and increases
+     * towards the configured limit at lower or higher stiffness values (biphasic).
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the inputs
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        k_ecm >= 0.0,
+        "Detachment probability calculation requires non-negative k_ecm"
+    );
+
+    ASSERT_(
+        optimum_k_ecm > 0.0,
+        "Detachment probability calculation requires positive optimum k_ecm"
+    );
+
+    ASSERT_(
+        low_k_ecm_slope > 0.0,
+        "Detachment probability calculation requires a positive low-k_ecm "
+        "slope"
+    );
+
+    ASSERT_(
+        high_k_ecm_slope > 0.0,
+        "Detachment probability calculation requires a positive high-k_ecm "
+        "slope"
+    );
+
+    ASSERT_(
+        min_probability >= 0.0 &&
+        min_probability <= 1.0,
+        "Minimum detachment probability must be between 0 and 1"
+    );
+
+    ASSERT_(
+        max_probability >= min_probability &&
+        max_probability <= 1.0,
+        "Maximum detachment probability must be between the minimum "
+        "probability and 1"
+    );
+
+    ASSERT_(
+        k_ecm_weight >= 0.0 &&
+        k_ecm_weight <= 1.0,
+        "Detachment k_ecm weight must be between 0 and 1"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Select the slope on the appropriate side of the optimum
+    // -------------------------------------------------------------------------
+
+    const double selected_slope =
+        k_ecm <= optimum_k_ecm
+            ? low_k_ecm_slope
+            : high_k_ecm_slope;
+
+    const double distance_from_optimum =
+        std::abs(k_ecm - optimum_k_ecm);
+
+    // -------------------------------------------------------------------------
+    // Step 3: Calculate the bounded stiffness response
+    // -------------------------------------------------------------------------
+
+    const double stiffness_response =
+        1.0 -
+        std::exp(
+            -selected_slope * distance_from_optimum
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 4: Calculate the reference probability
+    // -------------------------------------------------------------------------
+
+    const double reference_probability =
+        min_probability +
+        k_ecm_weight *
+        (max_probability - min_probability) *
+        stiffness_response;
+
+    ASSERT_(
+        reference_probability >= 0.0 &&
+        reference_probability <= 1.0,
+        "Calculated reference detachment probability is outside [0, 1]"
+    );
+
+    return reference_probability;
+  }
+
+  inline
+  double CalculateTimeAdjustedDetachmentProbability(
+      const double reference_probability,
+      const double time_step,
+      const double reference_detachment_time) const {
+    /*
+     * Function goal
+     * -------------
+     * Convert a detachment probability defined over a reference time interval
+     * into the equivalent probability for the current ABM timestep.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the inputs
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        reference_probability >= 0.0 &&
+        reference_probability <= 1.0,
+        "Reference detachment probability must be between 0 and 1"
+    );
+
+    ASSERT_(
+        time_step > 0.0,
+        "Time-adjusted detachment probability requires a positive timestep"
+    );
+
+    ASSERT_(
+        reference_detachment_time > 0.0,
+        "Time-adjusted detachment probability requires a positive reference "
+        "time"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Scale the probability to the current timestep
+    // -------------------------------------------------------------------------
+
+    const double time_adjusted_probability =
+        1.0 -
+        std::pow(
+            1.0 - reference_probability,
+            time_step / reference_detachment_time
+        );
+
+    ASSERT_(
+        time_adjusted_probability >= 0.0 &&
+        time_adjusted_probability <= 1.0,
+        "Calculated time-adjusted detachment probability is outside [0, 1]"
+    );
+
+    return time_adjusted_probability;
+  }
+
+  inline
+  std::vector<double> CalculateAttachmentDetachmentProbabilities(
+      const double optimum_k_ecm,
+      const double low_k_ecm_slope,
+      const double high_k_ecm_slope,
+      const double min_probability,
+      const double max_probability,
+      const double k_ecm_weight,
+      const double time_step,
+      const double reference_detachment_time) const {
+    /*
+     * Function goal
+     * -------------
+     * Calculate the timestep-adjusted detachment probability for every current
+     * attachment using its latest valid local scaffold stiffness (k_ecm).
+     *
+     * Returned probabilities follow the same order as attachment_records_.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the current cell-matrix state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Attachment detachment probabilities require an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Attachment detachment probabilities require attachment records"
+    );
+
+    // A cell must always retain at least one attachment.
+    if (attachment_records_.size() == 1) {
+      return {0.0};
+    }
+
+    ASSERT_(
+        !requires_mechanics_recalculation_,
+        "Attachment detachment probabilities require current FEM mechanics"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Calculate one probability per attachment
+    // -------------------------------------------------------------------------
+
+    std::vector<double> detachment_probabilities;
+
+    detachment_probabilities.reserve(
+        attachment_records_.size()
+    );
+
+    for (const auto& attachment : attachment_records_) {
+      ASSERT_(
+          attachment.node_id > 0,
+          "Attachment detachment probability encountered an invalid node ID"
+      );
+
+      ASSERT_(
+          attachment.has_valid_k_ecm,
+          "Attachment detachment probability requires valid k_ecm"
+      );
+
+      ASSERT_(
+          std::isfinite(attachment.k_ecm),
+          "Attachment detachment probability encountered non-finite k_ecm"
+      );
+
+      ASSERT_(
+          attachment.k_ecm >= 0.0,
+          "Attachment detachment probability encountered negative k_ecm"
+      );
+
+      const double reference_probability =
+          this->CalculateReferenceDetachmentProbability(
+              attachment.k_ecm,
+              optimum_k_ecm,
+              low_k_ecm_slope,
+              high_k_ecm_slope,
+              min_probability,
+              max_probability,
+              k_ecm_weight
+          );
+
+      const double time_adjusted_probability =
+          this->CalculateTimeAdjustedDetachmentProbability(
+              reference_probability,
+              time_step,
+              reference_detachment_time
+          );
+
+      detachment_probabilities.push_back(
+          time_adjusted_probability
+      );
+    }
+
+    ASSERT_(
+        detachment_probabilities.size() ==
+            attachment_records_.size(),
+        "Attachment detachment probability count does not match attachment "
+        "record count"
+    );
+
+    return detachment_probabilities;
+  }
 
 };
 // =============================================================================
