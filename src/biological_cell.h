@@ -1649,6 +1649,784 @@ private:
     );
   }
 
+  inline
+  std::vector<int> GenerateAttachmentCandidateNodeIds(
+      const ObstacleScaffold& active_scaffold,
+      const std::size_t requested_addition_count,
+      const double min_cell_reach_radius,
+      const double max_cell_reach_radius) const {
+    /*
+     * Function goal
+     * -------------
+     * Return scaffold node IDs that satisfy the pairwise attachment reach
+     * constraints for the cell's current retained attachment set.
+     *
+     * Candidate generation is skipped when the cell has not requested any
+     * attachment additions.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Skip cells that will not form attachments
+    // -------------------------------------------------------------------------
+
+    if (requested_addition_count == 0) {
+      return {};
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Validate the current cell and scaffold state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Attachment candidate generation requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Attachment candidate generation requires retained attachments"
+    );
+
+    ASSERT_(
+        min_cell_reach_radius >= 0.0,
+        "Minimum cell reach radius must be non-negative"
+    );
+
+    ASSERT_(
+        max_cell_reach_radius > 0.0,
+        "Maximum cell reach radius must be positive"
+    );
+
+    ASSERT_(
+        min_cell_reach_radius <=
+            2.0 * max_cell_reach_radius,
+        "Minimum attachment distance exceeds the maximum permitted distance"
+    );
+
+    const double maximum_pairwise_distance =
+        2.0 * max_cell_reach_radius;
+
+    // -------------------------------------------------------------------------
+    // Step 3: Select a deterministic retained attachment as the search centre
+    // -------------------------------------------------------------------------
+
+    const auto search_attachment_it =
+        std::min_element(
+            attachment_records_.begin(),
+            attachment_records_.end(),
+            [](
+                const AttachmentRecord& a,
+                const AttachmentRecord& b) {
+              return a.node_id < b.node_id;
+            }
+        );
+
+    ASSERT_(
+        search_attachment_it != attachment_records_.end(),
+        "Attachment candidate generation could not select a search centre"
+    );
+
+    ASSERT_(
+        active_scaffold.HasNode(
+            search_attachment_it->node_id
+        ),
+        "Attachment candidate generation could not find retained node ID "
+        + std::to_string(search_attachment_it->node_id)
+    );
+
+    const bdm::Double3& search_centre =
+        active_scaffold.GetNodePosition(
+            search_attachment_it->node_id
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 4: Query only the local scaffold region
+    // -------------------------------------------------------------------------
+
+    const std::vector<int> nearby_node_ids =
+        active_scaffold.GetNodeIdsWithinRadius(
+            search_centre,
+            maximum_pairwise_distance
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 5: Apply exact pairwise reach checks
+    // -------------------------------------------------------------------------
+
+    std::vector<int> candidate_node_ids;
+
+    for (const int candidate_node_id : nearby_node_ids) {
+      ASSERT_(
+          candidate_node_id > 0,
+          "Attachment candidate generation encountered a non-positive node ID"
+      );
+
+      // Existing attachments cannot be selected again.
+      bool already_attached = false;
+
+      for (const auto& attachment : attachment_records_) {
+        if (attachment.node_id == candidate_node_id) {
+          already_attached = true;
+          break;
+        }
+      }
+
+      if (already_attached) {
+        continue;
+      }
+
+      // Isolated nodes cannot form valid scaffold attachments.
+      if (active_scaffold
+              .GetConnectedNodeIds(candidate_node_id)
+              .empty()) {
+        continue;
+      }
+
+      const bdm::Double3& candidate_position =
+          active_scaffold.GetNodePosition(
+              candidate_node_id
+          );
+
+      bool satisfies_reach_constraints = true;
+
+      for (const auto& retained_attachment :
+           attachment_records_) {
+        const bdm::Double3 difference =
+            candidate_position -
+            retained_attachment.position;
+
+        const double distance =
+            L2norm(difference);
+
+        if (distance < min_cell_reach_radius ||
+            distance > maximum_pairwise_distance) {
+          satisfies_reach_constraints = false;
+          break;
+        }
+      }
+
+      if (!satisfies_reach_constraints) {
+        continue;
+      }
+
+      candidate_node_ids.push_back(
+          candidate_node_id
+      );
+    }
+
+    // Preserve deterministic processing and testing.
+    std::sort(
+        candidate_node_ids.begin(),
+        candidate_node_ids.end()
+    );
+
+    return candidate_node_ids;
+  }
+
+  inline
+  double CalculateCandidateProximityWeight(
+      const bdm::Double3& candidate_position,
+      const double max_cell_reach_radius,
+      const double proximity_sensitivity) const {
+    /*
+     * Function goal
+     * -------------
+     * Calculate a relative candidate weight based on the distance to the
+     * nearest retained attachment.
+     *
+     * Candidates closer to a retained attachment receive a greater weight.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the inputs
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Candidate proximity weighting requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Candidate proximity weighting requires retained attachments"
+    );
+
+    ASSERT_(
+        max_cell_reach_radius > 0.0,
+        "Candidate proximity weighting requires a positive maximum reach"
+    );
+
+    ASSERT_(
+        proximity_sensitivity >= 0.0,
+        "Candidate proximity sensitivity must be non-negative"
+    );
+
+    ASSERT_(
+        std::isfinite(candidate_position[0]) &&
+        std::isfinite(candidate_position[1]) &&
+        std::isfinite(candidate_position[2]),
+        "Candidate proximity weighting received a non-finite position"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Find the nearest retained attachment
+    // -------------------------------------------------------------------------
+
+    const double maximum_pairwise_distance =
+        2.0 * max_cell_reach_radius;
+
+    double nearest_attachment_distance =
+        maximum_pairwise_distance;
+
+    bool found_retained_attachment = false;
+
+    for (const auto& attachment : attachment_records_) {
+      const bdm::Double3 difference =
+          candidate_position -
+          attachment.position;
+
+      const double distance =
+          L2norm(difference);
+
+      ASSERT_(
+          std::isfinite(distance) &&
+          distance >= 0.0,
+          "Candidate proximity weighting calculated an invalid distance"
+      );
+
+      if (!found_retained_attachment ||
+          distance < nearest_attachment_distance) {
+        nearest_attachment_distance = distance;
+        found_retained_attachment = true;
+      }
+    }
+
+    ASSERT_(
+        found_retained_attachment,
+        "Candidate proximity weighting could not find a retained attachment"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 3: Normalise the distance
+    // -------------------------------------------------------------------------
+
+    const double normalised_distance =
+        std::min(
+            nearest_attachment_distance /
+                maximum_pairwise_distance,
+            1.0
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 4: Calculate the bounded relative weight
+    // -------------------------------------------------------------------------
+
+    const double proximity_weight =
+        std::exp(
+            -proximity_sensitivity *
+            normalised_distance
+        );
+
+    ASSERT_(
+        std::isfinite(proximity_weight) &&
+        proximity_weight > 0.0 &&
+        proximity_weight <= 1.0,
+        "Calculated candidate proximity weight is outside (0, 1]"
+    );
+
+    return proximity_weight;
+  }
+
+  inline
+  std::vector<double> CalculateAttachmentCandidateWeights(
+      const ObstacleScaffold& active_scaffold,
+      const std::vector<int>& candidate_node_ids,
+      const double max_cell_reach_radius,
+      const double proximity_sensitivity) const {
+    /*
+     * Function goal
+     * -------------
+     * Calculate one proximity-based selection weight for every geometrically
+     * valid candidate attachment node.
+     *
+     * Returned weights follow the same order as candidate_node_ids.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the candidate list
+    // -------------------------------------------------------------------------
+
+    if (candidate_node_ids.empty()) {
+      return {};
+    }
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Candidate attachment weighting requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Candidate attachment weighting requires retained attachments"
+    );
+
+    ASSERT_(
+        max_cell_reach_radius > 0.0,
+        "Candidate attachment weighting requires a positive maximum reach"
+    );
+
+    ASSERT_(
+        proximity_sensitivity >= 0.0,
+        "Candidate proximity sensitivity must be non-negative"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Calculate one weight per candidate
+    // -------------------------------------------------------------------------
+
+    std::vector<double> candidate_weights;
+
+    candidate_weights.reserve(
+        candidate_node_ids.size()
+    );
+
+    std::unordered_set<int> encountered_node_ids;
+
+    for (const int candidate_node_id : candidate_node_ids) {
+      ASSERT_(
+          candidate_node_id > 0,
+          "Candidate attachment weighting encountered a non-positive node ID"
+      );
+
+      ASSERT_(
+          active_scaffold.HasNode(candidate_node_id),
+          "Candidate attachment weighting could not find scaffold node ID "
+          + std::to_string(candidate_node_id)
+      );
+
+      const bool inserted =
+          encountered_node_ids.insert(
+              candidate_node_id
+          ).second;
+
+      ASSERT_(
+          inserted,
+          "Candidate attachment weighting received a duplicate node ID"
+      );
+
+      const bdm::Double3& candidate_position =
+          active_scaffold.GetNodePosition(
+              candidate_node_id
+          );
+
+      const double candidate_weight =
+          this->CalculateCandidateProximityWeight(
+              candidate_position,
+              max_cell_reach_radius,
+              proximity_sensitivity
+          );
+
+      candidate_weights.push_back(
+          candidate_weight
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3: Confirm candidate-weight alignment
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        candidate_weights.size() ==
+            candidate_node_ids.size(),
+        "Candidate weight count does not match candidate node count"
+    );
+
+    return candidate_weights;
+  }
+
+  inline
+  int SelectAttachmentCandidateNodeId(
+      const std::vector<int>& candidate_node_ids,
+      const std::vector<double>& candidate_weights) const {
+    /*
+     * Function goal
+     * -------------
+     * Select one candidate scaffold node using proximity-based relative
+     * weights.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the candidate data
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        !candidate_node_ids.empty(),
+        "Weighted candidate selection requires at least one candidate"
+    );
+
+    ASSERT_(
+        candidate_weights.size() ==
+            candidate_node_ids.size(),
+        "Candidate node and weight counts do not match"
+    );
+
+    double total_weight = 0.0;
+
+    for (std::size_t index = 0;
+         index < candidate_node_ids.size();
+         ++index) {
+      ASSERT_(
+          candidate_node_ids[index] > 0,
+          "Weighted candidate selection encountered a non-positive node ID"
+      );
+
+      ASSERT_(
+          std::isfinite(candidate_weights[index]) &&
+          candidate_weights[index] > 0.0,
+          "Weighted candidate selection encountered an invalid weight"
+      );
+
+      total_weight +=
+          candidate_weights[index];
+    }
+
+    ASSERT_(
+        std::isfinite(total_weight) &&
+        total_weight > 0.0,
+        "Weighted candidate selection requires a positive total weight"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Generate a random position within the total weight
+    // -------------------------------------------------------------------------
+
+    auto* simulation =
+        bdm::Simulation::GetActive();
+
+    ASSERT_(
+        simulation != nullptr,
+        "Weighted candidate selection requires an active simulation"
+    );
+
+    auto* random_generator =
+        simulation->GetRandom();
+
+    ASSERT_(
+        random_generator != nullptr,
+        "Weighted candidate selection requires a random-number generator"
+    );
+
+    const double random_draw =
+        random_generator->Uniform(
+            0.0,
+            total_weight
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 3: Select the candidate containing the random position
+    // -------------------------------------------------------------------------
+
+    double cumulative_weight = 0.0;
+
+    for (std::size_t index = 0;
+         index < candidate_node_ids.size();
+         ++index) {
+      cumulative_weight +=
+          candidate_weights[index];
+
+      if (random_draw < cumulative_weight) {
+        return candidate_node_ids[index];
+      }
+    }
+
+    /*
+     * Floating-point rounding may place a draw at the final cumulative
+     * boundary. In that case, select the final candidate.
+     */
+    return candidate_node_ids.back();
+  }
+
+  inline
+  void AddNewAttachmentRecord(
+      const ObstacleScaffold& active_scaffold,
+      const int selected_node_id) {
+    /*
+     * Function goal
+     * -------------
+     * Add one selected scaffold node to the cell's authoritative attachment
+     * records and mark its mechanics for FEM recalculation.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the cell and selected scaffold node
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "New attachment formation requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "New attachment formation requires retained attachments"
+    );
+
+    ASSERT_(
+        selected_node_id > 0,
+        "New attachment formation received a non-positive scaffold node ID"
+    );
+
+    ASSERT_(
+        active_scaffold.HasNode(selected_node_id),
+        "New attachment formation could not find scaffold node ID "
+        + std::to_string(selected_node_id)
+    );
+
+    ASSERT_(
+        !active_scaffold
+             .GetConnectedNodeIds(selected_node_id)
+             .empty(),
+        "New attachment formation cannot use an isolated scaffold node"
+    );
+
+    for (const auto& attachment : attachment_records_) {
+      ASSERT_(
+          attachment.node_id != selected_node_id,
+          "New attachment formation attempted to add an existing attachment"
+      );
+    }
+
+    const std::size_t previous_attachment_count =
+        attachment_records_.size();
+
+    // -------------------------------------------------------------------------
+    // Step 2: Construct the new attachment record
+    // -------------------------------------------------------------------------
+
+    AttachmentRecord new_attachment;
+
+    new_attachment.node_id =
+        selected_node_id;
+
+    new_attachment.position =
+        active_scaffold.GetNodePosition(
+            selected_node_id
+        );
+
+    /*
+     * FEM has not yet calculated the local stiffness for this attachment.
+     */
+    new_attachment.k_ecm = 0.0;
+    new_attachment.has_valid_k_ecm = false;
+    new_attachment.newly_formed = true;
+
+    // -------------------------------------------------------------------------
+    // Step 3: Add the record to the authoritative attachment set
+    // -------------------------------------------------------------------------
+
+    std::vector<AttachmentRecord> updated_attachments =
+        attachment_records_;
+
+    updated_attachments.push_back(
+        new_attachment
+    );
+
+    this->SetAttachmentRecords(
+        updated_attachments
+    );
+
+    this->MarkMechanicsForRecalculation();
+
+    // -------------------------------------------------------------------------
+    // Step 4: Validate the updated state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        attachment_records_.size() ==
+            previous_attachment_count + 1,
+        "New attachment formation did not increase the attachment count"
+    );
+
+    ASSERT_(
+        attachment_records_.back().node_id ==
+            selected_node_id,
+        "New attachment formation stored an incorrect scaffold node ID"
+    );
+
+    ASSERT_(
+        attachment_records_.back().newly_formed &&
+        !attachment_records_.back().has_valid_k_ecm,
+        "A newly formed attachment must await FEM mechanics"
+    );
+
+    ASSERT_(
+        requires_mechanics_recalculation_,
+        "New attachment formation must request mechanics recalculation"
+    );
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "New attachment formation unexpectedly changed the cell lifecycle"
+    );
+  }
+
+  inline
+  std::size_t AttemptAttachmentFormation(
+      const ObstacleScaffold& active_scaffold,
+      const std::size_t requested_addition_count,
+      const double min_cell_reach_radius,
+      const double max_cell_reach_radius,
+      const double proximity_sensitivity) {
+    /*
+     * Function goal
+     * -------------
+     * Attempt to form the requested number of new attachments using
+     * geometrically valid candidates and proximity-weighted selection.
+     *
+     * The candidate pool is regenerated after every successful addition so
+     * later candidates are checked against the updated attachment set.
+     *
+     * Returns the number of attachments successfully formed.
+     */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Skip cells that requested no additions
+    // -------------------------------------------------------------------------
+
+    if (requested_addition_count == 0) {
+      return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Validate the current state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Attachment formation requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Attachment formation requires retained attachments"
+    );
+
+    ASSERT_(
+        min_cell_reach_radius >= 0.0,
+        "Attachment formation requires a non-negative minimum reach"
+    );
+
+    ASSERT_(
+        max_cell_reach_radius > 0.0,
+        "Attachment formation requires a positive maximum reach"
+    );
+
+    ASSERT_(
+        proximity_sensitivity >= 0.0,
+        "Attachment formation requires a non-negative proximity sensitivity"
+    );
+
+    const std::size_t original_attachment_count =
+        attachment_records_.size();
+
+    std::size_t formed_attachment_count = 0;
+
+    // -------------------------------------------------------------------------
+    // Step 3: Attempt each requested addition sequentially
+    // -------------------------------------------------------------------------
+
+    for (std::size_t addition = 0;
+         addition < requested_addition_count;
+         ++addition) {
+
+      // -----------------------------------------------------------------------
+      // Step 3a: Recalculate candidates using the current attachment set
+      // -----------------------------------------------------------------------
+
+      const std::vector<int> candidate_node_ids =
+          this->GenerateAttachmentCandidateNodeIds(
+              active_scaffold,
+              1,
+              min_cell_reach_radius,
+              max_cell_reach_radius
+          );
+
+      /*
+       * Fewer additions than requested may be formed when no valid candidates
+       * remain.
+       */
+      if (candidate_node_ids.empty()) {
+        break;
+      }
+
+      // -----------------------------------------------------------------------
+      // Step 3b: Calculate the relative candidate weights
+      // -----------------------------------------------------------------------
+
+      const std::vector<double> candidate_weights =
+          this->CalculateAttachmentCandidateWeights(
+              active_scaffold,
+              candidate_node_ids,
+              max_cell_reach_radius,
+              proximity_sensitivity
+          );
+
+      ASSERT_(
+          candidate_weights.size() ==
+              candidate_node_ids.size(),
+          "Attachment formation candidate and weight counts do not match"
+      );
+
+      // -----------------------------------------------------------------------
+      // Step 3c: Select and add one candidate
+      // -----------------------------------------------------------------------
+
+      const int selected_node_id =
+          this->SelectAttachmentCandidateNodeId(
+              candidate_node_ids,
+              candidate_weights
+          );
+
+      this->AddNewAttachmentRecord(
+          active_scaffold,
+          selected_node_id
+      );
+
+      ++formed_attachment_count;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: Validate the final attachment state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        formed_attachment_count <= requested_addition_count,
+        "Attachment formation exceeded the requested addition count"
+    );
+
+    ASSERT_(
+        attachment_records_.size() ==
+            original_attachment_count +
+            formed_attachment_count,
+        "Attachment formation produced an inconsistent attachment count"
+    );
+
+    if (formed_attachment_count > 0) {
+      ASSERT_(
+          requires_mechanics_recalculation_,
+          "New attachment formation must request mechanics recalculation"
+      );
+    }
+
+    return formed_attachment_count;
+  }
+
 };
 // =============================================================================
 } // ...end of namespace

@@ -1748,6 +1748,32 @@ void init_cells(bdm::Simulation& sim,
             );
           }
 
+          // ---------------------------------------------------------------------
+          // Candidate attachment probability parameters
+          // ---------------------------------------------------------------------
+
+          if (!params.have_parameter<double>(
+                  mech_base +
+                  "/candidate_proximity_sensitivity")) {
+            params.set<double>(
+                mech_base +
+                "/candidate_proximity_sensitivity"
+            ) = 1.0;
+          }
+
+          const double candidate_proximity_sensitivity =
+              params.get<double>(
+                  mech_base +
+                  "/candidate_proximity_sensitivity"
+              );
+
+          if (candidate_proximity_sensitivity < 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/candidate_proximity_sensitivity\" must be >= 0"
+            );
+          }
+
         
           if (!params.have_parameter<bool>(mech_base + "/verbose"))
           params.set<bool>(mech_base + "/verbose") = false;
