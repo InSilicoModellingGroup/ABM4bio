@@ -896,6 +896,9 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "bFGF" ) bc = Biochemical::bFGF;
         // cancer-related biochemical cues
         else if ( BC_name == "TNF"  ) bc = Biochemical::TNF;
+        else if ( BC_name == "IL4"  ) bc = Biochemical::IL4;
+        else if ( BC_name == "IL10" ) bc = Biochemical::IL10;
+        else if ( BC_name == "IFNG" ) bc = Biochemical::IFNG;
         // neuron-related biochemical cues
         else if ( BC_name == "NGF"  ) bc = Biochemical::NGF;
         else if ( BC_name == "BDNF" ) bc = Biochemical::BDNF;
