@@ -55,13 +55,28 @@ int read_regulatory_network_data(const std::string& fname, RegulatoryNetworkData
   for (int p=0; p<=number_of_species; p++)
     fin >> rn.params[p];
   //
-  rn.params_a.resize(number_of_species+1);
-  for (int p=0; p<=number_of_species; p++)
-    fin >> rn.params_a[p];
+  bool read_a;
+  fin >> read_a;
+  // check if to read this set of parameters
+  if ( read_a )
+    {
+      rn.params_a.resize(number_of_species+1);
+      for (int p=0; p<=number_of_species; p++)
+        fin >> rn.params_a[p];
+    }
   //
-  rn.params_i.resize(number_of_species+1);
-  for (int p=0; p<=number_of_species; p++)
-    fin >> rn.params_i[p];
+  bool read_i;
+  fin >> read_i;
+  // check if to read this set of parameters
+  if ( read_i )
+    {
+      rn.params_i.resize(number_of_species+1);
+      for (int p=0; p<=number_of_species; p++)
+        fin >> rn.params_i[p];
+    }
+  //
+  if (!read_a & !read_i)
+    ABORT_("either parameters for activation or inhibition not provided");
   //
   // also read the initial conditions of the species for the regulatory network
   rn.current_species.resize(number_of_species);
