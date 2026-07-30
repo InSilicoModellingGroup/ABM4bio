@@ -52,15 +52,15 @@ int read_regulatory_network_data(const std::string& fname, RegulatoryNetworkData
   // now read the regulatory network parameters respectively
   //
   rn.params.resize(number_of_species+1);
-  for (int p=0; p<number_of_species+1; p++)
+  for (int p=0; p<=number_of_species; p++)
     fin >> rn.params[p];
   //
-  rn.params_a.resize(number_of_species);
-  for (int p=0; p<number_of_species; p++)
+  rn.params_a.resize(number_of_species+1);
+  for (int p=0; p<=number_of_species; p++)
     fin >> rn.params_a[p];
   //
-  rn.params_i.resize(number_of_species);
-  for (int p=0; p<number_of_species; p++)
+  rn.params_i.resize(number_of_species+1);
+  for (int p=0; p<=number_of_species; p++)
     fin >> rn.params_i[p];
   //
   // also read the initial conditions of the species for the regulatory network
