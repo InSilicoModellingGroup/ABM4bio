@@ -153,6 +153,8 @@ class ObstacleScaffold : public Obstacle {
     segment_index_by_id.clear();
     node_spatial_index.clear();
     node_spatial_bucket_size = 0.0;
+    segment_spatial_index.clear();
+    segment_spatial_bucket_size = 0.0;
 
     // -------------------------------------------------------------------------
     // Step 3: Read and validate file version
@@ -521,6 +523,191 @@ class ObstacleScaffold : public Obstacle {
   }
 
   inline
+  void BuildSegmentSpatialIndex(
+      const double bucket_size) {
+    /*
+    * Function goal
+    * -------------
+    * Group persistent scaffold element IDs into uniform spatial buckets for
+    * efficient local segment searches.
+    *
+    * Each segment is inserted into every bucket intersected by its
+    * radius-expanded axis-aligned bounding box.
+    */
+
+    // ---------------------------------------------------------------------------
+    // Step 1: Validate and reset the index
+    // ---------------------------------------------------------------------------
+
+    ASSERT_(
+        bucket_size > 0.0,
+        "Scaffold segment spatial-index bucket size must be positive"
+    );
+
+    ASSERT_(
+        !segment.empty(),
+        "Cannot build a segment spatial index for a scaffold with no segments"
+    );
+
+    segment_spatial_index.clear();
+
+    segment_spatial_bucket_size =
+        bucket_size;
+
+    // ---------------------------------------------------------------------------
+    // Step 2: Insert every segment into its intersected buckets
+    // ---------------------------------------------------------------------------
+
+    for (const auto& scaffold_segment : segment) {
+      ASSERT_(
+          scaffold_segment.element_id > 0,
+          "Segment spatial index encountered a non-positive element ID"
+      );
+
+      ASSERT_(
+          scaffold_segment.radius >= 0.0,
+          "Segment spatial index encountered a negative segment radius"
+      );
+
+      const double min_x =
+          std::min(
+              scaffold_segment.vertex_0[0],
+              scaffold_segment.vertex_1[0]
+          ) -
+          scaffold_segment.radius;
+
+      const double max_x =
+          std::max(
+              scaffold_segment.vertex_0[0],
+              scaffold_segment.vertex_1[0]
+          ) +
+          scaffold_segment.radius;
+
+      const double min_y =
+          std::min(
+              scaffold_segment.vertex_0[1],
+              scaffold_segment.vertex_1[1]
+          ) -
+          scaffold_segment.radius;
+
+      const double max_y =
+          std::max(
+              scaffold_segment.vertex_0[1],
+              scaffold_segment.vertex_1[1]
+          ) +
+          scaffold_segment.radius;
+
+      const double min_z =
+          std::min(
+              scaffold_segment.vertex_0[2],
+              scaffold_segment.vertex_1[2]
+          ) -
+          scaffold_segment.radius;
+
+      const double max_z =
+          std::max(
+              scaffold_segment.vertex_0[2],
+              scaffold_segment.vertex_1[2]
+          ) +
+          scaffold_segment.radius;
+
+      const int min_bucket_x =
+          static_cast<int>(
+              std::floor(
+                  min_x / bucket_size
+              )
+          );
+
+      const int max_bucket_x =
+          static_cast<int>(
+              std::floor(
+                  max_x / bucket_size
+              )
+          );
+
+      const int min_bucket_y =
+          static_cast<int>(
+              std::floor(
+                  min_y / bucket_size
+              )
+          );
+
+      const int max_bucket_y =
+          static_cast<int>(
+              std::floor(
+                  max_y / bucket_size
+              )
+          );
+
+      const int min_bucket_z =
+          static_cast<int>(
+              std::floor(
+                  min_z / bucket_size
+              )
+          );
+
+      const int max_bucket_z =
+          static_cast<int>(
+              std::floor(
+                  max_z / bucket_size
+              )
+          );
+
+      for (int bucket_x = min_bucket_x;
+          bucket_x <= max_bucket_x;
+          ++bucket_x) {
+
+        for (int bucket_y = min_bucket_y;
+            bucket_y <= max_bucket_y;
+            ++bucket_y) {
+
+          for (int bucket_z = min_bucket_z;
+              bucket_z <= max_bucket_z;
+              ++bucket_z) {
+
+            const SpatialBucketKey bucket_key = {
+                bucket_x,
+                bucket_y,
+                bucket_z
+            };
+
+            segment_spatial_index[bucket_key].push_back(
+                scaffold_segment.element_id
+            );
+          }
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Step 3: Preserve unique and deterministic IDs within each bucket
+    // ---------------------------------------------------------------------------
+
+    for (auto& bucket_entry : segment_spatial_index) {
+      auto& element_ids =
+          bucket_entry.second;
+
+      std::sort(
+          element_ids.begin(),
+          element_ids.end()
+      );
+
+      element_ids.erase(
+          std::unique(
+              element_ids.begin(),
+              element_ids.end()
+          ),
+          element_ids.end()
+      );
+    }
+
+    ASSERT_(
+        !segment_spatial_index.empty(),
+        "Scaffold segment spatial index was not populated"
+    );
+  }
+  
+  inline
   std::vector<int> GetNodeIdsWithinRadius(
       const bdm::Double3& centre,
       const double search_radius) const {
@@ -652,7 +839,179 @@ class ObstacleScaffold : public Obstacle {
     return nearby_node_ids;
   }
 
- public:
+  inline
+  std::vector<int> GetNearbySegmentIds(
+      const bdm::Double3& centre,
+      const double search_radius) const {
+    /*
+    * Function goal
+    * -------------
+    * Return the persistent element IDs whose indexed spatial regions intersect
+    * a cell-centred search box.
+    *
+    * This is a broad-phase search. Exact cell-to-segment distances are calculated
+    * later during overlap detection.
+    */
+
+    // ---------------------------------------------------------------------------
+    // Step 1: Validate the query
+    // ---------------------------------------------------------------------------
+
+    ASSERT_(
+        search_radius >= 0.0,
+        "Nearby-segment search requires a non-negative search radius"
+    );
+
+    ASSERT_(
+        segment_spatial_bucket_size > 0.0,
+        "Nearby-segment search requires a built segment spatial index"
+    );
+
+    ASSERT_(
+        !segment_spatial_index.empty(),
+        "Nearby-segment search encountered an empty segment spatial index"
+    );
+
+    for (std::size_t coordinate = 0;
+        coordinate < 3;
+        ++coordinate) {
+
+      ASSERT_(
+          std::isfinite(
+              centre[coordinate]
+          ),
+          "Nearby-segment search received a non-finite centre coordinate"
+      );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Step 2: Calculate the cell-centred query bounds
+    // ---------------------------------------------------------------------------
+
+    const double min_x =
+        centre[0] - search_radius;
+
+    const double max_x =
+        centre[0] + search_radius;
+
+    const double min_y =
+        centre[1] - search_radius;
+
+    const double max_y =
+        centre[1] + search_radius;
+
+    const double min_z =
+        centre[2] - search_radius;
+
+    const double max_z =
+        centre[2] + search_radius;
+
+    const int min_bucket_x =
+        static_cast<int>(
+            std::floor(
+                min_x / segment_spatial_bucket_size
+            )
+        );
+
+    const int max_bucket_x =
+        static_cast<int>(
+            std::floor(
+                max_x / segment_spatial_bucket_size
+            )
+        );
+
+    const int min_bucket_y =
+        static_cast<int>(
+            std::floor(
+                min_y / segment_spatial_bucket_size
+            )
+        );
+
+    const int max_bucket_y =
+        static_cast<int>(
+            std::floor(
+                max_y / segment_spatial_bucket_size
+            )
+        );
+
+    const int min_bucket_z =
+        static_cast<int>(
+            std::floor(
+                min_z / segment_spatial_bucket_size
+            )
+        );
+
+    const int max_bucket_z =
+        static_cast<int>(
+            std::floor(
+                max_z / segment_spatial_bucket_size
+            )
+        );
+
+    // ---------------------------------------------------------------------------
+    // Step 3: Collect segment IDs from intersected buckets
+    // ---------------------------------------------------------------------------
+
+    std::vector<int> nearby_segment_ids;
+
+    for (int bucket_x = min_bucket_x;
+        bucket_x <= max_bucket_x;
+        ++bucket_x) {
+
+      for (int bucket_y = min_bucket_y;
+          bucket_y <= max_bucket_y;
+          ++bucket_y) {
+
+        for (int bucket_z = min_bucket_z;
+            bucket_z <= max_bucket_z;
+            ++bucket_z) {
+
+          const SpatialBucketKey bucket_key = {
+              bucket_x,
+              bucket_y,
+              bucket_z
+          };
+
+          const auto bucket_it =
+              segment_spatial_index.find(
+                  bucket_key
+              );
+
+          if (bucket_it ==
+              segment_spatial_index.end()) {
+            continue;
+          }
+
+          nearby_segment_ids.insert(
+              nearby_segment_ids.end(),
+              bucket_it->second.begin(),
+              bucket_it->second.end()
+          );
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Step 4: Return unique IDs in deterministic order
+    // ---------------------------------------------------------------------------
+
+    std::sort(
+        nearby_segment_ids.begin(),
+        nearby_segment_ids.end()
+    );
+
+    nearby_segment_ids.erase(
+        std::unique(
+            nearby_segment_ids.begin(),
+            nearby_segment_ids.end()
+        ),
+        nearby_segment_ids.end()
+    );
+
+    return nearby_segment_ids;
+  }
+ 
+  public:
   // Scaffold nodes stored by persistent one-based node ID.
   std::unordered_map<int, ScaffoldNode> nodes_by_id;
 
@@ -671,6 +1030,16 @@ class ObstacleScaffold : public Obstacle {
 
   // Width of one spatial-index bucket.
   double node_spatial_bucket_size = 0.0;
+
+  // Scaffold element IDs grouped into radius-expanded spatial buckets.
+  std::unordered_map<
+      SpatialBucketKey,
+      std::vector<int>,
+      SpatialBucketKeyHash
+  > segment_spatial_index;
+
+  // Width of one segment spatial-index bucket.
+  double segment_spatial_bucket_size = 0.0;
 
 };
 // -----------------------------------------------------------------------------

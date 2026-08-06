@@ -1448,11 +1448,81 @@ void init_cells(bdm::Simulation& sim,
         }
         //...end sanity check
 
-        if (!params.have_parameter<double>(mech_base + "/min_cell_reach_radius"))
-          params.set<double>(mech_base + "/min_cell_reach_radius") = 5.0; 
+        if (params.have_parameter<double>(
+                mech_base + "/min_cell_reach_radius") ||
+            params.have_parameter<double>(
+                mech_base + "/max_cell_reach_radius")) {
 
-        if (!params.have_parameter<double>(mech_base + "/max_cell_reach_radius"))
-          params.set<double>(mech_base + "/max_cell_reach_radius") = 40.0;
+          ABORT_(
+              "The parameters 'min_cell_reach_radius' and "
+              "'max_cell_reach_radius' have been replaced by "
+              "'min_attachment_separation' and "
+              "'max_attachment_separation'"
+          );
+        }
+
+        if (!params.have_parameter<double>(
+                mech_base + "/min_attachment_separation")) {
+
+          params.set<double>(
+              mech_base + "/min_attachment_separation"
+          ) = 5.0;
+        }
+
+
+        if (!params.have_parameter<double>(
+                mech_base + "/max_attachment_separation")) {
+
+          /*
+          * This directly represents the maximum pairwise attachment distance.
+          * The old default was 2 * max_cell_reach_radius = 2 * 40.
+          */
+          params.set<double>(
+              mech_base + "/max_attachment_separation"
+          ) = 80.0;
+        }
+
+        const double min_attachment_separation =
+            params.get<double>(
+                mech_base + "/min_attachment_separation"
+            );
+
+        const double max_attachment_separation =
+            params.get<double>(
+                mech_base + "/max_attachment_separation"
+            );
+
+        if (!std::isfinite(min_attachment_separation) ||
+            min_attachment_separation < 0.0) {
+
+          ABORT_(
+              "Model parameter \"" +
+              mech_base +
+              "/min_attachment_separation\" must be finite and non-negative"
+          );
+        }
+
+        if (!std::isfinite(max_attachment_separation) ||
+            max_attachment_separation <= 0.0) {
+
+          ABORT_(
+              "Model parameter \"" +
+              mech_base +
+              "/max_attachment_separation\" must be finite and positive"
+          );
+        }
+
+        if (min_attachment_separation >
+            max_attachment_separation) {
+
+          ABORT_(
+              "Model parameter \"" +
+              mech_base +
+              "/min_attachment_separation\" cannot exceed \"" +
+              mech_base +
+              "/max_attachment_separation\""
+          );
+        }
 
         if (!params.have_parameter<double>(mech_base + "/strut_radius"))
           ABORT_("model parameter \"" + mech_base + "/strut_radius\" must be provided");
@@ -4009,7 +4079,7 @@ int simulate(const std::string& fname, const int seed)
       // reset the data for the obstacles in the simulation
       reinit_obstacles(sim, cells, time, cell_matrix_interaction);
 
-      // Build the node spatial index once for the current scaffold geometry.
+      // Build the scaffold spatial indices once for the current geometry.
       cell_matrix_interaction.PrepareActiveScaffoldSpatialIndex(
           cells,
           obstacles.scaffold

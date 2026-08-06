@@ -134,7 +134,31 @@ public:
     bool newly_formed = false;
   };
 
-    // =============================================================================
+  struct ScaffoldOverlap {
+    bool detected = false;
+
+    int element_id = -1;
+
+    bdm::Double3 closest_point = {
+        0.0,
+        0.0,
+        0.0
+    };
+
+    double centreline_distance = 0.0;
+    double required_separation = 0.0;
+    double penetration_depth = 0.0;
+  };
+
+  bdm::Double3 SegmentClosestPoint(
+    const ObstacleScaffold::Segment& segment,
+    const bdm::Double3& point) const;
+
+  ScaffoldOverlap FindDeepestOverlap(
+    const ObstacleScaffold& scaffold,
+    const bdm::Double3& proposed_position) const;
+
+  // =============================================================================
   // Cell-matrix mechanics: internal lifecycle state
   // =============================================================================
 
@@ -553,16 +577,32 @@ private:
   //
   void CheckAndFixDiameter();
   bool CheckProtrusionAxis(bdm::Double3 axis);
+  double GetMinimumCellRadius() const;
+
   bdm::Double3 CalculateSingleAttachmentStrutDirection(
       const ObstacleScaffold& scaffold,
       int attachment_node_id) const;
+
   bdm::Double3 CalculateSingleAttachmentRadialDirection(
     const bdm::Double3& previous_attachment_position,
     const bdm::Double3& strut_direction) const;
+
   bdm::Double3 CalculateSingleAttachmentTargetPosition(
     const ObstacleScaffold& scaffold,
     int attachment_node_id,
     const bdm::Double3& radial_direction) const;
+
+  bdm::Double3 CalculatePreferredPosition(
+    const ObstacleScaffold& scaffold) const;
+
+bool ResolveScaffoldOverlap(
+    const ObstacleScaffold& scaffold,
+    const bdm::Double3& original_position,
+    bdm::Double3* proposed_position) const;
+  
+  bool RepositionAfterDetachment(
+    const ObstacleScaffold& scaffold,
+    const bdm::Double3& original_position);
   //
 //
 private:
@@ -1653,8 +1693,8 @@ private:
   std::vector<int> GenerateAttachmentCandidateNodeIds(
       const ObstacleScaffold& active_scaffold,
       const std::size_t requested_addition_count,
-      const double min_cell_reach_radius,
-      const double max_cell_reach_radius) const {
+      const double min_attachment_separation,
+      const double max_attachment_separation) const {
     /*
      * Function goal
      * -------------
@@ -1689,23 +1729,20 @@ private:
     );
 
     ASSERT_(
-        min_cell_reach_radius >= 0.0,
-        "Minimum cell reach radius must be non-negative"
+        min_attachment_separation >= 0.0,
+        "Minimum attachment separation must be non-negative"
     );
 
     ASSERT_(
-        max_cell_reach_radius > 0.0,
-        "Maximum cell reach radius must be positive"
+        max_attachment_separation > 0.0,
+        "Maximum attachment separation must be positive"
     );
 
     ASSERT_(
-        min_cell_reach_radius <=
-            2.0 * max_cell_reach_radius,
+        min_attachment_separation <=
+            max_attachment_separation,
         "Minimum attachment distance exceeds the maximum permitted distance"
     );
-
-    const double maximum_pairwise_distance =
-        2.0 * max_cell_reach_radius;
 
     // -------------------------------------------------------------------------
     // Step 3: Select a deterministic retained attachment as the search centre
@@ -1747,7 +1784,7 @@ private:
     const std::vector<int> nearby_node_ids =
         active_scaffold.GetNodeIdsWithinRadius(
             search_centre,
-            maximum_pairwise_distance
+            max_attachment_separation
         );
 
     // -------------------------------------------------------------------------
@@ -1788,7 +1825,7 @@ private:
               candidate_node_id
           );
 
-      bool satisfies_reach_constraints = true;
+      bool satisfies_separation_constraints = true;
 
       for (const auto& retained_attachment :
            attachment_records_) {
@@ -1799,14 +1836,14 @@ private:
         const double distance =
             L2norm(difference);
 
-        if (distance < min_cell_reach_radius ||
-            distance > maximum_pairwise_distance) {
-          satisfies_reach_constraints = false;
+        if (distance < min_attachment_separation ||
+            distance > max_attachment_separation) {
+          satisfies_separation_constraints = false;
           break;
         }
       }
 
-      if (!satisfies_reach_constraints) {
+      if (!satisfies_separation_constraints) {
         continue;
       }
 
@@ -1827,7 +1864,7 @@ private:
   inline
   double CalculateCandidateProximityWeight(
       const bdm::Double3& candidate_position,
-      const double max_cell_reach_radius,
+      const double max_attachment_separation,
       const double proximity_sensitivity) const {
     /*
      * Function goal
@@ -1854,8 +1891,8 @@ private:
     );
 
     ASSERT_(
-        max_cell_reach_radius > 0.0,
-        "Candidate proximity weighting requires a positive maximum reach"
+        max_attachment_separation > 0.0,
+        "Candidate proximity weighting requires a positive maximum separation"
     );
 
     ASSERT_(
@@ -1874,11 +1911,8 @@ private:
     // Step 2: Find the nearest retained attachment
     // -------------------------------------------------------------------------
 
-    const double maximum_pairwise_distance =
-        2.0 * max_cell_reach_radius;
-
     double nearest_attachment_distance =
-        maximum_pairwise_distance;
+        max_attachment_separation;
 
     bool found_retained_attachment = false;
 
@@ -1911,11 +1945,11 @@ private:
     // -------------------------------------------------------------------------
     // Step 3: Normalise the distance
     // -------------------------------------------------------------------------
-
+ 
     const double normalised_distance =
         std::min(
             nearest_attachment_distance /
-                maximum_pairwise_distance,
+                max_attachment_separation,
             1.0
         );
 
@@ -1943,7 +1977,7 @@ private:
   std::vector<double> CalculateAttachmentCandidateWeights(
       const ObstacleScaffold& active_scaffold,
       const std::vector<int>& candidate_node_ids,
-      const double max_cell_reach_radius,
+      const double max_attachment_separation,
       const double proximity_sensitivity) const {
     /*
      * Function goal
@@ -1974,8 +2008,8 @@ private:
     );
 
     ASSERT_(
-        max_cell_reach_radius > 0.0,
-        "Candidate attachment weighting requires a positive maximum reach"
+        max_attachment_separation > 0.0,
+        "Candidate attachment weighting requires a positive maximum separation"
     );
 
     ASSERT_(
@@ -2025,7 +2059,7 @@ private:
       const double candidate_weight =
           this->CalculateCandidateProximityWeight(
               candidate_position,
-              max_cell_reach_radius,
+              max_attachment_separation,
               proximity_sensitivity
           );
 
@@ -2279,8 +2313,8 @@ private:
   std::size_t AttemptAttachmentFormation(
       const ObstacleScaffold& active_scaffold,
       const std::size_t requested_addition_count,
-      const double min_cell_reach_radius,
-      const double max_cell_reach_radius,
+      const double min_attachment_separation,
+      const double max_attachment_separation,
       const double proximity_sensitivity) {
     /*
      * Function goal
@@ -2318,13 +2352,13 @@ private:
     );
 
     ASSERT_(
-        min_cell_reach_radius >= 0.0,
-        "Attachment formation requires a non-negative minimum reach"
+        min_attachment_separation >= 0.0,
+        "Attachment formation requires a non-negative minimum separation"
     );
 
     ASSERT_(
-        max_cell_reach_radius > 0.0,
-        "Attachment formation requires a positive maximum reach"
+        max_attachment_separation > 0.0,
+        "Attachment formation requires a positive maximum separation"
     );
 
     ASSERT_(
@@ -2353,8 +2387,8 @@ private:
           this->GenerateAttachmentCandidateNodeIds(
               active_scaffold,
               1,
-              min_cell_reach_radius,
-              max_cell_reach_radius
+              min_attachment_separation,
+              max_attachment_separation
           );
 
       /*
@@ -2373,7 +2407,7 @@ private:
           this->CalculateAttachmentCandidateWeights(
               active_scaffold,
               candidate_node_ids,
-              max_cell_reach_radius,
+              max_attachment_separation,
               proximity_sensitivity
           );
 

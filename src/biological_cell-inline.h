@@ -862,6 +862,43 @@ bool bdm::BiologicalCell::CheckQuiescenceAfterDivision()
 }
 // -----------------------------------------------------------------------------
 inline
+double bdm::BiologicalCell::GetMinimumCellRadius() const
+{
+  /*
+   * Return the fixed cell radius used by the cell-matrix positioning geometry.
+   */
+
+  ASSERT_(
+      this->GetPhenotype() > 0,
+      "Cell-matrix positioning requires a viable phenotype"
+  );
+
+  ASSERT_(
+      this->params() != nullptr,
+      "Cell-matrix positioning requires a valid Parameters pointer"
+  );
+
+  const std::string& phenotype_name =
+      this->params()->get<std::string>(
+          "phenotype_ID/" +
+          std::to_string(this->GetPhenotype())
+      );
+
+  const double minimum_diameter =
+      this->params()->get<double>(
+          phenotype_name + "/diameter/min"
+      );
+
+  ASSERT_(
+      std::isfinite(minimum_diameter) &&
+      minimum_diameter > 0.0,
+      "Cell-matrix positioning requires a positive minimum cell diameter"
+  );
+
+  return 0.5 * minimum_diameter;
+}
+// -----------------------------------------------------------------------------
+inline
 bdm::Double3
 bdm::BiologicalCell::CalculateSingleAttachmentStrutDirection(
     const ObstacleScaffold& scaffold,
@@ -1197,7 +1234,7 @@ bdm::BiologicalCell::CalculateSingleAttachmentTargetPosition(
       scaffold.GetNodeRadius(attachment_node_id);
 
   const double cell_radius =
-      0.5 * this->GetDiameter();
+    this->GetMinimumCellRadius();
 
   ASSERT_(
       strut_radius >= 0.0,
@@ -1231,6 +1268,758 @@ bdm::BiologicalCell::CalculateSingleAttachmentTargetPosition(
   };
 
   return target_position;
+}
+// -----------------------------------------------------------------------------
+inline
+bdm::Double3
+bdm::BiologicalCell::CalculatePreferredPosition(
+    const ObstacleScaffold& scaffold) const
+{
+  /*
+   * Calculate the preferred cell-centre position from the retained attachment
+   * set without applying the position.
+   *
+   * Multiple attachments use their centroid. A single attachment uses the
+   * existing local strut-surface positioning geometry.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the retained attachment state
+  // ---------------------------------------------------------------------------
+
+  ASSERT_(
+      this->GetCellMatrixLifecycleStatus() ==
+          CellMatrixLifecycleStatus::kEstablished,
+      "Preferred positioning requires an established cell"
+  );
+
+  ASSERT_(
+      !attachment_records_.empty(),
+      "Preferred positioning requires at least one retained attachment"
+  );
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Use the single-attachment positioning geometry
+  // ---------------------------------------------------------------------------
+
+  if (attachment_records_.size() == 1) {
+    const AttachmentRecord& attachment =
+        attachment_records_.front();
+
+    ASSERT_(
+        attachment.node_id > 0,
+        "Preferred positioning encountered an invalid attachment node ID"
+    );
+
+    ASSERT_(
+        scaffold.HasNode(attachment.node_id),
+        "Preferred positioning could not find retained scaffold node ID "
+        + std::to_string(attachment.node_id)
+    );
+
+    const bdm::Double3 strut_direction =
+        this->CalculateSingleAttachmentStrutDirection(
+            scaffold,
+            attachment.node_id
+        );
+
+    const bdm::Double3 radial_direction =
+        this->CalculateSingleAttachmentRadialDirection(
+            attachment.position,
+            strut_direction
+        );
+
+    return this->CalculateSingleAttachmentTargetPosition(
+        scaffold,
+        attachment.node_id,
+        radial_direction
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Calculate the centroid of multiple retained attachments
+  // ---------------------------------------------------------------------------
+
+  bdm::Double3 centroid = {
+      0.0,
+      0.0,
+      0.0
+  };
+
+  for (const auto& attachment : attachment_records_) {
+    ASSERT_(
+        attachment.node_id > 0,
+        "Preferred positioning encountered an invalid attachment node ID"
+    );
+
+    ASSERT_(
+        scaffold.HasNode(attachment.node_id),
+        "Preferred positioning could not find retained scaffold node ID "
+        + std::to_string(attachment.node_id)
+    );
+
+    const bdm::Double3& attachment_position =
+        scaffold.GetNodePosition(
+            attachment.node_id
+        );
+
+    for (std::size_t coordinate = 0;
+         coordinate < 3;
+         ++coordinate) {
+      ASSERT_(
+          std::isfinite(
+              attachment_position[coordinate]
+          ),
+          "Preferred positioning encountered a non-finite attachment coordinate"
+      );
+    }
+
+    centroid += attachment_position;
+  }
+
+  centroid /=
+      static_cast<double>(
+          attachment_records_.size()
+      );
+
+  for (std::size_t coordinate = 0;
+       coordinate < 3;
+       ++coordinate) {
+    ASSERT_(
+        std::isfinite(
+            centroid[coordinate]
+        ),
+        "Preferred positioning calculated a non-finite attachment centroid"
+    );
+  }
+
+  return centroid;
+}
+// -----------------------------------------------------------------------------
+inline
+bdm::Double3
+bdm::BiologicalCell::SegmentClosestPoint(
+    const ObstacleScaffold::Segment& segment,
+    const bdm::Double3& point) const
+{
+  /*
+   * Return the closest point on a finite scaffold segment.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the input geometry
+  // ---------------------------------------------------------------------------
+
+  ASSERT_(
+      segment.element_id > 0,
+      "Closest-point calculation requires a positive scaffold element ID"
+  );
+
+  for (std::size_t coordinate = 0;
+       coordinate < 3;
+       ++coordinate) {
+    ASSERT_(
+        std::isfinite(point[coordinate]) &&
+        std::isfinite(segment.vertex_0[coordinate]) &&
+        std::isfinite(segment.vertex_1[coordinate]),
+        "Closest-point calculation encountered non-finite coordinates"
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Project the point onto the segment line
+  // ---------------------------------------------------------------------------
+
+  const bdm::Double3 segment_vector =
+      segment.vertex_1 -
+      segment.vertex_0;
+
+  const double segment_length_squared =
+      segment_vector[0] * segment_vector[0] +
+      segment_vector[1] * segment_vector[1] +
+      segment_vector[2] * segment_vector[2];
+
+  ASSERT_(
+      std::isfinite(segment_length_squared) &&
+      segment_length_squared > 0.0,
+      "Closest-point calculation encountered a zero-length segment"
+  );
+
+  const bdm::Double3 point_offset =
+      point -
+      segment.vertex_0;
+
+  const double projected_fraction =
+      (
+        point_offset[0] * segment_vector[0] +
+        point_offset[1] * segment_vector[1] +
+        point_offset[2] * segment_vector[2]
+      ) /
+      segment_length_squared;
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Clamp the projection to the finite segment
+  // ---------------------------------------------------------------------------
+
+  const double clamped_fraction =
+      std::max(
+          0.0,
+          std::min(
+              1.0,
+              projected_fraction
+          )
+      );
+
+  return segment.vertex_0 +
+         segment_vector * clamped_fraction;
+}
+// -----------------------------------------------------------------------------
+inline
+bdm::BiologicalCell::ScaffoldOverlap
+bdm::BiologicalCell::FindDeepestOverlap(
+    const ObstacleScaffold& scaffold,
+    const bdm::Double3& proposed_position) const
+{
+  /*
+   * Find the deepest scaffold overlap near a proposed cell position.
+   *
+   * The segment spatial index provides a broad-phase local search. Exact
+   * finite-segment distances determine whether physical overlap exists.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the proposed position
+  // ---------------------------------------------------------------------------
+
+  for (std::size_t coordinate = 0;
+       coordinate < 3;
+       ++coordinate) {
+    ASSERT_(
+        std::isfinite(
+            proposed_position[coordinate]
+        ),
+        "Scaffold-overlap search received a non-finite position"
+    );
+  }
+
+  const double cell_radius =
+      this->GetMinimumCellRadius();
+
+  // Internal tolerance used only to avoid floating-point contact penetration.
+  const double scaffold_clearance =
+      1.0e-9 *
+      std::max(
+          1.0,
+          cell_radius
+      );
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Retrieve only segments near the proposed position
+  // ---------------------------------------------------------------------------
+
+  const std::vector<int> nearby_segment_ids =
+      scaffold.GetNearbySegmentIds(
+          proposed_position,
+          cell_radius +
+              scaffold_clearance
+      );
+
+  ScaffoldOverlap deepest_overlap;
+
+  // Differences smaller than the clearance are treated as numerical ties.
+  const double comparison_tolerance =
+      scaffold_clearance;
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Calculate the exact overlap with every nearby segment
+  // ---------------------------------------------------------------------------
+
+  for (const int element_id :
+       nearby_segment_ids) {
+
+    ASSERT_(
+        scaffold.HasSegment(element_id),
+        "Scaffold-overlap search could not find element ID "
+        + std::to_string(element_id)
+    );
+
+    const ObstacleScaffold::Segment& segment =
+        scaffold.GetSegment(
+            element_id
+        );
+
+    ASSERT_(
+        std::isfinite(segment.radius) &&
+        segment.radius >= 0.0,
+        "Scaffold-overlap search encountered an invalid segment radius"
+    );
+
+    const bdm::Double3 closest_point =
+        this->SegmentClosestPoint(
+            segment,
+            proposed_position
+        );
+
+    const double centreline_distance =
+        L2norm(
+            proposed_position -
+            closest_point
+        );
+
+    ASSERT_(
+        std::isfinite(centreline_distance) &&
+        centreline_distance >= 0.0,
+        "Scaffold-overlap search calculated an invalid distance"
+    );
+
+    const double required_separation =
+        cell_radius +
+        segment.radius +
+        scaffold_clearance;
+
+    const double penetration_depth =
+        required_separation -
+        centreline_distance;
+
+    const double overlap_tolerance =
+        1.0e-12 *
+        std::max(
+            1.0,
+            required_separation
+        );
+
+    if (penetration_depth <=
+        overlap_tolerance) {
+
+      continue;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: Retain the deepest overlap
+    // -------------------------------------------------------------------------
+
+    const bool deeper_overlap =
+        !deepest_overlap.detected ||
+        penetration_depth >
+            deepest_overlap.penetration_depth +
+            comparison_tolerance;
+
+    const bool deterministic_tie =
+        deepest_overlap.detected &&
+        std::fabs(
+            penetration_depth -
+            deepest_overlap.penetration_depth
+        ) <= comparison_tolerance &&
+        element_id <
+            deepest_overlap.element_id;
+
+    if (!deeper_overlap &&
+        !deterministic_tie) {
+      continue;
+    }
+
+    deepest_overlap.detected = true;
+    deepest_overlap.element_id = element_id;
+    deepest_overlap.closest_point = closest_point;
+    deepest_overlap.centreline_distance =
+        centreline_distance;
+    deepest_overlap.required_separation =
+        required_separation;
+    deepest_overlap.penetration_depth =
+        penetration_depth;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 5: Validate any detected overlap
+  // ---------------------------------------------------------------------------
+
+  if (deepest_overlap.detected) {
+    ASSERT_(
+        deepest_overlap.element_id > 0,
+        "Scaffold-overlap search returned an invalid element ID"
+    );
+
+    ASSERT_(
+        std::isfinite(
+            deepest_overlap.penetration_depth
+        ) &&
+        deepest_overlap.penetration_depth > 0.0,
+        "Scaffold-overlap search returned an invalid penetration depth"
+    );
+  }
+
+  return deepest_overlap;
+}
+// -----------------------------------------------------------------------------
+
+inline
+bool bdm::BiologicalCell::ResolveScaffoldOverlap(
+    const ObstacleScaffold& scaffold,
+    const bdm::Double3& original_position,
+    bdm::Double3* proposed_position) const
+{
+  /*
+   * Iteratively move a proposed cell position outside nearby scaffold
+   * segments by resolving the deepest detected overlap first.
+   *
+   * Returns true when the final position has no scaffold overlap.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the input positions
+  // ---------------------------------------------------------------------------
+
+  ASSERT_(
+      proposed_position != nullptr,
+      "Scaffold-overlap resolution received a null position pointer"
+  );
+
+  for (std::size_t coordinate = 0;
+       coordinate < 3;
+       ++coordinate) {
+
+    ASSERT_(
+        std::isfinite(
+            original_position[coordinate]
+        ),
+        "Scaffold-overlap resolution received a non-finite original position"
+    );
+
+    ASSERT_(
+        std::isfinite(
+            (*proposed_position)[coordinate]
+        ),
+        "Scaffold-overlap resolution received a non-finite proposed position"
+    );
+  }
+
+  // A generous temporary limit prevents infinite correction loops while the
+  // repositioning behaviour is being validated.
+  constexpr std::size_t max_iterations =
+      100;
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Resolve the deepest overlap at each iteration
+  // ---------------------------------------------------------------------------
+
+  for (std::size_t iteration = 0;
+       iteration < max_iterations;
+       ++iteration) {
+
+    const ScaffoldOverlap overlap =
+        this->FindDeepestOverlap(
+            scaffold,
+            *proposed_position
+        );
+
+    if (!overlap.detected) {
+      return true;
+    }
+
+    ASSERT_(
+        scaffold.HasSegment(overlap.element_id),
+        "Scaffold-overlap resolution could not find element ID "
+        + std::to_string(overlap.element_id)
+    );
+
+    ASSERT_(
+        std::isfinite(overlap.penetration_depth) &&
+        overlap.penetration_depth > 0.0,
+        "Scaffold-overlap resolution received an invalid penetration depth"
+    );
+
+    const ObstacleScaffold::Segment& segment =
+        scaffold.GetSegment(
+            overlap.element_id
+        );
+
+    const double direction_tolerance =
+        1.0e-12 *
+        std::max(
+            1.0,
+            overlap.required_separation
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 3: Prefer the direct outward direction
+    // -------------------------------------------------------------------------
+
+    bdm::Double3 correction_direction =
+        *proposed_position -
+        overlap.closest_point;
+
+    double direction_magnitude =
+        L2norm(
+            correction_direction
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 4: Fall back to the side occupied by the original cell
+    // -------------------------------------------------------------------------
+
+    if (direction_magnitude <=
+        direction_tolerance) {
+
+      const bdm::Double3 original_closest_point =
+          this->SegmentClosestPoint(
+              segment,
+              original_position
+          );
+
+      correction_direction =
+          original_position -
+          original_closest_point;
+
+      direction_magnitude =
+          L2norm(
+              correction_direction
+          );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 5: Construct a deterministic perpendicular fallback
+    // -------------------------------------------------------------------------
+
+    if (direction_magnitude <=
+        direction_tolerance) {
+
+      bdm::Double3 segment_direction =
+          segment.vertex_1 -
+          segment.vertex_0;
+
+      const double segment_length =
+          L2norm(
+              segment_direction
+          );
+
+      ASSERT_(
+          std::isfinite(segment_length) &&
+          segment_length > 0.0,
+          "Scaffold-overlap resolution encountered a zero-length segment"
+      );
+
+      segment_direction /=
+          segment_length;
+
+      bdm::Double3 reference_axis = {
+          0.0,
+          0.0,
+          0.0
+      };
+
+      const double abs_x =
+          std::fabs(segment_direction[0]);
+
+      const double abs_y =
+          std::fabs(segment_direction[1]);
+
+      const double abs_z =
+          std::fabs(segment_direction[2]);
+
+      // Choose the global axis least aligned with the segment.
+      if (abs_x <= abs_y &&
+          abs_x <= abs_z) {
+
+        reference_axis = {
+            1.0,
+            0.0,
+            0.0
+        };
+
+      } else if (abs_y <= abs_z) {
+
+        reference_axis = {
+            0.0,
+            1.0,
+            0.0
+        };
+
+      } else {
+
+        reference_axis = {
+            0.0,
+            0.0,
+            1.0
+        };
+      }
+
+      correction_direction = {
+          segment_direction[1] * reference_axis[2] -
+              segment_direction[2] * reference_axis[1],
+
+          segment_direction[2] * reference_axis[0] -
+              segment_direction[0] * reference_axis[2],
+
+          segment_direction[0] * reference_axis[1] -
+              segment_direction[1] * reference_axis[0]
+      };
+
+      direction_magnitude =
+          L2norm(
+              correction_direction
+          );
+
+      ASSERT_(
+          direction_magnitude >
+              direction_tolerance,
+          "Scaffold-overlap resolution could not construct an outward direction"
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 6: Move outside the deepest overlapping segment
+    // -------------------------------------------------------------------------
+
+    correction_direction /=
+        direction_magnitude;
+
+    *proposed_position +=
+        correction_direction *
+        overlap.penetration_depth;
+
+    for (std::size_t coordinate = 0;
+         coordinate < 3;
+         ++coordinate) {
+
+      ASSERT_(
+          std::isfinite(
+              (*proposed_position)[coordinate]
+          ),
+          "Scaffold-overlap resolution produced a non-finite position"
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 7: Perform one final overlap check
+  //
+  // The final correction may have occurred during the last allowed iteration.
+  // ---------------------------------------------------------------------------
+
+  const ScaffoldOverlap final_overlap =
+      this->FindDeepestOverlap(
+          scaffold,
+          *proposed_position
+      );
+
+  return !final_overlap.detected;
+}
+// -----------------------------------------------------------------------------
+inline
+bool bdm::BiologicalCell::RepositionAfterDetachment(
+    const ObstacleScaffold& scaffold,
+    const bdm::Double3& original_position)
+{
+  /*
+   * Reposition the cell after attachment loss using its retained attachments.
+   *
+   * The preferred position is corrected for scaffold overlap and applied only
+   * when every retained attachment remains within reach.
+   *
+   * Returns true when the repositioned position is successfully applied.
+   */
+
+  // ---------------------------------------------------------------------------
+  // Step 1: Validate the post-detachment state
+  // ---------------------------------------------------------------------------
+
+  ASSERT_(
+      this->GetCellMatrixLifecycleStatus() ==
+          CellMatrixLifecycleStatus::kEstablished,
+      "Post-detachment repositioning requires an established cell"
+  );
+
+  ASSERT_(
+      !attachment_records_.empty(),
+      "Post-detachment repositioning requires retained attachments"
+  );
+
+  ASSERT_(
+      this->RequiresMechanicsRecalculation(),
+      "Post-detachment repositioning requires outdated FEM mechanics"
+  );
+
+  ASSERT_(
+      !scaffold.segment.empty(),
+      "Post-detachment repositioning requires scaffold segments"
+  );
+
+  for (std::size_t coordinate = 0;
+       coordinate < 3;
+       ++coordinate) {
+
+    ASSERT_(
+        std::isfinite(
+            original_position[coordinate]
+        ),
+        "Post-detachment repositioning received a non-finite original position"
+    );
+  }
+
+  // Detachment does not itself move the cell.
+  const bdm::Double3 current_position =
+      this->GetPosition();
+
+  ASSERT_(
+      current_position[0] == original_position[0] &&
+      current_position[1] == original_position[1] &&
+      current_position[2] == original_position[2],
+      "Cell position changed before post-detachment repositioning"
+  );
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Calculate the preferred position
+  // ---------------------------------------------------------------------------
+
+  const bdm::Double3 preferred_position =
+      this->CalculatePreferredPosition(
+          scaffold
+      );
+
+  bdm::Double3 proposed_position =
+      preferred_position;
+
+  // ---------------------------------------------------------------------------
+  // Step 3: Resolve overlap with nearby scaffold segments
+  // ---------------------------------------------------------------------------
+
+  const bool overlap_resolved =
+      this->ResolveScaffoldOverlap(
+          scaffold,
+          original_position,
+          &proposed_position
+      );
+
+  if (!overlap_resolved) {
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 4: Apply the valid repositioned position
+  // ---------------------------------------------------------------------------
+
+  this->SetPosition(
+      proposed_position
+  );
+
+  // ---------------------------------------------------------------------------
+  // Step 5: Validate the applied geometry and attachment state
+  // ---------------------------------------------------------------------------
+
+  const ScaffoldOverlap final_overlap =
+      this->FindDeepestOverlap(
+          scaffold,
+          this->GetPosition()
+      );
+
+  ASSERT_(
+      !final_overlap.detected,
+      "Post-detachment repositioning applied an overlapping cell position"
+  );
+
+  this->ValidateCellMatrixState();
+
+  return true;
 }
 // -----------------------------------------------------------------------------
 inline
@@ -1345,32 +2134,32 @@ void bdm::BiologicalCell::FollowSingleAttachmentScaffold(
   // ---------------------------------------------------------------------------
 
   const bdm::Double3& current_attachment_position =
-      scaffold.GetNodePosition(attachment.node_id);
+    scaffold.GetNodePosition(attachment.node_id);
 
   const bdm::Double3 cell_offset =
       this->GetPosition() - current_attachment_position;
 
   const double expected_clearance =
-      scaffold.GetNodeRadius(attachment.node_id)
-      + 0.5 * this->GetDiameter();
+    scaffold.GetNodeRadius(attachment.node_id)
+    + this->GetMinimumCellRadius();
 
   const double actual_clearance =
-      L2norm(cell_offset);
+    L2norm(cell_offset);
 
   ASSERT_(
-      std::fabs(actual_clearance - expected_clearance) <= 1.0e-9,
-      "Single-attachment scaffold tracking produced incorrect "
-      "cell-strut clearance"
+    std::fabs(actual_clearance - expected_clearance) <= 1.0e-9,
+    "Single-attachment scaffold tracking produced incorrect "
+    "cell-strut clearance"
   );
 
   const double axial_offset =
-      cell_offset[0] * strut_direction[0]
-      + cell_offset[1] * strut_direction[1]
-      + cell_offset[2] * strut_direction[2];
+    cell_offset[0] * strut_direction[0]
+    + cell_offset[1] * strut_direction[1]
+    + cell_offset[2] * strut_direction[2];
 
   ASSERT_(
-      std::fabs(axial_offset) <= 1.0e-9,
-      "Single-attachment scaffold tracking produced an axial cell offset"
+    std::fabs(axial_offset) <= 1.0e-9,
+    "Single-attachment scaffold tracking produced an axial cell offset"
   );
 
   // ---------------------------------------------------------------------------
@@ -1378,22 +2167,22 @@ void bdm::BiologicalCell::FollowSingleAttachmentScaffold(
   // ---------------------------------------------------------------------------
 
   const AttachmentRecord& updated_attachment =
-      this->GetAttachmentRecord(0);
+    this->GetAttachmentRecord(0);
 
   ASSERT_(
-      updated_attachment.node_id == node_id_before,
-      "Single-attachment scaffold tracking changed the persistent node ID"
+    updated_attachment.node_id == node_id_before,
+    "Single-attachment scaffold tracking changed the persistent node ID"
   );
 
   ASSERT_(
-      updated_attachment.k_ecm == k_ecm_before,
-      "Single-attachment scaffold tracking changed k_ecm"
+    updated_attachment.k_ecm == k_ecm_before,
+    "Single-attachment scaffold tracking changed k_ecm"
   );
 
   ASSERT_(
-      updated_attachment.has_valid_k_ecm ==
-          has_valid_k_ecm_before,
-      "Single-attachment scaffold tracking changed k_ecm validity"
+    updated_attachment.has_valid_k_ecm ==
+        has_valid_k_ecm_before,
+    "Single-attachment scaffold tracking changed k_ecm validity"
   );
 
   ASSERT_(
@@ -1433,17 +2222,21 @@ bool bdm::BiologicalCell::CheckMigration()
   if (!this->GetPhenotype()) {
     return false;
   }
+ 
+    // Preserve the pre-detachment position for repositioning and fallback.
+  const bdm::Double3 original_position =
+      this->GetPosition();
 
   const bool attachments_detached =
       this->ProcessAttachmentDetachment();
 
   if (attachments_detached) {
     /*
-     * The attachment geometry has changed, so its FEM-derived mechanics are
-     * outdated.
+     * The attachment set has changed. Reposition the cell using the retained
+     * attachments before any later reattachment logic is performed.
      */
 
-    // Prevent displacement values from an earlier timestep being reused.
+    // Do not reuse movement calculated from the previous attachment geometry.
     this->passive_displacement_ = {
         0.0,
         0.0,
@@ -1456,11 +2249,65 @@ bool bdm::BiologicalCell::CheckMigration()
         0.0
     };
 
+    // -------------------------------------------------------------------------
+    // Retrieve the current FEM-updated scaffold
+    // -------------------------------------------------------------------------
+
+    const SimulationObstacles* simulation_obstacles =
+        this->params()->get<SimulationObstacles*>(
+            "simulation_obstacles_data"
+        );
+
+    ASSERT_(
+        simulation_obstacles != nullptr,
+        "Post-detachment repositioning requires simulation obstacle data"
+    );
+
+    ASSERT_(
+        simulation_obstacles->scaffold.size() == 1,
+        "Post-detachment repositioning requires exactly one active scaffold"
+    );
+
+    const ObstacleScaffold& active_scaffold =
+        simulation_obstacles->scaffold.front();
+
+    ASSERT_(
+        !active_scaffold.nodes_by_id.empty(),
+        "Post-detachment repositioning received a scaffold with no nodes"
+    );
+
+    ASSERT_(
+        !active_scaffold.segment.empty(),
+        "Post-detachment repositioning received a scaffold with no segments"
+    );
+
+    ASSERT_(
+        !active_scaffold.segment_spatial_index.empty(),
+        "Post-detachment repositioning requires a built segment spatial index"
+    );
+
+    // -------------------------------------------------------------------------
+    // Calculate and apply the first repositioned position
+    // -------------------------------------------------------------------------
+
+    const bool repositioned =
+        this->RepositionAfterDetachment(
+            active_scaffold,
+            original_position
+        );
+
     this->ValidateCellMatrixState();
 
-    // Attachment loss alone does not mean that the cell position changed.
-    return false;
+    /*
+     * Stages 17–19 will eventually continue from here with candidate
+     * generation, attachment selection and the second repositioning.
+     *
+     * Until those stages are added, return here so the legacy migration logic
+     * does not move the cell again during the same timestep.
+     */
+    return repositioned;
   }
+
   //
   // access BioDynaMo's resource manager
   auto* rm = bdm::Simulation::GetActive()->GetResourceManager();

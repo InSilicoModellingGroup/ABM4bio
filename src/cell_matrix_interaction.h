@@ -543,8 +543,8 @@ class CellMatrixInteraction {
     * python3 -u FEM_solver_interface.py \
             --step_num <time - 1> \
             --cell_count <cell_count> \
-            --min_cell_radius <min_cell_radius> \
-            --max_cell_radius <max_cell_radius> \
+            --min_cell_radius <min_cell_radius <- legacy> \
+            --max_cell_radius <max_cell_radius <- legacy> \
             --strut_radius <strut_radius> \
             --delta_F <delta_F> \
             --perturbance_dist <perturbance_dist> \
@@ -670,25 +670,25 @@ class CellMatrixInteraction {
         // Phenotype-specific mechanics parameters
         // -------------------------------------------------------------------------
 
-        const double min_cell_radius =
+        const double min_attachment_separation =
             this->params()->get<double>(
-                mech_base + "/min_cell_reach_radius"
+                mech_base + "/min_attachment_separation"
             );
 
-        if ((2.0 * min_cell_radius) <
+        if ((2.0 * min_attachment_separation) <
             this->params()->get<double>(CP_name + "/diameter/min")) {
             ABORT_(
                 "Model parameter '"
                 + mech_base
-                + "/min_cell_reach_radius' cannot be less than '"
+                + "/min_attachment_separation' cannot be less than '"
                 + CP_name
                 + "/diameter/min'"
             );
             }
 
-        const double max_cell_radius =
+        const double max_attachment_separation =
             this->params()->get<double>(
-                mech_base + "/max_cell_reach_radius"
+                mech_base + "/max_attachment_separation"
             );
 
         const double strut_radius =
@@ -764,12 +764,12 @@ class CellMatrixInteraction {
 
         cmd +=
         "--min_cell_radius "
-        + std::to_string(min_cell_radius)
+        + std::to_string(min_attachment_separation/2)
         + " ";
 
         cmd +=
         "--max_cell_radius "
-        + std::to_string(max_cell_radius)
+        + std::to_string(max_attachment_separation/2)
         + " ";
 
         cmd +=
@@ -1104,7 +1104,8 @@ class CellMatrixInteraction {
         /*
         * Function goal
         * -------------
-        * Build the reusable spatial node index for the current active scaffold.
+        * Build the reusable spatial node and segment indices for the current
+        * active scaffold.
         *
         * The index is rebuilt once after each scaffold replacement and is reused
         * by all cell candidate-radius searches during that timestep.
@@ -1129,7 +1130,7 @@ class CellMatrixInteraction {
         // -------------------------------------------------------------------------
 
         bool found_mechanics_phenotype = false;
-        double max_cell_reach_radius = 0.0;
+        double max_attachment_separation = 0.0;
 
         for (const auto& cell_type : cells) {
         const int phenotype_id =
@@ -1163,9 +1164,9 @@ class CellMatrixInteraction {
             "mechanics-enabled phenotype"
         );
 
-        max_cell_reach_radius =
+        max_attachment_separation =
             this->params()->get<double>(
-                mech_base + "/max_cell_reach_radius"
+                mech_base + "/max_attachment_separation"
             );
 
         found_mechanics_phenotype = true;
@@ -1178,9 +1179,10 @@ class CellMatrixInteraction {
         );
 
         ASSERT_(
-            max_cell_reach_radius > 0.0,
+            std::isfinite(max_attachment_separation) &&
+            max_attachment_separation > 0.0,
             "Scaffold spatial-index preparation requires a positive maximum "
-            "cell reach radius"
+            "attachment separation"
         );
 
         // -------------------------------------------------------------------------
@@ -1188,9 +1190,13 @@ class CellMatrixInteraction {
         // -------------------------------------------------------------------------
 
         const double bucket_size =
-            2.0 * max_cell_reach_radius;
+            max_attachment_separation;
 
         active_scaffolds.front().BuildNodeSpatialIndex(
+            bucket_size
+        );
+
+        active_scaffolds.front().BuildSegmentSpatialIndex(
             bucket_size
         );
 
