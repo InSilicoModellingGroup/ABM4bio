@@ -600,7 +600,7 @@ bool ResolveScaffoldOverlap(
     const bdm::Double3& original_position,
     bdm::Double3* proposed_position) const;
   
-  bool RepositionAfterDetachment(
+  bool RepositionFromAttachments(
     const ObstacleScaffold& scaffold,
     const bdm::Double3& original_position);
   //
@@ -620,6 +620,10 @@ private:
   double trail_ = 0.0;
   bdm::Double3 active_displacement_ = {0.0, 0.0, 0.0};
   bdm::Double3 passive_displacement_ = {0.0, 0.0, 0.0};
+
+  // Most recent non-zero cell displacement, used for directional persistence.
+  bdm::Double3 last_migration_displacement_ = {0.0, 0.0, 0.0};
+  
   // index to keep track of the (individual) cell divisions & trasformations
   // and total number of filopodium or/and neurite (outgrowth) protrusions
   int n_divisions_ = 0, n_trasformations_ = 0, n_protrusions_ = 0;
@@ -2853,6 +2857,522 @@ private:
     );
 
     return candidate_weights;
+    }
+
+    inline
+    std::vector<double> CalculateCandidateSelectionProbabilities(
+        const std::vector<double>& candidate_weights,
+        const double random_selection_strength) const {
+    /*
+    * Function goal
+    * -------------
+    * Convert candidate bias weights into attachment-selection probabilities.
+    *
+    * random_selection_strength controls the balance between biased and random
+    * selection:
+    *
+    *   0.0 -> highest-weight candidate is selected deterministically
+    *   0.5 -> probabilities are proportional to candidate weights
+    *   1.0 -> all candidates have equal probability
+    */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the inputs
+    // -------------------------------------------------------------------------
+
+    if (candidate_weights.empty()) {
+        return {};
+    }
+
+    ASSERT_(
+        std::isfinite(random_selection_strength) &&
+        random_selection_strength >= 0.0 &&
+        random_selection_strength <= 1.0,
+        "Random selection strength must be finite and between 0 and 1"
+    );
+
+    for (const double weight : candidate_weights) {
+        ASSERT_(
+            std::isfinite(weight) &&
+            weight > 0.0,
+            "Candidate selection requires positive finite weights"
+        );
+    }
+
+    std::vector<double> selection_probabilities(
+        candidate_weights.size(),
+        0.0
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Handle fully deterministic selection
+    // -------------------------------------------------------------------------
+
+    if (random_selection_strength == 0.0) {
+
+        const auto highest_weight =
+            std::max_element(
+                candidate_weights.begin(),
+                candidate_weights.end()
+            );
+
+        const std::size_t selected_index =
+            static_cast<std::size_t>(
+                std::distance(
+                    candidate_weights.begin(),
+                    highest_weight
+                )
+            );
+
+        selection_probabilities[selected_index] =
+            1.0;
+
+        return selection_probabilities;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3: Calculate the bias exponent
+    // -------------------------------------------------------------------------
+
+    const double gamma =
+        (1.0 - random_selection_strength) /
+        random_selection_strength;
+
+    // -------------------------------------------------------------------------
+    // Step 4: Calculate numerically stable relative scores
+    // -------------------------------------------------------------------------
+
+    std::vector<double> log_scores;
+
+    log_scores.reserve(
+        candidate_weights.size()
+    );
+
+    for (const double weight :
+        candidate_weights) {
+
+        log_scores.push_back(
+            gamma *
+            std::log(weight)
+        );
+    }
+
+    const double maximum_log_score =
+        *std::max_element(
+            log_scores.begin(),
+            log_scores.end()
+        );
+
+    double total_score = 0.0;
+
+    for (std::size_t index = 0;
+        index < log_scores.size();
+        ++index) {
+
+        const double score =
+            std::exp(
+                log_scores[index] -
+                maximum_log_score
+            );
+
+        selection_probabilities[index] =
+            score;
+
+        total_score += score;
+    }
+
+    ASSERT_(
+        std::isfinite(total_score) &&
+        total_score > 0.0,
+        "Candidate selection produced an invalid probability total"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 5: Normalise the scores into probabilities
+    // -------------------------------------------------------------------------
+
+    double probability_sum = 0.0;
+
+    for (double& probability :
+        selection_probabilities) {
+
+        probability /=
+            total_score;
+
+        ASSERT_(
+            std::isfinite(probability) &&
+            probability >= 0.0 &&
+            probability <= 1.0,
+            "Candidate selection probability is outside [0, 1]"
+        );
+
+        probability_sum += probability;
+    }
+
+    ASSERT_(
+        std::fabs(probability_sum - 1.0) <= 1.0e-12,
+        "Candidate selection probabilities do not sum to 1"
+    );
+
+    return selection_probabilities;
+    }
+
+    inline
+    int SelectAttachmentCandidateNodeId(
+        const std::vector<int>& candidate_node_ids,
+        const std::vector<double>& selection_probabilities) const {
+    /*
+    * Function goal
+    * -------------
+    * Select one attachment candidate using the supplied selection probabilities.
+    */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the candidate pool
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        !candidate_node_ids.empty(),
+        "Attachment candidate selection requires at least one candidate"
+    );
+
+    ASSERT_(
+        candidate_node_ids.size() ==
+            selection_probabilities.size(),
+        "Candidate node and selection-probability counts do not match"
+    );
+
+    double probability_sum = 0.0;
+
+    for (std::size_t index = 0;
+        index < candidate_node_ids.size();
+        ++index) {
+
+        ASSERT_(
+            candidate_node_ids[index] > 0,
+            "Attachment candidate selection encountered a non-positive node ID"
+        );
+
+        ASSERT_(
+            std::isfinite(selection_probabilities[index]) &&
+            selection_probabilities[index] >= 0.0 &&
+            selection_probabilities[index] <= 1.0,
+            "Attachment candidate selection encountered an invalid probability"
+        );
+
+        probability_sum +=
+            selection_probabilities[index];
+    }
+
+    ASSERT_(
+        std::fabs(probability_sum - 1.0) <= 1.0e-12,
+        "Attachment candidate selection probabilities do not sum to 1"
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 2: Handle deterministic selection
+    // -------------------------------------------------------------------------
+
+    for (std::size_t index = 0;
+        index < selection_probabilities.size();
+        ++index) {
+
+        if (selection_probabilities[index] == 1.0) {
+        return candidate_node_ids[index];
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 3: Generate one random selection draw
+    // -------------------------------------------------------------------------
+
+    auto* simulation =
+        bdm::Simulation::GetActive();
+
+    ASSERT_(
+        simulation != nullptr,
+        "Attachment candidate selection requires an active simulation"
+    );
+
+    auto* random_generator =
+        simulation->GetRandom();
+
+    ASSERT_(
+        random_generator != nullptr,
+        "Attachment candidate selection requires a random-number generator"
+    );
+
+    const double random_draw =
+        random_generator->Uniform(
+            0.0,
+            1.0
+        );
+
+    // -------------------------------------------------------------------------
+    // Step 4: Select from the cumulative probability distribution
+    // -------------------------------------------------------------------------
+
+    double cumulative_probability = 0.0;
+
+    for (std::size_t index = 0;
+        index < candidate_node_ids.size();
+        ++index) {
+
+        cumulative_probability +=
+            selection_probabilities[index];
+
+        if (random_draw <
+            cumulative_probability) {
+
+        return candidate_node_ids[index];
+        }
+    }
+
+    // Protect against floating-point accumulation leaving the final cumulative
+    // probability fractionally below 1.
+    return candidate_node_ids.back();
+    }
+
+    inline
+    void AddSelectedAttachment(
+        const ObstacleScaffold& active_scaffold,
+        const int selected_node_id) {
+    /*
+    * Function goal
+    * -------------
+    * Add one ABM-selected scaffold node to the cell's persistent attachment
+    * records and mark the cell mechanics for FEM recalculation.
+    */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Validate the selected candidate
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Attachment formation requires an established cell"
+    );
+
+    ASSERT_(
+        selected_node_id > 0,
+        "Attachment formation received a non-positive scaffold node ID"
+    );
+
+    ASSERT_(
+        active_scaffold.HasNode(selected_node_id),
+        "Attachment formation could not find scaffold node ID "
+        + std::to_string(selected_node_id)
+    );
+
+    for (const auto& attachment :
+        attachment_records_) {
+
+        ASSERT_(
+            attachment.node_id != selected_node_id,
+            "Attachment formation attempted to add an already attached node"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Create the new persistent attachment record
+    // -------------------------------------------------------------------------
+
+    AttachmentRecord new_attachment;
+
+    new_attachment.node_id =
+        selected_node_id;
+
+    new_attachment.position =
+        active_scaffold.GetNodePosition(
+            selected_node_id
+        );
+
+    new_attachment.k_ecm =
+        0.0;
+
+    new_attachment.has_valid_k_ecm =
+        false;
+
+    new_attachment.newly_formed =
+        true;
+
+    // -------------------------------------------------------------------------
+    // Step 3: Append the attachment to the existing persistent state
+    // -------------------------------------------------------------------------
+
+    std::vector<AttachmentRecord> updated_attachments =
+        attachment_records_;
+
+    updated_attachments.push_back(
+        new_attachment
+    );
+
+    this->UpdateAttachmentRecordsFromAbm(
+        updated_attachments
+    );
+
+    // -------------------------------------------------------------------------
+    // Step 4: Validate the updated cell-matrix state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        this->RequiresMechanicsRecalculation(),
+        "New attachment formation must request FEM mechanics recalculation"
+    );
+
+    ASSERT_(
+        this->GetNumberOfAttachmentRecords() ==
+            updated_attachments.size(),
+        "Attachment formation produced an inconsistent attachment count"
+    );
+
+    this->ValidateCellMatrixState();
+    }
+
+    inline
+    std::size_t AttemptAttachmentFormation(
+        const ObstacleScaffold& active_scaffold,
+        const std::size_t requested_addition_count,
+        const bdm::Double3& recent_movement,
+        const double min_attachment_separation,
+        const double max_attachment_separation,
+        const double candidate_scaffold_clearance,
+        const double candidate_cell_clearance,
+        const double cell_distance_sensitivity,
+        const double persistence_sensitivity,
+        const double random_selection_strength) {
+    /*
+    * Function goal
+    * -------------
+    * Attempt the requested number of new attachments using the current
+    * attachment geometry, candidate weights and stochastic selection rule.
+    *
+    * The candidate pool is regenerated after every successful addition.
+    *
+    * Returns the number of attachments actually formed.
+    */
+
+    // -------------------------------------------------------------------------
+    // Step 1: Nothing requested
+    // -------------------------------------------------------------------------
+
+    if (requested_addition_count == 0) {
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 2: Validate the current state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        cell_matrix_lifecycle_status_ ==
+            CellMatrixLifecycleStatus::kEstablished,
+        "Attachment formation requires an established cell"
+    );
+
+    ASSERT_(
+        !attachment_records_.empty(),
+        "Attachment formation requires retained attachments"
+    );
+
+    const std::size_t original_attachment_count =
+        attachment_records_.size();
+
+    std::size_t formed_attachment_count = 0;
+
+    // -------------------------------------------------------------------------
+    // Step 3: Attempt each requested addition
+    // -------------------------------------------------------------------------
+
+    for (std::size_t addition = 0;
+        addition < requested_addition_count;
+        ++addition) {
+
+        // Recalculate candidates because the attachment set may have changed.
+        const std::vector<int> candidate_node_ids =
+            this->GenerateAttachmentCandidateNodeIds(
+                active_scaffold,
+                min_attachment_separation,
+                max_attachment_separation,
+                candidate_scaffold_clearance,
+                candidate_cell_clearance
+            );
+
+        // It is valid to form fewer attachments than requested.
+        if (candidate_node_ids.empty()) {
+        break;
+        }
+
+        // Calculate Stage 17 candidate weights.
+        const std::vector<double> candidate_weights =
+            this->CalculateAttachmentCandidateWeights(
+                active_scaffold,
+                candidate_node_ids,
+                recent_movement,
+                cell_distance_sensitivity,
+                persistence_sensitivity
+            );
+
+        ASSERT_(
+            candidate_weights.size() ==
+                candidate_node_ids.size(),
+            "Attachment formation candidate and weight counts do not match"
+        );
+
+        // Convert relative weights into Stage 18 selection probabilities.
+        const std::vector<double> selection_probabilities =
+            this->CalculateCandidateSelectionProbabilities(
+                candidate_weights,
+                random_selection_strength
+            );
+
+        ASSERT_(
+            selection_probabilities.size() ==
+                candidate_node_ids.size(),
+            "Attachment formation candidate and probability counts do not match"
+        );
+
+        // Select and form one attachment.
+        const int selected_node_id =
+            this->SelectAttachmentCandidateNodeId(
+                candidate_node_ids,
+                selection_probabilities
+            );
+
+        this->AddSelectedAttachment(
+            active_scaffold,
+            selected_node_id
+        );
+
+        ++formed_attachment_count;
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: Validate the final attachment state
+    // -------------------------------------------------------------------------
+
+    ASSERT_(
+        formed_attachment_count <=
+            requested_addition_count,
+        "Attachment formation exceeded the requested addition count"
+    );
+
+    ASSERT_(
+        attachment_records_.size() ==
+            original_attachment_count +
+            formed_attachment_count,
+        "Attachment formation produced an inconsistent attachment count"
+    );
+
+    if (formed_attachment_count > 0) {
+        ASSERT_(
+            requires_mechanics_recalculation_,
+            "New attachment formation must request FEM mechanics recalculation"
+        );
+    }
+
+    return formed_attachment_count;
     }
 
 };

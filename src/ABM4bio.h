@@ -1857,6 +1857,16 @@ void init_cells(bdm::Simulation& sim,
 
           if (!params.have_parameter<double>(
                   mech_base +
+                  "/random_selection_strength")) {
+
+            params.set<double>(
+                mech_base +
+                "/random_selection_strength"
+            ) = 0.5;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base +
                   "/candidate_directional_persistence_sensitivity")) {
 
             params.set<double>(
@@ -1917,6 +1927,12 @@ void init_cells(bdm::Simulation& sim,
                   "/candidate_cell_clearance"
               );
 
+          const double random_selection_strength =
+              params.get<double>(
+                  mech_base +
+                  "/random_selection_strength"
+              );
+
           // ---------------------------------------------------------------------
           // Validate candidate parameters
           // ---------------------------------------------------------------------
@@ -1970,6 +1986,20 @@ void init_cells(bdm::Simulation& sim,
                 mech_base +
                 "/candidate_cell_clearance\" "
                 "must be finite and non-negative"
+            );
+          }
+
+          if (!std::isfinite(
+                  random_selection_strength
+              ) ||
+              random_selection_strength < 0.0 ||
+              random_selection_strength > 1.0) {
+
+            ABORT_(
+                "model parameter \"" +
+                mech_base +
+                "/random_selection_strength\" "
+                "must be finite and between 0 and 1"
             );
           }
         

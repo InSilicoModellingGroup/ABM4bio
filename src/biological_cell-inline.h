@@ -1905,7 +1905,7 @@ bool bdm::BiologicalCell::ResolveScaffoldOverlap(
 }
 // -----------------------------------------------------------------------------
 inline
-bool bdm::BiologicalCell::RepositionAfterDetachment(
+bool bdm::BiologicalCell::RepositionFromAttachments(
     const ObstacleScaffold& scaffold,
     const bdm::Double3& original_position)
 {
@@ -2222,35 +2222,35 @@ bool bdm::BiologicalCell::CheckMigration()
     return false;
   }
  
-    // Preserve the pre-detachment position for repositioning and fallback.
-  const bdm::Double3 original_position =
-      this->GetPosition();
+ // ---------------------------------------------------------------------------
+// Process established cell-matrix attachment turnover
+// ---------------------------------------------------------------------------
 
-  const bool attachments_detached =
-      this->ProcessAttachmentDetachment();
+{
+  const std::string& phenotype_name =
+      this->params()->get<std::string>(
+          "phenotype_ID/" +
+          std::to_string(this->GetPhenotype())
+      );
 
-  if (attachments_detached) {
-    /*
-     * The attachment set has changed. Reposition the cell using the retained
-     * attachments before any later reattachment logic is performed.
-     */
+  const std::string mech_base =
+      phenotype_name + "/cell_matrix_mechanics";
 
-    // Do not reuse movement calculated from the previous attachment geometry.
-    this->passive_displacement_ = {
-        0.0,
-        0.0,
-        0.0
-    };
+  const bool mechanics_enabled =
+      this->params()->have_parameter<bool>(
+          mech_base + "/enabled"
+      ) &&
+      this->params()->get<bool>(
+          mech_base + "/enabled"
+      );
 
-    this->active_displacement_ = {
-        0.0,
-        0.0,
-        0.0
-    };
+  if (mechanics_enabled &&
+      this->GetCellMatrixLifecycleStatus() ==
+          CellMatrixLifecycleStatus::kEstablished) {
 
-    // -------------------------------------------------------------------------
-    // Retrieve the current FEM-updated scaffold
-    // -------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Step 1: Retrieve the active FEM-updated scaffold
+    // -----------------------------------------------------------------------
 
     const SimulationObstacles* simulation_obstacles =
         this->params()->get<SimulationObstacles*>(
@@ -2259,12 +2259,12 @@ bool bdm::BiologicalCell::CheckMigration()
 
     ASSERT_(
         simulation_obstacles != nullptr,
-        "Post-detachment repositioning requires simulation obstacle data"
+        "Attachment turnover requires simulation obstacle data"
     );
 
     ASSERT_(
         simulation_obstacles->scaffold.size() == 1,
-        "Post-detachment repositioning requires exactly one active scaffold"
+        "Attachment turnover requires exactly one active scaffold"
     );
 
     const ObstacleScaffold& active_scaffold =
@@ -2272,40 +2272,211 @@ bool bdm::BiologicalCell::CheckMigration()
 
     ASSERT_(
         !active_scaffold.nodes_by_id.empty(),
-        "Post-detachment repositioning received a scaffold with no nodes"
+        "Attachment turnover received a scaffold with no nodes"
     );
 
     ASSERT_(
         !active_scaffold.segment.empty(),
-        "Post-detachment repositioning received a scaffold with no segments"
+        "Attachment turnover received a scaffold with no segments"
     );
 
     ASSERT_(
         !active_scaffold.segment_spatial_index.empty(),
-        "Post-detachment repositioning requires a built segment spatial index"
+        "Attachment turnover requires a built segment spatial index"
     );
 
-    // -------------------------------------------------------------------------
-    // Calculate and apply the first repositioned position
-    // -------------------------------------------------------------------------
+    // Preserve the position before any attachment turnover occurs.
+    const bdm::Double3 original_position =
+        this->GetPosition();
 
-    const bool repositioned =
-        this->RepositionAfterDetachment(
-            active_scaffold,
-            original_position
-        );
+    // -----------------------------------------------------------------------
+    // Step 2: Process stochastic detachment
+    // -----------------------------------------------------------------------
 
-    this->ValidateCellMatrixState();
+    const bool attachments_detached =
+        this->ProcessAttachmentDetachment();
 
-    if (!repositioned) {
-      return false;
+    bool repositioned = false;
+
+    if (attachments_detached) {
+
+      // Do not reuse displacement from the previous attachment geometry.
+      this->passive_displacement_ = {
+          0.0,
+          0.0,
+          0.0
+      };
+
+      this->active_displacement_ = {
+          0.0,
+          0.0,
+          0.0
+      };
+
+      repositioned =
+          this->RepositionFromAttachments(
+              active_scaffold,
+              original_position
+          );
+
+      this->ValidateCellMatrixState();
+
+      if (!repositioned) {
+        return false;
+      }
+
+      
     }
-    /*
-    * Stage 17 currently stops after candidate evaluation.
-    * No attachment is selected or formed yet.
-    */
-    return repositioned;
+
+    // -----------------------------------------------------------------------
+    // Step 3: Determine how many new attachments should be attempted
+    // -----------------------------------------------------------------------
+
+    const std::size_t requested_addition_count =
+        this->DetermineAttachmentAdditionCount();
+
+    std::size_t formed_attachment_count = 0;
+
+    if (requested_addition_count > 0) {
+
+      // ---------------------------------------------------------------------
+      // Step 4: Read candidate-generation and selection parameters
+      // ---------------------------------------------------------------------
+
+      const double min_attachment_separation =
+          this->params()->get<double>(
+              mech_base +
+              "/min_attachment_separation"
+          );
+
+      const double max_attachment_separation =
+          this->params()->get<double>(
+              mech_base +
+              "/max_attachment_separation"
+          );
+
+      const double candidate_scaffold_clearance =
+          this->params()->get<double>(
+              mech_base +
+              "/candidate_scaffold_clearance"
+          );
+
+      const double candidate_cell_clearance =
+          this->params()->get<double>(
+              mech_base +
+              "/candidate_cell_clearance"
+          );
+
+      const double cell_distance_sensitivity =
+          this->params()->get<double>(
+              mech_base +
+              "/candidate_cell_distance_sensitivity"
+          );
+
+      const double persistence_sensitivity =
+          this->params()->get<double>(
+              mech_base +
+              "/candidate_directional_persistence_sensitivity"
+          );
+
+      const double random_selection_strength =
+          this->params()->get<double>(
+              mech_base +
+              "/random_selection_strength"
+          );
+
+      /*
+       * When detachment caused repositioning, use that displacement as the
+       * directional-persistence reference. Otherwise there was no new
+       * attachment-driven movement during this timestep.
+       */
+
+      // Use the cell's last movement as the persistence direction.
+      const bdm::Double3 recent_movement =
+        this->last_migration_displacement_;
+
+      // ---------------------------------------------------------------------
+      // Step 5: Attempt the requested attachment additions
+      // ---------------------------------------------------------------------
+
+      formed_attachment_count =
+          this->AttemptAttachmentFormation(
+              active_scaffold,
+              requested_addition_count,
+              recent_movement,
+              min_attachment_separation,
+              max_attachment_separation,
+              candidate_scaffold_clearance,
+              candidate_cell_clearance,
+              cell_distance_sensitivity,
+              persistence_sensitivity,
+              random_selection_strength
+          );
+
+          if (formed_attachment_count > 0) {
+
+            // Reposition once using the final expanded attachment set.
+            const bdm::Double3 position_before_repositioning =
+                this->GetPosition();
+
+            const bool formation_repositioned =
+                this->RepositionFromAttachments(
+                    active_scaffold,
+                    position_before_repositioning
+                );
+
+            if (!formation_repositioned) {
+              return false;
+            }
+
+            std::cout
+              << "[FORMATION REPOSITION] cell="
+              << this->GetUid().GetIndex()
+              << " attachments="
+              << this->GetNumberOfAttachmentRecords()
+              << " displacement="
+              << L2norm(
+                  this->GetPosition() -
+                  position_before_repositioning
+              )
+              << std::endl;
+
+            repositioned = true;
+          }
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 6: Stop legacy migration when attachment turnover changed the cell
+    // -----------------------------------------------------------------------
+
+    // Store the overall attachment-driven movement for directional persistence.
+    if (attachments_detached ||
+        formed_attachment_count > 0) {
+
+      const bdm::Double3 attachment_displacement =
+          this->GetPosition() -
+          original_position;
+
+      if (L2norm(attachment_displacement) >
+          this->params()->get<double>(
+              "migration_tolerance"
+          )) {
+
+        this->last_migration_displacement_ =
+            attachment_displacement;
+      }
+    }
+    
+    if (attachments_detached ||
+        formed_attachment_count > 0) {
+
+      this->ValidateCellMatrixState();
+
+      return repositioned;
+    
+    }
   }
+}
 
   //
   // access BioDynaMo's resource manager
@@ -2627,11 +2798,21 @@ bool bdm::BiologicalCell::CheckMigration()
     /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
   //
   // check if cell has migrated, if so then revise its spatial coordinates and trail
-  if ( has_migrated )
-    {
-      this->UpdatePosition(this->GetDisplacement());
-      this->UpdateTrail(L2norm(this->GetDisplacement()));
-    }
+  if (has_migrated){
+      const bdm::Double3 applied_displacement =
+          this->GetDisplacement();
+
+      this->last_migration_displacement_ =
+          applied_displacement;
+
+      this->UpdatePosition(
+          applied_displacement
+      );
+
+      this->UpdateTrail(
+          L2norm(applied_displacement)
+      );
+  }
   //
   // check if cell has migrated, if so then revise the spatial coordinates
   // of the cell protrusions; however, check for current algorithmic limitations!!!
