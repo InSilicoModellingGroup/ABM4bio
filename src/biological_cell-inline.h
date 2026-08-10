@@ -1693,8 +1693,7 @@ bool bdm::BiologicalCell::ResolveScaffoldOverlap(
     );
   }
 
-  // A generous temporary limit prevents infinite correction loops while the
-  // repositioning behaviour is being validated.
+  // Bound the correction loop to prevent pathological non-convergence.
   constexpr std::size_t max_iterations =
       100;
 
@@ -1911,13 +1910,13 @@ bool bdm::BiologicalCell::RepositionAfterDetachment(
     const bdm::Double3& original_position)
 {
   /*
-   * Reposition the cell after attachment loss using its retained attachments.
-   *
-   * The preferred position is corrected for scaffold overlap and applied only
-   * when every retained attachment remains within reach.
-   *
-   * Returns true when the repositioned position is successfully applied.
-   */
+  * Reposition the cell after attachment loss using its retained attachments.
+  *
+  * The preferred position is calculated from the retained attachment geometry
+  * and corrected to prevent scaffold overlap.
+  *
+  * Returns true when the repositioned position is successfully applied.
+  */
 
   // ---------------------------------------------------------------------------
   // Step 1: Validate the post-detachment state
@@ -2298,13 +2297,13 @@ bool bdm::BiologicalCell::CheckMigration()
 
     this->ValidateCellMatrixState();
 
+    if (!repositioned) {
+      return false;
+    }
     /*
-     * Stages 17–19 will eventually continue from here with candidate
-     * generation, attachment selection and the second repositioning.
-     *
-     * Until those stages are added, return here so the legacy migration logic
-     * does not move the cell again during the same timestep.
-     */
+    * Stage 17 currently stops after candidate evaluation.
+    * No attachment is selected or formed yet.
+    */
     return repositioned;
   }
 
@@ -2426,9 +2425,7 @@ bool bdm::BiologicalCell::CheckMigration()
           }
 
           const bool mechanics_probability_allows_migration =
-            rg->Uniform(0.0, 1.0) <= mechanics_migration_probability;
-
-          static std::mutex mechanics_debug_mutex;
+            rg->Uniform(0.0, 1.0) <= mechanics_migration_probability;        
 
           if (mechanics_enabled &&
             mechanics_lifecycle_allows_migration &&
@@ -2507,58 +2504,7 @@ bool bdm::BiologicalCell::CheckMigration()
 
                 if (move_dist > this->params()->get<double>("migration_tolerance"))
                 {
-                  const auto uid = this->GetUid();
-
-                  if (uid.GetIndex() < 5) {
-                    const auto pos = this->GetPosition();
-                    const auto target = 
-                      best_attachment.position;
-
-                    {
-
-                    std::lock_guard<std::mutex> lock(mechanics_debug_mutex);
-
-                    std::cout << "[MECH MIGRATION] UID " << uid.GetIndex()
-                              << " established="
-                              << mechanics_lifecycle_allows_migration
-                              << " best_attach=" << best_idx
-                              << " node_id=" << best_attachment.node_id
-                              << " k=" << best_attachment.k_ecm
-                              << " probability=" << mechanics_migration_probability
-                              << " dist_to_attach=" << d_magn
-                              << " stop_dist=" << stop_distance
-                              << " move_dist=" << move_dist
-                              << "\n";
-
-                    }
-
-                    {
-
-                    std::lock_guard<std::mutex> lock(mechanics_debug_mutex);
-
-                    std::cout << "  pos=("
-                              << pos[0] << ","
-                              << pos[1] << ","
-                              << pos[2] << ")"
-                              << " target=("
-                              << target[0] << ","
-                              << target[1] << ","
-                              << target[2] << ")\n";
-
-                    }
-                  }
-
                   this->active_displacement_ += dir * move_dist;
-
-                  if (uid.GetIndex() < 5) {
-                    auto disp = dir * move_dist;
-
-                    std::cout << "  displacement=("
-                              << disp[0] << ", "
-                              << disp[1] << ", "
-                              << disp[2] << ")\n";
-                  }
-
                   has_migrated = true;
 
                   // The cell position has changed, so the stored cell-level mechanics no
@@ -2571,29 +2517,7 @@ bool bdm::BiologicalCell::CheckMigration()
               }
             }
           }
-          else if (mechanics_enabled)
-          {
-            const auto uid = this->GetUid();
-
-            if (uid.GetIndex() < 5) {
-
-              std::lock_guard<std::mutex> lock(mechanics_debug_mutex);
-
-              std::cout << "[MECH MIGRATION SKIPPED] UID " << uid.GetIndex()
-                        << " established=" 
-                        << mechanics_lifecycle_allows_migration
-                        << " valid_attachments="
-                        << has_valid_mechanics_attachments
-                        << " requires_recalculation="
-                        << this->RequiresMechanicsRecalculation()
-                        << " n_attachment_records="
-                        << this->GetNumberOfAttachmentRecords()
-                        << " probability=" << mechanics_migration_probability
-                        << "\n";
-            }
-          }
-            
-          
+        
           // Brownian cell motion
           if (this->params()->get<double>(CP_name+"/can_migrate/half_range") > 0.0)
             {

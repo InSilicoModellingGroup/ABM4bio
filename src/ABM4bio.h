@@ -1473,10 +1473,6 @@ void init_cells(bdm::Simulation& sim,
         if (!params.have_parameter<double>(
                 mech_base + "/max_attachment_separation")) {
 
-          /*
-          * This directly represents the maximum pairwise attachment distance.
-          * The old default was 2 * max_cell_reach_radius = 2 * 40.
-          */
           params.set<double>(
               mech_base + "/max_attachment_separation"
           ) = 80.0;
@@ -1571,10 +1567,6 @@ void init_cells(bdm::Simulation& sim,
         // Store the calculated probability so the rest of the code can continue using the old name.
         params.set<double>(mech_base + "/mechanics_migration_probability") =
             mechanics_migration_probability;
-
-        if (!params.have_parameter<double>(mech_base + "/mechanics_migration_probability"))
-          params.set<double>(mech_base + "/mechanics_migration_probability") = 1.0;
-
         
           // ---------------------------------------------------------------------
           // Attachment detachment probability parameters
@@ -1819,31 +1811,167 @@ void init_cells(bdm::Simulation& sim,
           }
 
           // ---------------------------------------------------------------------
-          // Candidate attachment probability parameters
+          // Candidate attachment parameters
+          // ---------------------------------------------------------------------
+
+          // Prevent outdated parameter names from being silently ignored.
+          if (params.have_parameter<double>(
+                  mech_base +
+                  "/candidate_proximity_sensitivity")) {
+
+            ABORT_(
+                "model parameter \"" +
+                mech_base +
+                "/candidate_proximity_sensitivity\" has been replaced by \"" +
+                mech_base +
+                "/candidate_cell_distance_sensitivity\""
+            );
+          }
+
+          if (params.have_parameter<double>(
+                  mech_base +
+                  "/candidate_direction_sensitivity")) {
+
+            ABORT_(
+                "model parameter \"" +
+                mech_base +
+                "/candidate_direction_sensitivity\" has been replaced by \"" +
+                mech_base +
+                "/candidate_directional_persistence_sensitivity\""
+            );
+          }
+
+          // ---------------------------------------------------------------------
+          // Candidate weighting parameters
           // ---------------------------------------------------------------------
 
           if (!params.have_parameter<double>(
                   mech_base +
-                  "/candidate_proximity_sensitivity")) {
+                  "/candidate_cell_distance_sensitivity")) {
+
             params.set<double>(
                 mech_base +
-                "/candidate_proximity_sensitivity"
+                "/candidate_cell_distance_sensitivity"
             ) = 1.0;
           }
 
-          const double candidate_proximity_sensitivity =
+          if (!params.have_parameter<double>(
+                  mech_base +
+                  "/candidate_directional_persistence_sensitivity")) {
+
+            params.set<double>(
+                mech_base +
+                "/candidate_directional_persistence_sensitivity"
+            ) = 0.0;
+          }
+
+          // ---------------------------------------------------------------------
+          // Candidate obstruction parameters
+          // ---------------------------------------------------------------------
+
+          if (!params.have_parameter<double>(
+                  mech_base +
+                  "/candidate_scaffold_clearance")) {
+
+            params.set<double>(
+                mech_base +
+                "/candidate_scaffold_clearance"
+            ) = 0.0;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base +
+                  "/candidate_cell_clearance")) {
+
+            params.set<double>(
+                mech_base +
+                "/candidate_cell_clearance"
+            ) = 0.0;
+          }
+
+          // ---------------------------------------------------------------------
+          // Read candidate parameters
+          // ---------------------------------------------------------------------
+
+          const double candidate_cell_distance_sensitivity =
               params.get<double>(
                   mech_base +
-                  "/candidate_proximity_sensitivity"
+                  "/candidate_cell_distance_sensitivity"
               );
 
-          if (candidate_proximity_sensitivity < 0.0) {
+          const double candidate_directional_persistence_sensitivity =
+              params.get<double>(
+                  mech_base +
+                  "/candidate_directional_persistence_sensitivity"
+              );
+
+          const double candidate_scaffold_clearance =
+              params.get<double>(
+                  mech_base +
+                  "/candidate_scaffold_clearance"
+              );
+
+          const double candidate_cell_clearance =
+              params.get<double>(
+                  mech_base +
+                  "/candidate_cell_clearance"
+              );
+
+          // ---------------------------------------------------------------------
+          // Validate candidate parameters
+          // ---------------------------------------------------------------------
+
+          if (!std::isfinite(
+                  candidate_cell_distance_sensitivity
+              ) ||
+              candidate_cell_distance_sensitivity < 0.0) {
+
             ABORT_(
-                "model parameter \"" + mech_base +
-                "/candidate_proximity_sensitivity\" must be >= 0"
+                "model parameter \"" +
+                mech_base +
+                "/candidate_cell_distance_sensitivity\" "
+                "must be finite and non-negative"
             );
           }
 
+          if (!std::isfinite(
+                  candidate_directional_persistence_sensitivity
+              ) ||
+              candidate_directional_persistence_sensitivity < 0.0) {
+
+            ABORT_(
+                "model parameter \"" +
+                mech_base +
+                "/candidate_directional_persistence_sensitivity\" "
+                "must be finite and non-negative"
+            );
+          }
+
+          if (!std::isfinite(
+                  candidate_scaffold_clearance
+              ) ||
+              candidate_scaffold_clearance < 0.0) {
+
+            ABORT_(
+                "model parameter \"" +
+                mech_base +
+                "/candidate_scaffold_clearance\" "
+                "must be finite and non-negative"
+            );
+          }
+
+          if (!std::isfinite(
+                  candidate_cell_clearance
+              ) ||
+              candidate_cell_clearance < 0.0) {
+
+            ABORT_(
+                "model parameter \"" +
+                mech_base +
+                "/candidate_cell_clearance\" "
+                "must be finite and non-negative"
+            );
+          }
         
           if (!params.have_parameter<bool>(mech_base + "/verbose"))
           params.set<bool>(mech_base + "/verbose") = false;
