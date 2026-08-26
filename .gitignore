@@ -52,3 +52,6 @@ examples/cell-matrix_interaction/input.csv
 
 # Local run logs
 cell_matrix_run.log
+
+# hpc-credentials
+hpc_credentials.ini

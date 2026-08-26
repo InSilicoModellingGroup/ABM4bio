@@ -7,6 +7,7 @@ import argparse
 import time
 import re
 import sys
+import configparser
 
 # -------------------------------
 # INPUTS FROM C++ (WITH DEFAULTS)
@@ -23,11 +24,52 @@ parser.add_argument("--random_state", type=int, default=0, help="Randomize the c
 parser.add_argument("--num_attachments", type=int, default=4, help="The maximum number of points a cell can attach to")
 parser.add_argument("--lattice_mesh_path", type=str, default="./COMPLETE SIMULATION FILES/Lattice.k", help="Path to the lattice mesh file on the HPC")
 parser.add_argument("--verbose", action="store_true")
-parser.add_argument("--private_key_path", type=str, required=True, help="Path to private key (.pem)")
-parser.add_argument("--user_name", type=str, required=True, help="HPC username")
-parser.add_argument("--host_name", type=str, required=True, help="HPC hostname")
+parser.add_argument("--credentials_file", type=str, default="hpc_credentials.ini", help="Path to private HPC credentials file")
 
 args = parser.parse_args()
+
+credentials_file = args.credentials_file
+
+# Check credentials exist/provided
+if not os.path.isfile(credentials_file):
+    raise FileNotFoundError(
+        f"HPC credentials file not found: '{credentials_file}'\n"
+        "Create an hpc_credentials.ini file containing at least:\n\n"
+        "[HPC]\n"
+        "host_name = YOUR_HPC_HOST\n"
+        "user_name = YOUR_USERNAME\n"
+        "auth_method = password OR key\n"
+        "password = YOUR_PASSWORD OR C:/path/to/private_key.pem\n"
+    )
+
+# Validate information within hpc_credentials.ini file
+config = configparser.ConfigParser()
+config.read(credentials_file)
+
+if "HPC" not in config:
+    raise ValueError(
+        f"Credentials file '{credentials_file}' does not contain an [HPC] section."
+    )
+
+hpc_config = config["HPC"]
+
+required_fields = ["host_name", "user_name", "auth_method"]
+
+missing_fields = [
+    field for field in required_fields
+    if not hpc_config.get(field)
+]
+
+if missing_fields:
+    raise ValueError(
+        "Missing required HPC credential fields: "
+        + ", ".join(missing_fields)
+    )
+
+# Read values
+host_name = hpc_config["host_name"]
+user_name = hpc_config["user_name"]
+auth_method = hpc_config["auth_method"].lower()
 
 # assign to variables
 step_num = args.step_num
@@ -41,22 +83,61 @@ random_state = args.random_state
 num_attachments = args.num_attachments
 lattice_mesh_path = args.lattice_mesh_path
 verbose = args.verbose
-private_key_path = args.private_key_path
-user_name = args.user_name
-host_name = args.host_name
 
 # translate verbose into Slurm flag
 verbose_flag = "--verbose" if verbose else ""
 
-# Start by loading private key (.pem extension)
-
-key = paramiko.RSAKey.from_private_key_file(private_key_path)
-
+# Connect to remote HPC serever (where FEM solver exists)
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-# Connect using the private key
-ssh.connect(hostname=host_name, username=user_name, pkey=key)
+# Password authentication
+if auth_method == "password":
+
+    password = hpc_config.get("password")
+
+    if not password:
+        raise ValueError(
+            "auth_method is set to 'password', "
+            "but no password was provided in the credentials file."
+        )
+
+    ssh.connect(
+        hostname=host_name,
+        username=user_name,
+        password=password,
+        look_for_keys=False,
+        allow_agent=False
+    )
+# Key authentication method
+elif auth_method == "key":
+
+    private_key_path = hpc_config.get("private_key_path")
+
+    if not private_key_path:
+        raise ValueError(
+            "auth_method is set to 'key', "
+            "but no private_key_path was provided."
+        )
+
+    if not os.path.isfile(private_key_path):
+        raise FileNotFoundError(
+            f"Private key could not be found: {private_key_path}"
+        )
+
+    key = paramiko.RSAKey.from_private_key_file(private_key_path)
+
+    ssh.connect(
+        hostname=host_name,
+        username=user_name,
+        pkey=key
+    )
+
+else:
+    raise ValueError(
+        f"Unknown auth_method '{auth_method}'. "
+        "Use either 'password' or 'key'."
+    )
 
 try:
     # Run a simple command to confirm login (returns username)

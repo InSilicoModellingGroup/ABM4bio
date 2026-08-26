@@ -2010,18 +2010,6 @@ void init_cells(bdm::Simulation& sim,
       // ...end of cell phenotypes loop
     }
 
-  // If mechanics are enabled must provide HPC login details
-  if (any_mech_enabled) {
-    if (!params.have_parameter<std::string>("cell_matrix_mechanics/HPC/private_key_path"))
-      ABORT_("model parameter \"cell_matrix_mechanics/HPC/private_key_path\" must be provided");
-
-    if (!params.have_parameter<std::string>("cell_matrix_mechanics/HPC/user_name"))
-      ABORT_("model parameter \"cell_matrix_mechanics/HPC/user_name\" must be provided");
-
-    if (!params.have_parameter<std::string>("cell_matrix_mechanics/HPC/host_name"))
-      ABORT_("model parameter \"cell_matrix_mechanics/HPC/host_name\" must be provided");
-  }
-
   const double min_radius = 0.5*(*std::min_element(cell_Dmin.begin(),cell_Dmin.end())),
                max_radius = 0.5*(*std::max_element(cell_Dmax.begin(),cell_Dmax.end()));
   const double safe_distance = (min_radius + max_radius)

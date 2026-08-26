@@ -552,9 +552,6 @@ class CellMatrixInteraction {
             --num_attachments <num_attachments> \
             --lattice_mesh_path "<lattice_mesh_path>" \
             --verbose \ <= IF TRUE 
-            --private_key_path "<private_key_path>" \
-            --user_name "<user_name>" \
-            --host_name "<host_name>"
     */
     
     ASSERT_(
@@ -624,28 +621,6 @@ class CellMatrixInteraction {
         any_mech_enabled = true;
         break;
         }
-    }
-
-    // Read global HPC settings once.
-    std::string private_key_path;
-    std::string user_name;
-    std::string host_name;
-
-    if (any_mech_enabled) {
-        private_key_path =
-        this->params()->get<std::string>(
-            "cell_matrix_mechanics/HPC/private_key_path"
-        );
-
-        user_name =
-        this->params()->get<std::string>(
-            "cell_matrix_mechanics/HPC/user_name"
-        );
-
-        host_name =
-        this->params()->get<std::string>(
-            "cell_matrix_mechanics/HPC/host_name"
-        );
     }
 
     for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
@@ -805,22 +780,6 @@ class CellMatrixInteraction {
         if (verbose) {
         cmd += "--verbose ";
         }
-
-        // Global HPC arguments.
-        cmd +=
-        "--private_key_path \""
-        + private_key_path
-        + "\" ";
-
-        cmd +=
-        "--user_name \""
-        + user_name
-        + "\" ";
-
-        cmd +=
-        "--host_name \""
-        + host_name
-        + "\" ";
 
         std::cout
         << "Running command: "
