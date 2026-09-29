@@ -1395,6 +1395,77 @@ void init_cells(bdm::Simulation& sim,
 
       if (params.get<bool>(mech_base + "/enabled")) {
 
+        // Cell-matrix output settings -------------------------------------
+
+        // Simplified ParaView cell representation.
+        if (!params.have_parameter<bool>("simple_mechanics_visual")) {
+          params.set<bool>("simple_mechanics_visual") = true;
+        }
+
+        // Optional detailed ABM decision output.
+        if (!params.have_parameter<bool>("output_mechanics_debug_file")) {
+          params.set<bool>("output_mechanics_debug_file") = false;
+        }
+
+        // Number of cells included in validation output.
+        // -1 means all cells.
+        if (!params.have_parameter<int>("n_validation_cells")) {
+          params.set<int>("n_validation_cells") = -1;
+        }
+
+        const int n_validation_cells =
+            params.get<int>("n_validation_cells");
+
+        if (n_validation_cells == 0 ||
+            n_validation_cells < -1) {
+
+          ABORT_(
+              "model parameter \"n_validation_cells\" must be "
+              "-1 (all cells) or an integer greater than 0"
+          );
+        }
+
+          // Mechanics output frequency in simulation steps.
+          // A value of 1 outputs every step, 2 every second step, etc.
+          if (params.have_parameter<double>("mechanics_output_interval") ||
+              params.have_parameter<bool>("mechanics_output_interval") ||
+              params.have_parameter<std::string>("mechanics_output_interval")) {
+
+            ABORT_(
+                "model parameter \"mechanics_output_interval\" "
+                "must be provided with type \"int\""
+            );
+          }
+
+          if (!params.have_parameter<int>("mechanics_output_interval")) {
+            params.set<int>("mechanics_output_interval") = 1;
+          }
+
+          if (params.get<int>("mechanics_output_interval") < 1) {
+            ABORT_(
+                "model parameter \"mechanics_output_interval\" "
+                "must be an integer greater than or equal to 1"
+            );
+          }
+
+          // Create the dedicated mechanics output directory.
+          const std::string mechanics_output_directory =
+              params.get<std::string>("output_directory")
+              + "/mechanics_outputs";
+
+          const std::string mkdir_command =
+              "mkdir -p \"" +
+              mechanics_output_directory +
+              "\"";
+
+          ASSERT_(
+              0 == std::system(mkdir_command.c_str()),
+              "could not create mechanics output directory: "
+              + mechanics_output_directory
+          );
+
+        // Cell-matrix output settings (END) -------------------------------------
+
         // Contractile force response parameters
         if (!params.have_parameter<double>(mech_base + "/max_contractile_force"))
           params.set<double>(mech_base + "/max_contractile_force") = 30.0;
@@ -4151,6 +4222,1552 @@ double calculate_contractile_force_from_kce(
 }
 // =============================================================================
 inline
+void save_mechanics_setup(
+  const std::map<int, std::string>& cells
+)
+{
+  /*
+   * Save the cell-matrix mechanics configuration used for this simulation.
+   *
+   * The file is written once after cell initialization so that all default
+   * mechanics parameters have already been created and validated.
+   */
+
+  // Check whether mechanics are enabled for at least one phenotype.
+  bool mechanics_enabled = false;
+
+  for (const auto& cell : cells) {
+
+    const int phenotype_id = cell.first;
+    const std::string& phenotype_name = cell.second;
+
+    if (phenotype_id < 1) {
+      continue;
+    }
+
+    const std::string mech_base =
+        phenotype_name + "/cell_matrix_mechanics";
+
+    if (params.have_parameter<bool>(mech_base + "/enabled") &&
+        params.get<bool>(mech_base + "/enabled")) {
+
+      mechanics_enabled = true;
+      break;
+    }
+  }
+
+  // Standard simulations do not create mechanics-specific output.
+  if (!mechanics_enabled) {
+    return;
+  }
+
+  // Create the mechanics setup file.
+  const std::string file_name =
+      params.get<std::string>("output_directory")
+      + "/mechanics_outputs/mechanics_metadata.json";
+
+  std::ofstream fout(file_name);
+
+  ASSERT_(
+      fout.good(),
+      "could not create mechanics setup file \"" + file_name + "\""
+  );
+
+  // Write JSON booleans as true/false rather than 1/0.
+  fout << std::boolalpha;
+
+  fout << "{" << std::endl;
+
+  // ---------------------------------------------------
+  // Simulation and output settings
+  // ---------------------------------------------------
+
+  fout << "  \"simulation_title\": \""
+       << params.get<std::string>("simulation_title")
+       << "\"," << std::endl;
+
+  fout << "  \"time_step\": "
+       << params.get<double>("time_step")
+       << "," << std::endl;
+
+  fout << "  \"number_of_time_steps\": "
+       << params.get<int>("number_of_time_steps")
+       << "," << std::endl;
+
+  fout << "  \"mechanics_output_interval\": "
+       << params.get<int>("mechanics_output_interval")
+       << "," << std::endl;
+
+  fout << "  \"simple_mechanics_visual\": "
+       << params.get<bool>("simple_mechanics_visual")
+       << "," << std::endl;
+
+  fout << "  \"output_mechanics_debug_file\": "
+       << params.get<bool>("output_mechanics_debug_file")
+       << "," << std::endl;
+
+  fout << "  \"n_validation_cells\": "
+       << params.get<int>("n_validation_cells")
+       << "," << std::endl;
+
+  // -------------------------------------------------------------
+  // Phenotype-specific mechanics settings
+  // -------------------------------------------------------------
+
+  fout << "  \"phenotypes\": [" << std::endl;
+
+  bool first_phenotype = true;
+
+  for (const auto& cell : cells) {
+
+    const int phenotype_id = cell.first;
+    const std::string& phenotype_name = cell.second;
+
+    if (phenotype_id < 1) {
+      continue;
+    }
+
+    const std::string mech_base =
+        phenotype_name + "/cell_matrix_mechanics";
+
+    if (!params.have_parameter<bool>(mech_base + "/enabled") ||
+        !params.get<bool>(mech_base + "/enabled")) {
+
+      continue;
+    }
+
+    if (!first_phenotype) {
+      fout << "," << std::endl;
+    }
+
+    first_phenotype = false;
+
+    fout << "    {" << std::endl;
+
+    fout << "      \"phenotype_id\": "
+         << phenotype_id
+         << "," << std::endl;
+
+    fout << "      \"phenotype_name\": \""
+         << phenotype_name
+         << "\"," << std::endl;
+
+    fout << "      \"min_attachment_separation\": "
+         << params.get<double>(
+                mech_base + "/min_attachment_separation")
+         << "," << std::endl;
+
+    fout << "      \"max_attachment_separation\": "
+         << params.get<double>(
+                mech_base + "/max_attachment_separation")
+         << "," << std::endl;
+
+    fout << "      \"num_attachments\": "
+         << params.get<int>(
+                mech_base + "/num_attachments")
+         << "," << std::endl;
+
+    fout << "      \"strut_radius\": "
+         << params.get<double>(
+                mech_base + "/strut_radius")
+         << "," << std::endl;
+
+    // Contractile-force response
+    fout << "      \"min_contractile_force\": "
+         << params.get<double>(
+                mech_base + "/min_contractile_force")
+         << "," << std::endl;
+
+    fout << "      \"max_contractile_force\": "
+         << params.get<double>(
+                mech_base + "/max_contractile_force")
+         << "," << std::endl;
+
+    fout << "      \"contractility_kce_sensitivity\": "
+         << params.get<double>(
+                mech_base + "/contractility_kce_sensitivity")
+         << "," << std::endl;
+
+    fout << "      \"contractility_kce_midpoint\": "
+         << params.get<double>(
+                mech_base + "/contractility_kce_midpoint")
+         << "," << std::endl;
+
+    // Detachment behaviour
+    fout << "      \"detachment_optimum_kecm\": "
+         << params.get<double>(
+                mech_base + "/detachment_optimum_kecm")
+         << "," << std::endl;
+
+    fout << "      \"detachment_low_kecm_slope\": "
+         << params.get<double>(
+                mech_base + "/detachment_low_kecm_slope")
+         << "," << std::endl;
+
+    fout << "      \"detachment_high_kecm_slope\": "
+         << params.get<double>(
+                mech_base + "/detachment_high_kecm_slope")
+         << "," << std::endl;
+
+    fout << "      \"detachment_min_probability\": "
+         << params.get<double>(
+                mech_base + "/detachment_min_probability")
+         << "," << std::endl;
+
+    fout << "      \"detachment_max_probability\": "
+         << params.get<double>(
+                mech_base + "/detachment_max_probability")
+         << "," << std::endl;
+
+    fout << "      \"detachment_kecm_weight\": "
+         << params.get<double>(
+                mech_base + "/detachment_kecm_weight")
+         << "," << std::endl;
+
+    fout << "      \"reference_detachment_time\": "
+         << params.get<double>(
+                mech_base + "/reference_detachment_time")
+         << "," << std::endl;
+
+    // Attachment formation
+    fout << "      \"mean_attachment_additions_per_reference_time\": "
+         << params.get<double>(
+                mech_base +
+                "/mean_attachment_additions_per_reference_time")
+         << "," << std::endl;
+
+    fout << "      \"reference_attachment_formation_time\": "
+         << params.get<double>(
+                mech_base +
+                "/reference_attachment_formation_time")
+         << "," << std::endl;
+
+    // Candidate selection
+    fout << "      \"candidate_scaffold_clearance\": "
+         << params.get<double>(
+                mech_base + "/candidate_scaffold_clearance")
+         << "," << std::endl;
+
+    fout << "      \"candidate_cell_clearance\": "
+         << params.get<double>(
+                mech_base + "/candidate_cell_clearance")
+         << "," << std::endl;
+
+    fout << "      \"candidate_cell_distance_sensitivity\": "
+         << params.get<double>(
+                mech_base +
+                "/candidate_cell_distance_sensitivity")
+         << "," << std::endl;
+
+    fout << "      \"candidate_directional_persistence_sensitivity\": "
+         << params.get<double>(
+                mech_base +
+                "/candidate_directional_persistence_sensitivity")
+         << "," << std::endl;
+
+    fout << "      \"random_selection_strength\": "
+         << params.get<double>(
+                mech_base + "/random_selection_strength")
+         << std::endl;
+
+    fout << "    }";
+  }
+
+  fout << std::endl
+       << "  ]" << std::endl
+       << "}" << std::endl;
+
+}
+// =============================================================================
+inline
+void save_mechanics_snapshot(
+  bdm::Simulation& sim,
+  const std::map<int, std::string>& cells,
+  const std::vector<ObstacleScaffold>& active_scaffolds,
+  const int step
+)
+{
+  /*
+   * Save the current cell-matrix mechanics state.
+   *
+   * This output is written after the FEM results have been imported and
+   * attachment coordinates have been synchronised with the active scaffold.
+   */
+
+  // -------------------------------------------------------------
+  // Check and return when cell-matrix mechanics are not enabled
+  // -------------------------------------------------------------
+
+  bool mechanics_enabled = false;
+
+  for (const auto& cell_type : cells) {
+
+    const std::string mech_base =
+        cell_type.second + "/cell_matrix_mechanics";
+
+    if (params.have_parameter<bool>(mech_base + "/enabled") &&
+        params.get<bool>(mech_base + "/enabled")) {
+
+      mechanics_enabled = true;
+      break;
+    }
+  }
+
+  if (!mechanics_enabled) {
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // Return when this is not a mechanics output step
+  // ------------------------------------------------------------------
+
+  const int output_interval =
+      params.get<int>("mechanics_output_interval");
+
+  ASSERT_(
+      output_interval >= 1,
+      "mechanics_output_interval must be greater than or equal to 1"
+  );
+
+  if (0 != step % output_interval) {
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // Read the simple mechanics visualisation flag from the parameters
+  // ------------------------------------------------------------------
+
+  const bool simple_mechanics_visual = params.get<bool>("simple_mechanics_visual");
+
+
+  // ------------------------------------------------------------------
+  // Save the current cell mechanics state data (cell_mechanics.csv)
+  // ------------------------------------------------------------------
+
+  const double current_time =
+      step * params.get<double>("time_step");
+
+  const std::string file_name =
+      params.get<std::string>("output_directory")
+      + "/mechanics_outputs/cell_mechanics.csv";
+
+  std::ofstream fout;
+
+  // The first mechanics snapshot creates a fresh file.
+  if (step == 0) {
+    fout.open(file_name, std::ios::out);
+  }
+  else {
+    fout.open(file_name, std::ios::app);
+  }
+
+  ASSERT_(
+      fout.good(),
+      "could not open mechanics output file \"" + file_name + "\""
+  );
+
+  // Write the header once.
+  if (step == 0) {
+    fout
+        << "step,"
+        << "time,"
+        << "cell_id,"
+        << "cell_centre,"
+        << "attachment_ids,"
+        << "attachment_coordinates,"
+        << "min_pairwise_distance,"
+        << "max_pairwise_distance,"
+        << "k_ecm,"
+        << "k_ce,"
+        << "contractile_force"
+        << std::endl;
+  }
+
+  // Collect cells first so the output can be written sequentially and
+  // deterministically.
+  std::vector<bdm::BiologicalCell*> biological_cells;
+  std::mutex biological_cells_mutex;
+
+  auto* rm = sim.GetResourceManager();
+
+  rm->ForEachAgent([&](bdm::Agent* agent) {
+
+    auto* cell =
+        dynamic_cast<bdm::BiologicalCell*>(agent);
+
+    if (!cell) {
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(
+        biological_cells_mutex
+    );
+
+    biological_cells.push_back(cell);
+  });
+
+  std::sort(
+      biological_cells.begin(),
+      biological_cells.end(),
+      [](const bdm::BiologicalCell* a,
+         const bdm::BiologicalCell* b) {
+
+        return a->GetUid().GetIndex()
+             < b->GetUid().GetIndex();
+      }
+  );
+
+  // Write one row per cell.
+  for (const auto* cell : biological_cells) {
+
+    const auto& position =
+        cell->GetPosition();
+
+    const auto cell_id =
+        cell->GetUid().GetIndex();
+
+    fout
+        << step << ","
+        << current_time << ","
+        << cell_id << ",";
+
+    // Cell centre: [x,y,z]
+    fout
+        << "\"["
+        << position[0] << ","
+        << position[1] << ","
+        << position[2]
+        << "]\",";
+
+    // At step 0 the cells have not yet interacted with the scaffold.
+    if (step == 0) {
+
+      fout
+          << "\"[]\","
+          << "\"[]\","
+          << "\"[]\","
+          << 0.0 << ","
+          << 0.0 << ","
+          << 0.0 << ","
+          << 0.0
+          << std::endl;
+
+      continue;
+    }
+
+    const auto& attachments = cell->GetAttachmentRecords();
+
+    double min_pairwise_distance = std::numeric_limits<double>::quiet_NaN();
+    double max_pairwise_distance = std::numeric_limits<double>::quiet_NaN();
+
+    if (attachments.size() >= 2) {
+
+      min_pairwise_distance = std::numeric_limits<double>::max();
+
+      max_pairwise_distance = 0.0;
+
+      for (std::size_t i = 0; i < attachments.size(); ++i) {
+        for (std::size_t j = i + 1; j < attachments.size(); ++j) {
+
+          const auto difference = attachments[i].position - attachments[j].position;
+
+          const double distance = std::sqrt(
+              difference[0] * difference[0]
+              + difference[1] * difference[1]
+              + difference[2] * difference[2]
+          );
+
+          min_pairwise_distance = std::min(min_pairwise_distance, distance);
+          max_pairwise_distance = std::max(max_pairwise_distance, distance);
+        }
+      }
+    }
+
+    // Attachment node IDs: [id1,id2,...]
+    fout << "\"[";
+
+    for (std::size_t i = 0; i < attachments.size(); ++i) {
+
+      if (i > 0) {
+        fout << ",";
+      }
+
+      fout << attachments[i].node_id;
+    }
+
+    fout << "]\",";
+
+    // Attachment coordinates: [[x1,y1,z1],[x2,y2,z2],...]
+    fout << "\"[";
+
+    for (std::size_t i = 0; i < attachments.size(); ++i) {
+
+      if (i > 0) {
+        fout << ",";
+      }
+
+      const auto& attachment_position =
+          attachments[i].position;
+
+      fout
+          << "["
+          << attachment_position[0] << ","
+          << attachment_position[1] << ","
+          << attachment_position[2]
+          << "]";
+    }
+
+    fout << "]\",";
+
+    // Attachment max/min pairwise distances
+    fout << min_pairwise_distance << ",";
+    fout << max_pairwise_distance << ",";
+
+    // Attachment stiffness values: [k1,k2,...]
+    fout << "\"[";
+
+    for (std::size_t i = 0; i < attachments.size(); ++i) {
+
+      if (i > 0) {
+        fout << ",";
+      }
+
+      if (attachments[i].has_valid_k_ecm) {
+        fout << attachments[i].k_ecm;
+      }
+      else {
+        fout << "null";
+      }
+    }
+
+    fout << "]\",";
+
+    // Cell-level mechanics.
+    fout
+        << cell->GetKce() << ","
+        << cell->GetContractileForce()
+        << std::endl;
+  }
+
+  fout.close();
+
+  // ----------------------------------------------------------------
+  // Save simplified cell mechanics geometry for ParaView
+  // ----------------------------------------------------------------
+
+  const std::string mechanics_output_directory =
+    params.get<std::string>("output_directory") + "/mechanics_outputs";
+
+  const int n_time = params.get<int>("number_of_time_steps");
+  const double time_step = params.get<double>("time_step");
+
+  // Create the PVD collection at step 0
+
+  if (step == 0) {
+
+    const std::string pvd_file_name =
+        mechanics_output_directory
+        + "/mechanics_cells.pvd";
+
+    std::ofstream pvd_file(pvd_file_name);
+
+    ASSERT_(
+        pvd_file.good(),
+        "could not open mechanics cell PVD file \""
+        + pvd_file_name + "\""
+    );
+
+    pvd_file
+        << "<?xml version=\"1.0\"?>"
+        << std::endl;
+
+    pvd_file
+        << "<VTKFile type=\"Collection\" "
+        << "version=\"0.1\" "
+        << "byte_order=\"LittleEndian\">"
+        << std::endl;
+
+    pvd_file
+        << "<Collection>"
+        << std::endl;
+
+    for (int t = 0; t <= n_time; ++t) {
+
+      if (0 != t % output_interval) {
+        continue;
+      }
+
+      const double output_time =
+          t * time_step;
+
+      pvd_file
+          << "  <DataSet timestep=\""
+          << output_time
+          << "\" group=\"\" part=\"0\" file=\"cells."
+          << t
+          << ".vtu\"/>"
+          << std::endl;
+    }
+
+    pvd_file
+        << "</Collection>"
+        << std::endl;
+
+    pvd_file
+        << "</VTKFile>"
+        << std::endl;
+
+    pvd_file.close();
+  }
+
+  // Build the simplified cell geometry
+
+  // VTK point coordinates.
+  std::vector<bdm::Double3> vtk_points;
+
+  // Point data.
+  std::vector<int> point_type;
+  std::vector<int> point_cell_id;
+  std::vector<int> point_phenotype;
+  std::vector<double> point_diameter;
+  std::vector<double> point_trail;
+  std::vector<double> point_k_ce;
+  std::vector<double> point_contractile_force;
+  std::vector<int> point_n_attachments;
+  std::vector<int> point_attachment_node_id;
+  std::vector<double> point_k_ecm;
+  std::vector<int> point_k_ecm_valid;
+
+  // VTK cell connectivity.
+
+  // Each entry contains either:
+  //   one point  -> cell-centre vertex
+  //   two points -> line
+  std::vector<std::vector<int>> vtk_connectivity;
+  std::vector<int> vtk_types;
+
+  // VTK cell data.
+  std::vector<int> geometry_cell_id;
+  std::vector<int> geometry_type;
+  std::vector<double> geometry_k_ce;
+  std::vector<int> geometry_attachment_node_id;
+  std::vector<double> geometry_k_ecm;
+  std::vector<int> geometry_k_ecm_valid;
+  std::vector<int> geometry_attachment_node_id_A;
+  std::vector<int> geometry_attachment_node_id_B;
+
+  // Build the geometry one cell at a time.
+  for (const auto* cell : biological_cells) {
+    
+    const int cell_id = cell->GetUid().GetIndex();
+    const int phenotype = cell->GetPhenotype();
+    const double diameter = cell->GetDiameter();
+    const double trail = cell->GetTrail();
+
+    // Step 0 contains no cell-matrix mechanics yet.
+    double k_ce = 0.0;
+    double contractile_force = 0.0;
+    int n_attachments = 0;
+
+    if (step != 0) {
+
+      k_ce = cell->GetKce();
+      contractile_force = cell->GetContractileForce();
+      n_attachments = static_cast<int>(cell->GetNumberOfAttachmentRecords());
+    }
+
+    // Add the cell-centre 
+    const int centre_point_index = static_cast<int>(vtk_points.size());
+    vtk_points.push_back(cell->GetPosition());
+
+    point_type.push_back(0);
+    point_cell_id.push_back(cell_id);
+    point_phenotype.push_back(phenotype);
+    point_diameter.push_back(diameter);
+    point_trail.push_back(trail);
+    point_k_ce.push_back(k_ce);
+    point_contractile_force.push_back(contractile_force);
+    point_n_attachments.push_back(n_attachments);
+    point_attachment_node_id.push_back(-1);
+    point_k_ecm.push_back(0.0);
+    point_k_ecm_valid.push_back(0);
+
+    // Add one VTK_VERTEX for the cell centre.
+    vtk_connectivity.push_back({centre_point_index});
+
+    // VTK_VERTEX = 1.
+    vtk_types.push_back(1);
+
+    geometry_cell_id.push_back(cell_id);
+    geometry_type.push_back(0);
+    geometry_k_ce.push_back(k_ce);
+    geometry_attachment_node_id.push_back(-1);
+    geometry_k_ecm.push_back(0.0);
+    geometry_k_ecm_valid.push_back(0);
+    geometry_attachment_node_id_A.push_back(-1);
+    geometry_attachment_node_id_B.push_back(-1);
+
+    // At step 0 there is no attachment geometry.
+    if (step != 0) {
+
+      const auto& attachments = cell->GetAttachmentRecords();
+
+      // Store the VTK point index for each attachment.
+      std::vector<int> attachment_point_indices;
+
+      // Add attachment points and centre-to-attachment lines.
+
+      for (const auto& attachment : attachments) {
+
+        const int attachment_point_index = static_cast<int>(vtk_points.size());
+        vtk_points.push_back(attachment.position);
+
+        attachment_point_indices.push_back(attachment_point_index);
+
+        point_type.push_back(1);
+        point_cell_id.push_back(cell_id);
+        point_phenotype.push_back(phenotype);
+        point_diameter.push_back(diameter);
+        point_trail.push_back(trail);
+        point_k_ce.push_back(k_ce);
+        point_contractile_force.push_back(contractile_force);
+        point_n_attachments.push_back(n_attachments);
+        point_attachment_node_id.push_back(attachment.node_id);
+
+        if (attachment.has_valid_k_ecm) {
+          point_k_ecm.push_back(attachment.k_ecm);
+          point_k_ecm_valid.push_back(1);
+        }
+        else {
+          point_k_ecm.push_back(0.0);
+          point_k_ecm_valid.push_back(0);
+        }
+
+        // Centre-to-attachment line.
+        vtk_connectivity.push_back(
+            {
+              centre_point_index,
+              attachment_point_index
+            }
+        );
+
+        // VTK_LINE = 3.
+        vtk_types.push_back(3);
+
+        geometry_cell_id.push_back(cell_id);
+        geometry_type.push_back(1);
+        geometry_k_ce.push_back(k_ce);
+        geometry_attachment_node_id.push_back(attachment.node_id);
+
+        if (attachment.has_valid_k_ecm) {
+          geometry_k_ecm.push_back(attachment.k_ecm);
+          geometry_k_ecm_valid.push_back(1);
+        }
+        else {
+          geometry_k_ecm.push_back(0.0);
+          geometry_k_ecm_valid.push_back(0);
+        }
+
+        geometry_attachment_node_id_A.push_back(-1);
+        geometry_attachment_node_id_B.push_back(-1);
+
+      }
+
+      // Add attachment-to-attachment (stress-fibre?) lines
+      
+      for (std::size_t i = 0; i < attachments.size(); ++i) {
+
+        for (std::size_t j = i + 1; j < attachments.size(); ++j) {
+
+          vtk_connectivity.push_back(
+              {
+                attachment_point_indices[i],
+                attachment_point_indices[j]
+              }
+          );
+
+          // VTK_LINE = 3.
+          vtk_types.push_back(3);
+
+          geometry_cell_id.push_back(cell_id);
+          geometry_type.push_back(2);
+          geometry_k_ce.push_back(k_ce);
+
+          // These fields apply only to centre-to-attachment lines.
+          geometry_attachment_node_id.push_back(-1);
+          geometry_k_ecm.push_back(0.0);
+          geometry_k_ecm_valid.push_back(0);
+
+          // Store both attachment IDs for the stress fibre.
+          geometry_attachment_node_id_A.push_back(attachments[i].node_id);
+          geometry_attachment_node_id_B.push_back(attachments[j].node_id);
+
+        }
+      }
+    } // end attachment geometry 
+
+    // ----------------------------------------------------------------
+    // Add membrane points for the advanced mechanics visualisation (if enabled)
+    // ----------------------------------------------------------------
+
+    if (!simple_mechanics_visual) {
+
+      const double pi = 3.14159265358979323846;
+      // Resolution of the spherical mesh for the cell centre.
+      const int latitude_divisions = 12;
+      const int longitude_divisions = 24;
+
+      const double body_radius = 0.5 * diameter;
+      const bdm::Double3 centre = cell->GetPosition();
+
+      // First VTK point belonging to this cell's spherical body.
+      const int sphere_start = static_cast<int>(vtk_points.size());
+
+      // North pole of cell centre sphere
+      vtk_points.push_back({
+          centre[0],
+          centre[1],
+          centre[2] + body_radius
+      }); 
+
+      point_type.push_back(2);
+      point_cell_id.push_back(cell_id);
+      point_phenotype.push_back(phenotype);
+      point_diameter.push_back(diameter);
+      point_trail.push_back(trail);
+      point_k_ce.push_back(k_ce);
+      point_contractile_force.push_back(contractile_force);
+      point_n_attachments.push_back(n_attachments);
+      point_attachment_node_id.push_back(-1);
+      point_k_ecm.push_back(0.0);
+      point_k_ecm_valid.push_back(0);
+
+      // Intermediate latitude and longitude points
+      for (int latitude = 1; latitude < latitude_divisions; ++latitude) {
+
+        const double theta = pi * latitude / latitude_divisions;
+
+        for (int longitude = 0; longitude < longitude_divisions; ++longitude) {
+
+          const double phi =
+              2.0 * pi * longitude / longitude_divisions;
+
+          vtk_points.push_back({
+              centre[0] + body_radius * std::sin(theta) * std::cos(phi),
+              centre[1] + body_radius * std::sin(theta) * std::sin(phi),
+              centre[2] + body_radius * std::cos(theta)
+          });
+
+          point_type.push_back(2);
+          point_cell_id.push_back(cell_id);
+          point_phenotype.push_back(phenotype);
+          point_diameter.push_back(diameter);
+          point_trail.push_back(trail);
+          point_k_ce.push_back(k_ce);
+          point_contractile_force.push_back(contractile_force);
+          point_n_attachments.push_back(n_attachments);
+          point_attachment_node_id.push_back(-1);
+          point_k_ecm.push_back(0.0);
+          point_k_ecm_valid.push_back(0);
+        }
+      }
+
+      // South pole of cell centre sphere
+      vtk_points.push_back({
+          centre[0],
+          centre[1],
+          centre[2] - body_radius
+      });
+
+      point_type.push_back(2);
+      point_cell_id.push_back(cell_id);
+      point_phenotype.push_back(phenotype);
+      point_diameter.push_back(diameter);
+      point_trail.push_back(trail);
+      point_k_ce.push_back(k_ce);
+      point_contractile_force.push_back(contractile_force);
+      point_n_attachments.push_back(n_attachments);
+      point_attachment_node_id.push_back(-1);
+      point_k_ecm.push_back(0.0);
+      point_k_ecm_valid.push_back(0);
+      
+      // ----------------------------------------------------------------
+      // Mesh sphere points into triangles for VTK_POLYGON cells.
+      // ----------------------------------------------------------------
+
+      const int north_pole = sphere_start;
+      const int first_ring = sphere_start + 1;
+      const int number_of_rings = latitude_divisions - 1;
+
+      const int south_pole = sphere_start + 1 + number_of_rings * longitude_divisions;
+
+      // Top cap triangles
+      for (int longitude = 0; longitude < longitude_divisions; ++longitude) {
+
+        const int next =
+            (longitude + 1) % longitude_divisions;
+
+        vtk_connectivity.push_back({
+            north_pole,
+            first_ring + longitude,
+            first_ring + next
+        });
+
+        vtk_types.push_back(5); // VTK_TRIANGLE
+
+        geometry_cell_id.push_back(cell_id);
+        geometry_type.push_back(3);
+        geometry_k_ce.push_back(k_ce);
+        geometry_attachment_node_id.push_back(-1);
+        geometry_k_ecm.push_back(0.0);
+        geometry_k_ecm_valid.push_back(0);
+        geometry_attachment_node_id_A.push_back(-1);
+        geometry_attachment_node_id_B.push_back(-1);
+      }
+
+      // Connect neighbouring latitude rings.
+      for (int ring = 0; ring < number_of_rings - 1; ++ring) {
+
+        const int current_ring =
+            first_ring + ring * longitude_divisions;
+
+        const int next_ring =
+            current_ring + longitude_divisions;
+
+        for (int longitude = 0; longitude < longitude_divisions; ++longitude) {
+
+          const int next =
+              (longitude + 1) % longitude_divisions;
+
+          const int a = current_ring + longitude;
+          const int b = next_ring + longitude;
+          const int c = next_ring + next;
+          const int d = current_ring + next;
+
+          vtk_connectivity.push_back({a, b, c});
+          vtk_types.push_back(5);
+
+          geometry_cell_id.push_back(cell_id);
+          geometry_type.push_back(3);
+          geometry_k_ce.push_back(k_ce);
+          geometry_attachment_node_id.push_back(-1);
+          geometry_k_ecm.push_back(0.0);
+          geometry_k_ecm_valid.push_back(0);
+          geometry_attachment_node_id_A.push_back(-1);
+          geometry_attachment_node_id_B.push_back(-1);
+
+          vtk_connectivity.push_back({a, c, d});
+          vtk_types.push_back(5);
+
+          geometry_cell_id.push_back(cell_id);
+          geometry_type.push_back(3);
+          geometry_k_ce.push_back(k_ce);
+          geometry_attachment_node_id.push_back(-1);
+          geometry_k_ecm.push_back(0.0);
+          geometry_k_ecm_valid.push_back(0);
+          geometry_attachment_node_id_A.push_back(-1);
+          geometry_attachment_node_id_B.push_back(-1);
+        }
+      }
+
+      // Bottom cap triangles
+      const int last_ring = first_ring + (number_of_rings - 1) * longitude_divisions;
+
+      for (int longitude = 0; longitude < longitude_divisions; ++longitude) {
+
+        const int next = (longitude + 1) % longitude_divisions;
+
+        vtk_connectivity.push_back({
+            last_ring + longitude,
+            south_pole,
+            last_ring + next
+        });
+
+        vtk_types.push_back(5); // VTK_TRIANGLE
+
+        geometry_cell_id.push_back(cell_id);
+        geometry_type.push_back(3);
+        geometry_k_ce.push_back(k_ce);
+        geometry_attachment_node_id.push_back(-1);
+        geometry_k_ecm.push_back(0.0);
+        geometry_k_ecm_valid.push_back(0);
+        geometry_attachment_node_id_A.push_back(-1);
+        geometry_attachment_node_id_B.push_back(-1);
+      }
+
+    } // end advanced mechanics visualisation
+
+  } // end loop over biological cells
+  
+  // ----------------------------------------------------------------
+  // Write the VTU file for this step
+  // ----------------------------------------------------------------
+
+  const std::string vtu_file_name = mechanics_output_directory + "/cells." + std::to_string(step) + ".vtu";
+  
+  std::ofstream vtu_file(vtu_file_name);
+
+  ASSERT_(vtu_file.good(), 
+    "could not open mechanics cell VTU file \"" + vtu_file_name + "\""
+  );
+
+  vtu_file
+    << "<?xml version=\"1.0\"?>"
+    << std::endl;
+
+  vtu_file
+      << "<VTKFile type=\"UnstructuredGrid\" "
+      << "version=\"0.1\" "
+      << "byte_order=\"LittleEndian\">"
+      << std::endl;
+
+  vtu_file
+      << "  <UnstructuredGrid>"
+      << std::endl;
+
+  vtu_file
+      << "    <Piece NumberOfPoints=\""
+      << vtk_points.size()
+      << "\" NumberOfCells=\""
+      << vtk_connectivity.size()
+      << "\">"
+      << std::endl;
+
+  // Write point coordinates
+
+  vtu_file
+    << "      <Points>"
+    << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Float64\" "
+      << "NumberOfComponents=\"3\" format=\"ascii\">"
+      << std::endl;
+
+  for (const auto& point : vtk_points) {
+
+    vtu_file
+        << " "
+        << point[0]
+        << " "
+        << point[1]
+        << " "
+        << point[2];
+  }
+  
+  vtu_file
+    << std::endl
+    << "        </DataArray>"
+    << std::endl;
+
+  vtu_file
+      << "      </Points>"
+      << std::endl;
+
+  // Write point data
+
+  vtu_file
+    << "      <PointData>"
+    << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"point_type\" format=\"ascii\">";
+
+  for (const auto value : point_type) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"cell_id\" format=\"ascii\">";
+
+  for (const auto value : point_cell_id) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"phenotype\" format=\"ascii\">";
+
+  for (const auto value : point_phenotype) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Float64\" "
+      << "Name=\"diameter\" format=\"ascii\">";
+
+  for (const auto value : point_diameter) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Float64\" "
+      << "Name=\"trail\" format=\"ascii\">";
+
+  for (const auto value : point_trail) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Float64\" "
+      << "Name=\"k_ce\" format=\"ascii\">";
+
+  for (const auto value : point_k_ce) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Float64\" "
+      << "Name=\"contractile_force\" format=\"ascii\">";
+
+  for (const auto value : point_contractile_force) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"n_attachments\" format=\"ascii\">";
+
+  for (const auto value : point_n_attachments) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"attachment_node_id\" format=\"ascii\">";
+
+  for (const auto value : point_attachment_node_id) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Float64\" "
+      << "Name=\"k_ecm\" format=\"ascii\">";
+
+  for (const auto value : point_k_ecm) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"k_ecm_valid\" format=\"ascii\">";
+
+  for (const auto value : point_k_ecm_valid) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "      </PointData>"
+      << std::endl;
+
+  // VTK cell connectivity
+
+  vtu_file
+    << "      <Cells>"
+    << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"connectivity\" format=\"ascii\">";
+
+  for (const auto& connectivity : vtk_connectivity) {
+
+    for (const auto point_index : connectivity) {
+      vtu_file << " " << point_index;
+    }
+  }
+
+  vtu_file
+    << " </DataArray>"
+    << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"offsets\" format=\"ascii\">";
+
+  int offset = 0;
+
+  for (const auto& connectivity : vtk_connectivity) {
+
+    offset +=
+        static_cast<int>(
+            connectivity.size()
+        );
+
+    vtu_file
+        << " "
+        << offset;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"UInt8\" "
+      << "Name=\"types\" format=\"ascii\">";
+
+  for (const auto type : vtk_types) {
+    vtu_file << " " << type;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "      </Cells>"
+      << std::endl;
+  
+  // Cell data
+
+  vtu_file
+    << "      <CellData>"
+    << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"cell_id\" format=\"ascii\">";
+
+  for (const auto value : geometry_cell_id) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"geometry_type\" format=\"ascii\">";
+
+  for (const auto value : geometry_type) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Float64\" "
+      << "Name=\"k_ce\" format=\"ascii\">";
+
+  for (const auto value : geometry_k_ce) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"attachment_node_id\" format=\"ascii\">";
+
+  for (const auto value : geometry_attachment_node_id) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Float64\" "
+      << "Name=\"k_ecm\" format=\"ascii\">";
+
+  for (const auto value : geometry_k_ecm) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"k_ecm_valid\" format=\"ascii\">";
+
+  for (const auto value : geometry_k_ecm_valid) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"attachment_node_id_A\" format=\"ascii\">";
+
+  for (const auto value : geometry_attachment_node_id_A) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "        <DataArray type=\"Int32\" "
+      << "Name=\"attachment_node_id_B\" format=\"ascii\">";
+
+  for (const auto value : geometry_attachment_node_id_B) {
+    vtu_file << " " << value;
+  }
+
+  vtu_file
+      << " </DataArray>"
+      << std::endl;
+
+  vtu_file
+      << "      </CellData>"
+      << std::endl;
+
+  // Finish VTU file.
+  vtu_file
+      << "    </Piece>"
+      << std::endl;
+
+  vtu_file
+      << "  </UnstructuredGrid>"
+      << std::endl;
+
+  vtu_file
+      << "</VTKFile>"
+      << std::endl;
+
+  vtu_file.close();
+
+  // ----------------------------------------------------------------
+  // Write simple scaffold geometry for ParaView (scaffold.pvd)
+  // ----------------------------------------------------------------
+
+  // Check there is exactly one active scaffold for the current simulation step.
+  ASSERT_(active_scaffolds.size() == 1,
+      "Mechanics scaffold output requires exactly one active scaffold"
+  );
+
+  const ObstacleScaffold& active_scaffold = active_scaffolds.front();
+
+  ASSERT_(!active_scaffold.nodes_by_id.empty(),
+      "Mechanics scaffold output received a scaffold with no nodes"
+  );
+
+  // Create the scaffold PVD collection
+  if (step == 0) {
+    
+    const std::string pvd_file_name = mechanics_output_directory + "/mechanics_scaffold.pvd";
+
+    std::ofstream pvd_file(pvd_file_name);
+
+    ASSERT_(pvd_file.good(),
+        "could not open mechanics scaffold PVD file \"" + pvd_file_name + "\""
+    );
+
+    pvd_file << "<?xml version=\"1.0\"?>\n";
+    pvd_file << "<VTKFile type=\"Collection\" version=\"0.1\" "
+            << "byte_order=\"LittleEndian\">\n";
+    pvd_file << "<Collection>\n";
+
+    for (int t = 0; t <= n_time; ++t) {
+      if (0 != t % output_interval) continue;
+
+      const double output_time = t * time_step;
+
+      pvd_file << "  <DataSet timestep=\"" << output_time
+              << "\" group=\"\" part=\"0\" file=\"scaffold."
+              << t << ".vtu\"/>\n";
+    }
+
+    pvd_file << "</Collection>\n";
+    pvd_file << "</VTKFile>\n";
+    pvd_file.close();
+  }
+
+  // Give each scaffold node a unique point index for the VTU file
+
+  // nodes_by_id is unordered, so sort the persistent IDs for consistent output.
+  std::vector<int> scaffold_node_ids;
+
+  for (const auto& node_entry : active_scaffold.nodes_by_id) {
+    scaffold_node_ids.push_back(node_entry.first);
+  }
+
+  std::sort(scaffold_node_ids.begin(), scaffold_node_ids.end());
+
+  // Map persistent scaffold node ID -> VTK point index.
+  std::map<int, int> node_to_vtk_index;
+
+  for (std::size_t i = 0; i < scaffold_node_ids.size(); ++i) {
+    node_to_vtk_index[scaffold_node_ids[i]] = static_cast<int>(i);
+  }
+
+  // Write the scaffold VTU file for current step
+  const std::string scaffold_vtu_file_name = mechanics_output_directory + "/scaffold." + std::to_string(step) + ".vtu";
+
+  std::ofstream scaffold_vtu(scaffold_vtu_file_name);
+
+  ASSERT_(scaffold_vtu.good(),
+      "could not open mechanics scaffold VTU file \"" + scaffold_vtu_file_name + "\""
+  );
+
+  scaffold_vtu << "<?xml version=\"1.0\"?>\n";
+  scaffold_vtu << "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" "
+              << "byte_order=\"LittleEndian\">\n";
+  scaffold_vtu << "  <UnstructuredGrid>\n";
+  scaffold_vtu << "    <Piece NumberOfPoints=\"" << scaffold_node_ids.size()
+              << "\" NumberOfCells=\"" << active_scaffold.segment.size()
+              << "\">\n";
+
+  // Write scaffold points
+  scaffold_vtu << "      <Points>\n";
+  scaffold_vtu << "        <DataArray type=\"Float64\" "
+              << "NumberOfComponents=\"3\" format=\"ascii\">\n";
+
+  for (const int node_id : scaffold_node_ids) {
+    const bdm::Double3& position = active_scaffold.GetNodePosition(node_id);
+
+    scaffold_vtu << " " << position[0]
+                << " " << position[1]
+                << " " << position[2];
+  }
+
+  scaffold_vtu << "\n        </DataArray>\n";
+  scaffold_vtu << "      </Points>\n";
+
+  // Write point data for scaffold nodes
+  scaffold_vtu << "      <PointData>\n";
+  scaffold_vtu << "        <DataArray type=\"Int32\" "
+              << "Name=\"node_id\" format=\"ascii\">";
+
+  for (const int node_id : scaffold_node_ids) {
+    scaffold_vtu << " " << node_id;
+  }
+
+  scaffold_vtu << " </DataArray>\n";
+  scaffold_vtu << "      </PointData>\n";
+
+  // Write scaffold struts (lines)
+  scaffold_vtu << "      <Cells>\n";
+
+  // Each scaffold segment connects two VTK points.
+  scaffold_vtu << "        <DataArray type=\"Int32\" "
+              << "Name=\"connectivity\" format=\"ascii\">";
+
+  for (const auto& segment : active_scaffold.segment) {
+    const int point_1 = node_to_vtk_index.at(segment.node_id_1);
+    const int point_2 = node_to_vtk_index.at(segment.node_id_2);
+
+    scaffold_vtu << " " << point_1 << " " << point_2;
+  }
+
+  scaffold_vtu << " </DataArray>\n";
+
+  // Every line contains two points.
+  scaffold_vtu << "        <DataArray type=\"Int32\" "
+              << "Name=\"offsets\" format=\"ascii\">";
+
+  int scaffold_offset = 0;
+
+  for (std::size_t i = 0; i < active_scaffold.segment.size(); ++i) {
+    scaffold_offset += 2;
+    scaffold_vtu << " " << scaffold_offset;
+  }
+
+  scaffold_vtu << " </DataArray>\n";
+
+  // VTK_LINE = 3.
+  scaffold_vtu << "        <DataArray type=\"UInt8\" "
+              << "Name=\"types\" format=\"ascii\">";
+
+  for (std::size_t i = 0; i < active_scaffold.segment.size(); ++i) {
+    scaffold_vtu << " 3";
+  }
+
+  scaffold_vtu << " </DataArray>\n";
+  scaffold_vtu << "      </Cells>\n";
+
+  // Scaffold strut data
+  scaffold_vtu << "      <CellData>\n";
+
+  scaffold_vtu << "        <DataArray type=\"Int32\" "
+              << "Name=\"segment_id\" format=\"ascii\">";
+
+  for (const auto& segment : active_scaffold.segment) {
+    scaffold_vtu << " " << segment.element_id;
+  }
+
+  scaffold_vtu << " </DataArray>\n";
+
+  scaffold_vtu << "        <DataArray type=\"Float64\" "
+              << "Name=\"radius\" format=\"ascii\">";
+
+  for (const auto& segment : active_scaffold.segment) {
+    scaffold_vtu << " " << segment.radius;
+  }
+
+  scaffold_vtu << " </DataArray>\n";
+
+  scaffold_vtu << "      </CellData>\n";
+
+  // Finish the VTU file.
+  scaffold_vtu << "    </Piece>\n";
+  scaffold_vtu << "  </UnstructuredGrid>\n";
+  scaffold_vtu << "</VTKFile>\n";
+
+  scaffold_vtu.close();
+
+}
+// =============================================================================
+inline
 int simulate(const std::string& fname, const int seed)
 {
   // read all the model parameters
@@ -4189,6 +5806,10 @@ int simulate(const std::string& fname, const int seed)
   init_vessels(sim, biochem);
   // load all cells in the simulation
   init_cells(sim, cells, biochem); 
+  // if mechanics is enabled, then save the setup config for the cell-matrix interaction
+  save_mechanics_setup(cells);
+  // save the initial mechanical snapshot of the simulation
+  save_mechanics_snapshot(sim, cells, obstacles.scaffold, 0);
   // load the convection field data in the simulation
   init_convection(sim);
   // check for cells input/output flux to the domain
@@ -4204,7 +5825,6 @@ int simulate(const std::string& fname, const int seed)
             stat_step = params.get<int>("statistics_interval"),
             viz_step = params.get<int>("visualization_interval");
   const double time_step = params.get<double>("time_step");
-  
   
   for (int time=1; time<=n_time; time++)
     { 
@@ -4241,6 +5861,14 @@ int simulate(const std::string& fname, const int seed)
           sim,
           cells,
           obstacles.scaffold
+      );
+
+      // Save the current consistent cell-matrix mechanics state.
+      save_mechanics_snapshot(
+          sim,
+          cells,
+          obstacles.scaffold,
+          time
       );
 
       // run the BioDynaMo simulator for one step
