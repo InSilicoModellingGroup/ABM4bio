@@ -135,31 +135,75 @@ class CellMatrixInteraction {
         *   [5316, 33603]
         */
 
-    std::ostringstream oss;
+        std::ostringstream oss;
 
-    oss << "[";
+        oss << "[";
 
-    for (std::size_t i = 0; i < records.size(); ++i) {
-        ASSERT_(
-        records[i].node_id > 0,
-        "Cannot export an attachment record with a non-positive node ID"
-        );
+        for (std::size_t i = 0; i < records.size(); ++i) {
+            ASSERT_(
+            records[i].node_id > 0,
+            "Cannot export an attachment record with a non-positive node ID"
+            );
 
-        oss << records[i].node_id;
+            oss << records[i].node_id;
 
-        if (i + 1 < records.size()) {
-        oss << ", ";
+            if (i + 1 < records.size()) {
+            oss << ", ";
+            }
         }
+
+        oss << "]";
+
+        return oss.str();
     }
 
-    oss << "]";
+    inline
+    std::string FormatPairContractileForcesJsonLike(
+        const std::vector<bdm::BiologicalCell::PairMechanicsRecord>& records) const {
+        /*
+        * Function goal
+        * -------------
+        * Format pair node IDs and their contractile forces as a JSON-like nested
+        * list that can be parsed directly by Python. [node_a, node_b, contractile_force]
+        *
+        * Example: 
+        * [[723, 1100, 47.2], [723, 730, 50.0]]
+        */
 
-    return oss.str();
+        std::ostringstream oss;
+
+        oss << "[";
+
+        for (std::size_t i = 0; i < records.size(); ++i) {
+
+            const auto& record = records[i];
+
+            ASSERT_(
+                record.node_id_a > 0 &&
+                record.node_id_b > 0 &&
+                record.node_id_a != record.node_id_b,
+                "Cannot export invalid pair-mechanics node IDs"
+            );
+
+            ASSERT_(
+                std::isfinite(record.contractile_force) &&
+                record.contractile_force >= 0.0,
+                "Cannot export an invalid pair contractile force"
+            );
+
+            oss
+                << "[" << record.node_id_a << ", " << record.node_id_b
+                << ", " << record.contractile_force << "]";
+
+            if (i + 1 < records.size()) {
+                oss << ", ";
+            }
+        }
+
+        oss << "]";
+
+        return oss.str();
     }
-    
-    // ---------------------------------------------------------------------------
-    // Determine FEM export action
-    // ---------------------------------------------------------------------------
 
     inline
     FemExportAction DetermineFemExportAction(
@@ -305,648 +349,658 @@ class CellMatrixInteraction {
     void ExportCellPositions(
         bdm::Simulation& sim,
         const std::map<int, std::string>& cells,
-        int time)
-    {
-    /*
-    * Export ABM cell positions and FEM state instructions.
-    *
-    * Function goal
-    * -------------
-    * Write the ABM-to-FEM csv file containing each cell position, the requested
-    * FEM handling state, reusable attachment node IDs, and the contractile force.
-    *
-    * File format
-    * -----------
-    * time,abm_cell_id,x,y,z,cell_state,attachment_node_ids,contractile_force
-    */
+        int time){
+        /*
+        * Export ABM cell positions and FEM state instructions.
+        *
+        * Function goal
+        * -------------
+        * Write the ABM-to-FEM csv file containing each cell position, the requested
+        * FEM handling state, reusable attachment node IDs, and the contractile force.
+        *
+        * File format
+        * -----------
+        * time,abm_cell_id,x,y,z,cell_state,attachment_node_ids,
+        * contractile_force,pairwise_contractile_forces
+        */
 
-    // ---------------------------------------------------------------------------
-    // Step 1: Generate filename
-    // ---------------------------------------------------------------------------
+        // ---------------------------------------------------------------------------
+        // Step 1: Generate filename
+        // ---------------------------------------------------------------------------
 
-    std::ostringstream filename;
+        std::ostringstream filename;
 
-    filename << this->params()->get<std::string>("output_directory")
-            << "/cell_positions/cells_t"
-            << std::setw(4) << std::setfill('0') << time-1
-            << ".csv";
+        filename << this->params()->get<std::string>("output_directory")
+                << "/cell_positions/cells_t"
+                << std::setw(4) << std::setfill('0') << time-1
+                << ".csv";
 
-    std::ofstream fpos(filename.str());
+        std::ofstream fpos(filename.str());
 
-    if (!fpos.is_open()) {
-        std::cerr << "Could not open file " << filename.str() << "\n";
-        return;
-    }
-
-    // ---------------------------------------------------------------------------
-    // Step 2: Reset the exported-cell record
-    //
-    // This set must describe only the cells included in the current FEM input.
-    // We do not include cells that were skipped because they are necrotic,
-    // have only 1 attachment point or from phenotypes where mechanics is 
-    // disabled. 
-    // ---------------------------------------------------------------------------
-
-    exported_cell_ids_.clear();
-
-    // ---------------------------------------------------------------------------
-    // Step 3: Write header
-    // ---------------------------------------------------------------------------
-
-    fpos << "time,abm_cell_id,x,y,z,cell_state,attachment_node_ids,contractile_force\n";
-
-    // ---------------------------------------------------------------------------
-    // Step 4: Collect BiologicalCell agents safely
-    // ---------------------------------------------------------------------------
-
-    // ForEachAgent may be parallel depending on the BioDynaMo execution backend.
-    // Therefore, only collect pointers here, and protect the shared vector with a
-    // mutex. All CSV line construction, file writing, and cell state updates are
-    // performed serially afterwards.
-
-    std::vector<bdm::BiologicalCell*> biological_cells;
-    std::mutex biological_cells_mutex;
-
-    auto* rm = sim.GetResourceManager();
-
-    rm->ForEachAgent([&](bdm::Agent* agent) {
-
-        auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
-
-        if (!cell) {
+        if (!fpos.is_open()) {
+            std::cerr << "Could not open file " << filename.str() << "\n";
             return;
         }
 
-        std::lock_guard<std::mutex> lock(biological_cells_mutex);
-        biological_cells.push_back(cell);
-    });
+        // ---------------------------------------------------------------------------
+        // Step 2: Reset the exported-cell record
+        //
+        // This set must describe only the cells included in the current FEM input.
+        // We do not include cells that were skipped because they are necrotic,
+        // have only 1 attachment point or from phenotypes where mechanics is 
+        // disabled. 
+        // ---------------------------------------------------------------------------
 
-    // Optional but useful: make output order deterministic.
-    std::sort(
-        biological_cells.begin(),
-        biological_cells.end(),
-        [](bdm::BiologicalCell* a, bdm::BiologicalCell* b) {
-            std::ostringstream uid_a;
-            std::ostringstream uid_b;
+        exported_cell_ids_.clear();
 
-            uid_a << a->GetUid();
-            uid_b << b->GetUid();
+        // ---------------------------------------------------------------------------
+        // Step 3: Write header
+        // ---------------------------------------------------------------------------
 
-            return uid_a.str() < uid_b.str();
-        }
-    );
+        fpos
+            << "time,abm_cell_id,x,y,z,cell_state,"
+            << "attachment_node_ids,contractile_force,"
+            << "pair_contractile_forces\n";
 
-    // ---------------------------------------------------------------------------
-    // Step 5: Build CSV lines serially
-    // ---------------------------------------------------------------------------
+        // ---------------------------------------------------------------------------
+        // Step 4: Collect BiologicalCell agents safely
+        // ---------------------------------------------------------------------------
 
-    std::vector<std::string> csv_lines;
-    csv_lines.reserve(biological_cells.size());
+        // ForEachAgent may be parallel depending on the BioDynaMo execution backend.
+        // Therefore, only collect pointers here, and protect the shared vector with a
+        // mutex. All CSV line construction, file writing, and cell state updates are
+        // performed serially afterwards.
 
-    for (auto* cell : biological_cells) {
+        std::vector<bdm::BiologicalCell*> biological_cells;
+        std::mutex biological_cells_mutex;
 
-        const auto& pos = cell->GetPosition();
+        auto* rm = sim.GetResourceManager();
 
-        std::ostringstream uid_stream;
-        uid_stream << cell->GetUid();
+        rm->ForEachAgent([&](bdm::Agent* agent) {
 
-        const std::string abm_cell_id = uid_stream.str();
+            auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
 
-        // -------------------------------------------------------------------------
-        // Step 5a: Determine whether and how this cell should be exported
-        // -------------------------------------------------------------------------
+            if (!cell) {
+                return;
+            }
 
-        const FemExportAction export_action =
-            this->DetermineFemExportAction(cell, cells);
+            std::lock_guard<std::mutex> lock(biological_cells_mutex);
+            biological_cells.push_back(cell);
+        });
 
-        // Cells retained entirely within the ABM are not written to the FEM input.
-        if (export_action == FemExportAction::kSkip) {
-            continue;
-        }
+        // Optional but useful: make output order deterministic.
+        std::sort(
+            biological_cells.begin(),
+            biological_cells.end(),
+            [](bdm::BiologicalCell* a, bdm::BiologicalCell* b) {
+                std::ostringstream uid_a;
+                std::ostringstream uid_b;
 
-        // -------------------------------------------------------------------------
-        // Step 5b: Prepare the FEM instruction
-        // -------------------------------------------------------------------------
+                uid_a << a->GetUid();
+                uid_b << b->GetUid();
 
-        std::string cell_state;
-        std::string attachment_node_ids_text;
-        double contractile_force = 0.0;
+                return uid_a.str() < uid_b.str();
+            }
+        );
 
-        if (export_action == FemExportAction::kContract) {
+        // ---------------------------------------------------------------------------
+        // Step 5: Build CSV lines serially
+        // ---------------------------------------------------------------------------
 
-        cell_state = "contract";
+        std::vector<std::string> csv_lines;
+        csv_lines.reserve(biological_cells.size());
 
-        attachment_node_ids_text =
-            this->FormatAttachmentNodeIdsJsonLike(
-                cell->GetAttachmentRecords()
+        for (auto* cell : biological_cells) {
+
+            const auto& pos = cell->GetPosition();
+
+            std::ostringstream uid_stream;
+            uid_stream << cell->GetUid();
+
+            const std::string abm_cell_id = uid_stream.str();
+
+            // -------------------------------------------------------------------------
+            // Step 5a: Determine whether and how this cell should be exported
+            // -------------------------------------------------------------------------
+
+            const FemExportAction export_action =
+                this->DetermineFemExportAction(cell, cells);
+
+            // Cells retained entirely within the ABM are not written to the FEM input.
+            if (export_action == FemExportAction::kSkip) {
+                continue;
+            }
+
+            // -------------------------------------------------------------------------
+            // Step 5b: Prepare the FEM instruction
+            // -------------------------------------------------------------------------
+
+            std::string cell_state;
+            std::string attachment_node_ids_text;
+            std::string pair_contractile_forces_text = "[]";
+
+            double contractile_force = 0.0;
+
+            if (export_action == FemExportAction::kContract) {
+
+                cell_state = "contract";
+
+                attachment_node_ids_text =
+                    this->FormatAttachmentNodeIdsJsonLike(
+                        cell->GetAttachmentRecords()
+                    );
+
+                contractile_force = cell->GetContractileForce();
+
+                // Pair forces are valid only when they correspond to the current
+                // attachment set.
+                const std::size_t n_attachments = cell->GetNumberOfAttachmentRecords();
+
+                const std::size_t expected_pairs = n_attachments * (n_attachments - 1) / 2;
+
+                ASSERT_(
+                    cell->GetNumberOfPairMechanicsRecords() == expected_pairs,
+                    "ABM-to-FEM export: pair-mechanics count does not match "
+                    "the current attachment set for cell " + abm_cell_id
+                );
+
+                pair_contractile_forces_text =
+                    this->FormatPairContractileForcesJsonLike(
+                        cell->GetPairMechanicsRecords()
+                    );
+                
+
+                // A negative contractile force is not expected by the model.
+                // Report the issue and prevent it from reaching the FEM input.
+                if (contractile_force < 0.0) {
+                    std::cerr
+                    << "[CELL-MATRIX WARNING] Negative contractile force for cell "
+                    << abm_cell_id 
+                    << ": " << contractile_force 
+                    << ". Force has been set to 0.0 before FEM export.\n";
+
+                    contractile_force = 0.0;
+                }
+
+            } else {
+
+                // Sanity check: only the "attach" action is supported here.
+                ASSERT_(
+                    export_action == FemExportAction::kAttach,
+                    "ExportCellPositions encountered an unsupported FEM export action"
+                );
+
+                cell_state = "attach";
+                attachment_node_ids_text = "[]";
+                contractile_force = 0.0;
+                pair_contractile_forces_text = "[]";
+            }
+
+            // -------------------------------------------------------------------------
+            // Step 5c: Record the FEM communication state on the cell
+            // -------------------------------------------------------------------------
+
+            cell->SetCellState(cell_state);
+
+            // -------------------------------------------------------------------------
+            // Step 5d: Record the exported ABM cell ID
+            // -------------------------------------------------------------------------
+
+            const bool inserted =
+            exported_cell_ids_.insert(abm_cell_id).second;
+
+            ASSERT_(
+                inserted,
+                "ExportCellPositions encountered duplicate ABM cell UID "
+                + abm_cell_id
             );
 
-        contractile_force =
-            cell->GetContractileForce();
+            std::ostringstream line;
 
-        // A negative contractile force is not expected by the model.
-        // Report the issue and prevent it from reaching the FEM input.
-        if (contractile_force < 0.0) {
-            std::cerr
-            << "[CELL-MATRIX WARNING] Negative contractile force for cell "
-            << abm_cell_id
-            << ": "
-            << contractile_force
-            << ". Force has been set to 0.0 before FEM export.\n";
+            line << time << ","
+                << abm_cell_id << ","
+                << pos[0] << ","
+                << pos[1] << ","
+                << pos[2] << ","
+                << cell_state << ","
+                << "\"" << attachment_node_ids_text << "\"" << ","
+                << contractile_force <<  ","
+                << "\"" << pair_contractile_forces_text << "\""
+                << "\n";
 
-            contractile_force = 0.0;
+            csv_lines.push_back(line.str());
         }
 
-        } else {
+        // ---------------------------------------------------------------------------
+        // Step 5: Write CSV lines serially and close the file
+        // ---------------------------------------------------------------------------
 
-        // Sanity check: only the "attach" action is supported here.
-        ASSERT_(
-            export_action == FemExportAction::kAttach,
-            "ExportCellPositions encountered an unsupported FEM export action"
-        );
-
-        cell_state = "attach";
-        attachment_node_ids_text = "[]";
-        contractile_force = 0.0;
+        for (const auto& line : csv_lines) {
+            fpos << line;
         }
 
-        // -------------------------------------------------------------------------
-        // Step 5c: Record the FEM communication state on the cell
-        // -------------------------------------------------------------------------
-
-        cell->SetCellState(cell_state);
-
-        // -------------------------------------------------------------------------
-        // Step 5d: Record the exported ABM cell ID
-        // -------------------------------------------------------------------------
-
-        const bool inserted =
-        exported_cell_ids_.insert(abm_cell_id).second;
-
-        ASSERT_(
-        inserted,
-        "ExportCellPositions encountered duplicate ABM cell UID "
-        + abm_cell_id
-        );
-
-        std::ostringstream line;
-
-        line << time << ","
-            << abm_cell_id << ","
-            << pos[0] << ","
-            << pos[1] << ","
-            << pos[2] << ","
-            << cell_state << ","
-            << "\"" << attachment_node_ids_text << "\"" << ","
-            << contractile_force << "\n";
-
-        csv_lines.push_back(line.str());
-    }
-
-    // ---------------------------------------------------------------------------
-    // Step 5: Write CSV lines serially and close the file
-    // ---------------------------------------------------------------------------
-
-    for (const auto& line : csv_lines) {
-        fpos << line;
-    }
-
-    fpos.close();
+        fpos.close();
 
     }
-
-  // ---------------------------------------------------------------------------
-  // FEM execution
-  // ---------------------------------------------------------------------------
 
   inline
   int RunFemSolver(
       bdm::Simulation& sim,
       const std::map<int, std::string>& cells,
       int time,
-      bool* ran_any)
-    {
-    /*
-    * Run the FEM solver.
-    *
-    * Function goal
-    * -------------
-        * Run the FEM solver for the mechanics-enabled phenotype using only the cells
-        * written during the current ABM-to-FEM export.
+      bool* ran_any){
+        /*
+        * Run the FEM solver.
         *
-        * The exported_cell_ids_ set is the authoritative source for cell_count.
-        * Cells retained entirely within the ABM, including single-attachment cells,
-        * are therefore excluded from the FEM calculation.
-    *
-    * Command format
-    * --------------
-    * python3 -u FEM_solver_interface.py \
-            --step_num <time - 1> \
-            --cell_count <cell_count> \
-            --min_cell_radius <min_cell_radius <- legacy> \
-            --max_cell_radius <max_cell_radius <- legacy> \
-            --strut_radius <strut_radius> \
-            --delta_F <delta_F> \
-            --perturbance_dist <perturbance_dist> \
-            --random_state <random_state> \
-            --num_attachments <num_attachments> \
-            --lattice_mesh_path "<lattice_mesh_path>" \
-            --verbose \ <= IF TRUE 
-    */
-    
-    ASSERT_(
-    ran_any != nullptr,
-    "RunFemSolver received a null ran_any pointer"
-    );
-    
-    // Initialise flag.
-    *ran_any = false;
-
-    // Temporary limitation: FEM solver supports only one phenotype at a time.
-    int mech_enabled_phenotypes = 0;
-    std::string enabled_list;
-
-    for (const auto& kv : cells) {
-        const int CP_ID = kv.first;
-        const std::string& CP_name = kv.second;
-
-        if (CP_ID < 1) {
-        continue;
-        }
-
-        const std::string mech_base =
-        CP_name + "/cell_matrix_mechanics";
-
-        if (this->params()->have_parameter<bool>(mech_base + "/enabled") &&
-            this->params()->get<bool>(mech_base + "/enabled")) {
-
-        ++mech_enabled_phenotypes;
-
-        if (!enabled_list.empty()) {
-            enabled_list += ", ";
-        }
-
-        enabled_list +=
-            CP_name + " (ID " + std::to_string(CP_ID) + ")";
-        }
-    }
-
-    if (mech_enabled_phenotypes > 1) {
-        ABORT_(
-        "Temporary limitation: FEM solver currently supports only ONE cell "
-        "phenotype with cell-matrix mechanics enabled. Enabled phenotypes: "
-        + enabled_list
-        + ". Please enable mechanics for only one phenotype. Future versions "
-            "will support multiple phenotypes."
+        * Function goal
+        * -------------
+            * Run the FEM solver for the mechanics-enabled phenotype using only the cells
+            * written during the current ABM-to-FEM export.
+            *
+            * The exported_cell_ids_ set is the authoritative source for cell_count.
+            * Cells retained entirely within the ABM, including single-attachment cells,
+            * are therefore excluded from the FEM calculation.
+        *
+        * Command format
+        * --------------
+        * python3 -u FEM_solver_interface.py \
+                --step_num <time - 1> \
+                --cell_count <cell_count> \
+                --min_cell_radius <min_cell_radius <- legacy> \
+                --max_cell_radius <max_cell_radius <- legacy> \
+                --strut_radius <strut_radius> \
+                --delta_F <delta_F> \
+                --perturbance_dist <perturbance_dist> \
+                --random_state <random_state> \
+                --num_attachments <num_attachments> \
+                --lattice_mesh_path "<lattice_mesh_path>" \
+                --verbose \ <= IF TRUE 
+        */
+        
+        ASSERT_(
+        ran_any != nullptr,
+        "RunFemSolver received a null ran_any pointer"
         );
-    }
+        
+        // Initialise flag.
+        *ran_any = false;
 
-    // Check whether any phenotype has mechanics enabled.
-    bool any_mech_enabled = false;
+        // Temporary limitation: FEM solver supports only one phenotype at a time.
+        int mech_enabled_phenotypes = 0;
+        std::string enabled_list;
 
-    for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
-        const int CP_ID = ci->first;
-        const std::string& CP_name = ci->second;
+        for (const auto& kv : cells) {
+            const int CP_ID = kv.first;
+            const std::string& CP_name = kv.second;
 
-        if (CP_ID < 1) {
-        continue;
-        }
-
-        const std::string mech_base =
-        CP_name + "/cell_matrix_mechanics";
-
-        if (this->params()->have_parameter<bool>(mech_base + "/enabled") &&
-            this->params()->get<bool>(mech_base + "/enabled")) {
-
-        any_mech_enabled = true;
-        break;
-        }
-    }
-
-    for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
-        const int CP_ID = ci->first;
-        const std::string& CP_name = ci->second;
-
-        // Ignore the necrotic phenotype.
-        if (CP_ID < 1) {
-        continue;
-        }
-
-        const std::string mech_base =
-        CP_name + "/cell_matrix_mechanics";
-
-        // Skip phenotypes without cell-matrix mechanics.
-        if (!this->params()->have_parameter<bool>(mech_base + "/enabled") ||
-            !this->params()->get<bool>(mech_base + "/enabled")) {
-        continue;
-        }
-
-        // -------------------------------------------------------------------------
-        // Phenotype-specific mechanics parameters
-        // -------------------------------------------------------------------------
-
-        const double min_attachment_separation =
-            this->params()->get<double>(
-                mech_base + "/min_attachment_separation"
-            );
-
-        if ((2.0 * min_attachment_separation) <
-            this->params()->get<double>(CP_name + "/diameter/min")) {
-            ABORT_(
-                "Model parameter '"
-                + mech_base
-                + "/min_attachment_separation' cannot be less than '"
-                + CP_name
-                + "/diameter/min'"
-            );
+            if (CP_ID < 1) {
+            continue;
             }
 
-        const double max_attachment_separation =
-            this->params()->get<double>(
-                mech_base + "/max_attachment_separation"
+            const std::string mech_base =
+            CP_name + "/cell_matrix_mechanics";
+
+            if (this->params()->have_parameter<bool>(mech_base + "/enabled") &&
+                this->params()->get<bool>(mech_base + "/enabled")) {
+
+            ++mech_enabled_phenotypes;
+
+            if (!enabled_list.empty()) {
+                enabled_list += ", ";
+            }
+
+            enabled_list +=
+                CP_name + " (ID " + std::to_string(CP_ID) + ")";
+            }
+        }
+
+        if (mech_enabled_phenotypes > 1) {
+            ABORT_(
+            "Temporary limitation: FEM solver currently supports only ONE cell "
+            "phenotype with cell-matrix mechanics enabled. Enabled phenotypes: "
+            + enabled_list
+            + ". Please enable mechanics for only one phenotype. Future versions "
+                "will support multiple phenotypes."
             );
+        }
 
-        const double strut_radius =
-            this->params()->get<double>(
-                mech_base + "/strut_radius"
-            );
+        // Check whether any phenotype has mechanics enabled.
+        bool any_mech_enabled = false;
 
-        const double delta_F =
-            this->params()->get<double>(
-                mech_base + "/delta_F"
-            );
+        for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
+            const int CP_ID = ci->first;
+            const std::string& CP_name = ci->second;
 
-        const double perturbance_dist =
-            this->params()->get<double>(
-                mech_base + "/perturbance_dist"
-            );
-
-        const int random_state =
-            this->params()->get<int>(
-                mech_base + "/random_state"
-            );
-
-        const int num_attachments =
-            this->params()->get<int>(
-                mech_base + "/num_attachments"
-            );
-
-        const std::string lattice_mesh_path =
-            this->params()->get<std::string>(
-                mech_base + "/lattice_mesh_path"
-            );
-
-        const bool verbose =
-            this->params()->get<bool>(
-                mech_base + "/verbose"
-            );
-
-        // -------------------------------------------------------------------------
-        // Determine the number of cells included in the current FEM input
-        //
-        // ExportCellPositions() has already excluded cells that must remain entirely
-        // within the ABM. The exported UID set therefore defines the FEM cell count.
-        // -------------------------------------------------------------------------
-
-        const int cell_count =
-            static_cast<int>(exported_cell_ids_.size());
-
-        // Do not launch the FEM solver when no eligible cells were exported.
-        if (cell_count == 0) {
-            this->PrepareNoInteractionStep(time); // Take undeformed scaffold
+            if (CP_ID < 1) {
             continue;
-        }
-        
-        // FEM solver will run for this phenotype.
-        *ran_any = true;
+            }
 
-        // -------------------------------------------------------------------------
-        // Build Python command
-        // -------------------------------------------------------------------------
+            const std::string mech_base =
+            CP_name + "/cell_matrix_mechanics";
 
-        std::string cmd =
-        "python3 -u FEM_solver_interface.py ";
+            if (this->params()->have_parameter<bool>(mech_base + "/enabled") &&
+                this->params()->get<bool>(mech_base + "/enabled")) {
 
-        cmd +=
-        "--step_num "
-        + std::to_string(time - 1)
-        + " ";
-
-        cmd +=
-        "--cell_count "
-        + std::to_string(cell_count)
-        + " ";
-
-        cmd +=
-        "--min_cell_radius "
-        + std::to_string(min_attachment_separation/2)
-        + " ";
-
-        cmd +=
-        "--max_cell_radius "
-        + std::to_string(max_attachment_separation/2)
-        + " ";
-
-        cmd +=
-        "--strut_radius "
-        + std::to_string(strut_radius)
-        + " ";
-
-        cmd +=
-        "--delta_F "
-        + std::to_string(delta_F)
-        + " ";
-
-        cmd +=
-        "--perturbance_dist "
-        + std::to_string(perturbance_dist)
-        + " ";
-
-        cmd +=
-        "--random_state "
-        + std::to_string(random_state)
-        + " ";
-
-        cmd +=
-        "--num_attachments "
-        + std::to_string(num_attachments)
-        + " ";
-
-        cmd +=
-        "--lattice_mesh_path \""
-        + lattice_mesh_path
-        + "\" ";
-
-        if (verbose) {
-        cmd += "--verbose ";
+            any_mech_enabled = true;
+            break;
+            }
         }
 
-        std::cout
-        << "Running command: "
-        << cmd
-        << std::endl;
+        for (auto ci = cells.begin(); ci != cells.end(); ++ci) {
+            const int CP_ID = ci->first;
+            const std::string& CP_name = ci->second;
 
-        FILE* pipe =
-        popen(cmd.c_str(), "r");
+            // Ignore the necrotic phenotype.
+            if (CP_ID < 1) {
+            continue;
+            }
 
-        if (!pipe) {
-        std::cerr
-            << "Failed to start Python script for phenotype "
-            << CP_name
-            << "\n";
+            const std::string mech_base =
+            CP_name + "/cell_matrix_mechanics";
 
-        return 1;
+            // Skip phenotypes without cell-matrix mechanics.
+            if (!this->params()->have_parameter<bool>(mech_base + "/enabled") ||
+                !this->params()->get<bool>(mech_base + "/enabled")) {
+            continue;
+            }
+
+            // -------------------------------------------------------------------------
+            // Phenotype-specific mechanics parameters
+            // -------------------------------------------------------------------------
+
+            const double min_attachment_separation =
+                this->params()->get<double>(
+                    mech_base + "/min_attachment_separation"
+                );
+
+            if ((2.0 * min_attachment_separation) <
+                this->params()->get<double>(CP_name + "/diameter/min")) {
+                ABORT_(
+                    "Model parameter '"
+                    + mech_base
+                    + "/min_attachment_separation' cannot be less than '"
+                    + CP_name
+                    + "/diameter/min'"
+                );
+                }
+
+            const double max_attachment_separation =
+                this->params()->get<double>(
+                    mech_base + "/max_attachment_separation"
+                );
+
+            const double strut_radius =
+                this->params()->get<double>(
+                    mech_base + "/strut_radius"
+                );
+
+            const double delta_F =
+                this->params()->get<double>(
+                    mech_base + "/delta_F"
+                );
+
+            const double perturbance_dist =
+                this->params()->get<double>(
+                    mech_base + "/perturbance_dist"
+                );
+
+            const int random_state =
+                this->params()->get<int>(
+                    mech_base + "/random_state"
+                );
+
+            const int num_attachments =
+                this->params()->get<int>(
+                    mech_base + "/num_attachments"
+                );
+
+            const std::string lattice_mesh_path =
+                this->params()->get<std::string>(
+                    mech_base + "/lattice_mesh_path"
+                );
+
+            const bool verbose =
+                this->params()->get<bool>(
+                    mech_base + "/verbose"
+                );
+
+            // -------------------------------------------------------------------------
+            // Determine the number of cells included in the current FEM input
+            //
+            // ExportCellPositions() has already excluded cells that must remain entirely
+            // within the ABM. The exported UID set therefore defines the FEM cell count.
+            // -------------------------------------------------------------------------
+
+            const int cell_count =
+                static_cast<int>(exported_cell_ids_.size());
+
+            // Do not launch the FEM solver when no eligible cells were exported.
+            if (cell_count == 0) {
+                this->PrepareNoInteractionStep(time); // Take undeformed scaffold
+                continue;
+            }
+            
+            // FEM solver will run for this phenotype.
+            *ran_any = true;
+
+            // -------------------------------------------------------------------------
+            // Build Python command
+            // -------------------------------------------------------------------------
+
+            std::string cmd =
+            "python3 -u FEM_solver_interface.py ";
+
+            cmd +=
+            "--step_num "
+            + std::to_string(time - 1)
+            + " ";
+
+            cmd +=
+            "--cell_count "
+            + std::to_string(cell_count)
+            + " ";
+
+            cmd +=
+            "--min_cell_radius "
+            + std::to_string(min_attachment_separation/2)
+            + " ";
+
+            cmd +=
+            "--max_cell_radius "
+            + std::to_string(max_attachment_separation/2)
+            + " ";
+
+            cmd +=
+            "--strut_radius "
+            + std::to_string(strut_radius)
+            + " ";
+
+            cmd +=
+            "--delta_F "
+            + std::to_string(delta_F)
+            + " ";
+
+            cmd +=
+            "--perturbance_dist "
+            + std::to_string(perturbance_dist)
+            + " ";
+
+            cmd +=
+            "--random_state "
+            + std::to_string(random_state)
+            + " ";
+
+            cmd +=
+            "--num_attachments "
+            + std::to_string(num_attachments)
+            + " ";
+
+            cmd +=
+            "--lattice_mesh_path \""
+            + lattice_mesh_path
+            + "\" ";
+
+            if (verbose) {
+            cmd += "--verbose ";
+            }
+
+            std::cout
+            << "Running command: "
+            << cmd
+            << std::endl;
+
+            FILE* pipe =
+            popen(cmd.c_str(), "r");
+
+            if (!pipe) {
+            std::cerr
+                << "Failed to start Python script for phenotype "
+                << CP_name
+                << "\n";
+
+            return 1;
+            }
+
+            char buffer[256];
+
+            while (fgets(buffer, sizeof(buffer), pipe)) {
+            std::cout
+                << buffer
+                << std::flush;
+            }
+
+            const int return_code =
+            pclose(pipe);
+
+            if (return_code != 0) {
+            std::cerr
+                << "Python script failed for phenotype "
+                << CP_name
+                << " with code "
+                << return_code
+                << "\n";
+
+            return return_code;
+            }
         }
 
-        char buffer[256];
-
-        while (fgets(buffer, sizeof(buffer), pipe)) {
-        std::cout
-            << buffer
-            << std::flush;
-        }
-
-        const int return_code =
-        pclose(pipe);
-
-        if (return_code != 0) {
-        std::cerr
-            << "Python script failed for phenotype "
-            << CP_name
-            << " with code "
-            << return_code
-            << "\n";
-
-        return return_code;
-        }
+        return 0;
     }
-
-    return 0;
-    }
-
-    // ---------------------------------------------------------------------------
-    // Write scaffold using lattice format version 2.0
-    // ---------------------------------------------------------------------------
 
     inline
     void WriteScaffoldVersion2(
         const ObstacleScaffold& scaffold,
-        const std::string& output_path) const
-    {
-    /*
-    * Function goal
-    * -------------
-    * Write an in-memory scaffold using persistent one-based node and element
-    * identifiers in lattice format version 2.0.
-    *
-    * This method is also used to translate a legacy version 1.0 scaffold after
-    * it has been read by ObstacleScaffold.
-    */
+        const std::string& output_path) const{
+        /*
+        * Function goal
+        * -------------
+        * Write an in-memory scaffold using persistent one-based node and element
+        * identifiers in lattice format version 2.0.
+        *
+        * This method is also used to translate a legacy version 1.0 scaffold after
+        * it has been read by ObstacleScaffold.
+        */
 
-    // -------------------------------------------------------------------------
-    // Step 1: Validate the scaffold data
-    // -------------------------------------------------------------------------
+        // -------------------------------------------------------------------------
+        // Step 1: Validate the scaffold data
+        // -------------------------------------------------------------------------
 
-    ASSERT_(
-        !scaffold.nodes_by_id.empty(),
-        "WriteScaffoldVersion2 received a scaffold with no nodes"
-    );
+        ASSERT_(
+            !scaffold.nodes_by_id.empty(),
+            "WriteScaffoldVersion2 received a scaffold with no nodes"
+        );
 
-    ASSERT_(
-        !scaffold.segment.empty(),
-        "WriteScaffoldVersion2 received a scaffold with no segments"
-    );
+        ASSERT_(
+            !scaffold.segment.empty(),
+            "WriteScaffoldVersion2 received a scaffold with no segments"
+        );
 
-    // -------------------------------------------------------------------------
-    // Step 2: Sort node IDs for deterministic output
-    // -------------------------------------------------------------------------
+        // -------------------------------------------------------------------------
+        // Step 2: Sort node IDs for deterministic output
+        // -------------------------------------------------------------------------
 
-    std::vector<int> node_ids;
-    node_ids.reserve(scaffold.nodes_by_id.size());
+        std::vector<int> node_ids;
+        node_ids.reserve(scaffold.nodes_by_id.size());
 
-    for (const auto& item : scaffold.nodes_by_id) {
-        node_ids.push_back(item.first);
-    }
-
-    std::sort(node_ids.begin(), node_ids.end());
-
-    // -------------------------------------------------------------------------
-    // Step 3: Sort segments by persistent element ID
-    // -------------------------------------------------------------------------
-
-    std::vector<const ObstacleScaffold::Segment*> sorted_segments;
-    sorted_segments.reserve(scaffold.segment.size());
-
-    for (const auto& segment : scaffold.segment) {
-        sorted_segments.push_back(&segment);
-    }
-
-    std::sort(
-        sorted_segments.begin(),
-        sorted_segments.end(),
-        [](const ObstacleScaffold::Segment* a,
-        const ObstacleScaffold::Segment* b) {
-        return a->element_id < b->element_id;
+        for (const auto& item : scaffold.nodes_by_id) {
+            node_ids.push_back(item.first);
         }
-    );
 
-    // -------------------------------------------------------------------------
-    // Step 4: Open the output file
-    // -------------------------------------------------------------------------
+        std::sort(node_ids.begin(), node_ids.end());
 
-    std::ofstream fout(output_path);
+        // -------------------------------------------------------------------------
+        // Step 3: Sort segments by persistent element ID
+        // -------------------------------------------------------------------------
 
-    ASSERT_(
-        fout.good(),
-        "WriteScaffoldVersion2 could not create file: "
-        + output_path
-    );
+        std::vector<const ObstacleScaffold::Segment*> sorted_segments;
+        sorted_segments.reserve(scaffold.segment.size());
 
-    fout << std::fixed << std::setprecision(6);
+        for (const auto& segment : scaffold.segment) {
+            sorted_segments.push_back(&segment);
+        }
 
-    // -------------------------------------------------------------------------
-    // Step 5: Write the version and node section
-    // -------------------------------------------------------------------------
+        std::sort(
+            sorted_segments.begin(),
+            sorted_segments.end(),
+            [](const ObstacleScaffold::Segment* a,
+            const ObstacleScaffold::Segment* b) {
+            return a->element_id < b->element_id;
+            }
+        );
 
-    fout << "2.0\n";
-    fout << node_ids.size() << "\n";
+        // -------------------------------------------------------------------------
+        // Step 4: Open the output file
+        // -------------------------------------------------------------------------
 
-    for (const int node_id : node_ids) {
-        const auto& node =
-        scaffold.GetNode(node_id);
+        std::ofstream fout(output_path);
 
-        fout << node.id << " "
-            << node.position[0] << " "
-            << node.position[1] << " "
-            << node.position[2] << " "
-            << node.radius << "\n";
-    }
+        ASSERT_(
+            fout.good(),
+            "WriteScaffoldVersion2 could not create file: "
+            + output_path
+        );
 
-    // -------------------------------------------------------------------------
-    // Step 6: Write the element section
-    // -------------------------------------------------------------------------
+        fout << std::fixed << std::setprecision(6);
 
-    fout << sorted_segments.size() << "\n";
+        // -------------------------------------------------------------------------
+        // Step 5: Write the version and node section
+        // -------------------------------------------------------------------------
 
-    for (const auto* segment : sorted_segments) {
-        fout << segment->element_id << " "
-            << segment->node_id_1 << " "
-            << segment->node_id_2 << "\n";
-    }
+        fout << "2.0\n";
+        fout << node_ids.size() << "\n";
 
-    ASSERT_(
-        fout.good(),
-        "WriteScaffoldVersion2 failed while writing file: "
-        + output_path
-    );
+        for (const int node_id : node_ids) {
+            const auto& node =
+            scaffold.GetNode(node_id);
 
-    fout.close();
+            fout << node.id << " "
+                << node.position[0] << " "
+                << node.position[1] << " "
+                << node.position[2] << " "
+                << node.radius << "\n";
+        }
+
+        // -------------------------------------------------------------------------
+        // Step 6: Write the element section
+        // -------------------------------------------------------------------------
+
+        fout << sorted_segments.size() << "\n";
+
+        for (const auto* segment : sorted_segments) {
+            fout << segment->element_id << " "
+                << segment->node_id_1 << " "
+                << segment->node_id_2 << "\n";
+        }
+
+        ASSERT_(
+            fout.good(),
+            "WriteScaffoldVersion2 failed while writing file: "
+            + output_path
+        );
+
+        fout.close();
     }
   
-    // ---------------------------------------------------------------------------
-    // Prepare scaffold for a timestep with no FEM-eligible cells
-    // ---------------------------------------------------------------------------
-
     inline
     void PrepareNoInteractionStep(const int time) const
     {
@@ -1645,7 +1699,127 @@ class CellMatrixInteraction {
         }
 
         // -------------------------------------------------------------------------
-        // Step 7d: Build persistent attachment records
+        // Step 7d: Read pairwise k_ce records
+        // -------------------------------------------------------------------------
+
+        int n_pairs = -1;
+
+        fin >> n_pairs;
+
+        ASSERT_(
+            fin && n_pairs >= 0,
+            "FEM import: invalid n_pairs for abm_cell_id = " + abm_cell_id + " in " + fname
+        );
+
+        const int expected_n_pairs = n_attach * (n_attach - 1) / 2;
+
+        ASSERT_(
+            n_pairs == expected_n_pairs,
+            "FEM import: incorrect number of pairwise k_ce records for abm_cell_id = " + abm_cell_id
+            + ". Expected " + std::to_string(expected_n_pairs)
+            + ", received " + std::to_string(n_pairs)
+        );
+
+        std::vector<int> pair_node_a(n_pairs);
+        std::vector<int> pair_node_b(n_pairs);
+        std::vector<double> pair_kce(n_pairs);
+
+        // Read the pairwise k_ce records
+        for (int p = 0; p < n_pairs; ++p) {
+
+            fin
+                >> pair_node_a[p]
+                >> pair_node_b[p]
+                >> pair_kce[p];
+
+            ASSERT_(
+                fin,
+                "FEM import: failed reading pairwise k_ce record " + std::to_string(p)
+                + " for abm_cell_id = " + abm_cell_id
+            );
+        }
+
+        // Validate the node pairs
+        for (int p = 0; p < n_pairs; ++p) {
+
+            const int node_a = pair_node_a[p];
+            const int node_b = pair_node_b[p];
+
+            const bool node_a_exists =
+                std::find(
+                    attachment_node_ids.begin(),
+                    attachment_node_ids.end(),
+                    node_a
+                ) != attachment_node_ids.end();
+
+            const bool node_b_exists =
+                std::find(
+                    attachment_node_ids.begin(),
+                    attachment_node_ids.end(),
+                    node_b
+                ) != attachment_node_ids.end();
+
+            ASSERT_(
+                node_a_exists && node_b_exists,
+                "FEM import: pairwise k_ce contains a node that is not part of "
+                "the attachment set for abm_cell_id = " + abm_cell_id
+            );
+
+            ASSERT_(
+                node_a != node_b,
+                "FEM import: pairwise k_ce contains a self-pair for abm_cell_id = " + abm_cell_id
+            );
+
+            ASSERT_(
+                std::isfinite(pair_kce[p]),
+                "FEM import: pairwise k_ce is non-finite for abm_cell_id = " + abm_cell_id
+            );
+
+            ASSERT_(
+                pair_kce[p] >= 0.0,
+                "FEM import: pairwise k_ce is negative for abm_cell_id = " + abm_cell_id
+            );
+        }
+
+        // Check for duplicate pairs (order-independent)
+        for (int p = 0; p < n_pairs; ++p) {
+
+            const int a1 = std::min(pair_node_a[p], pair_node_b[p]);
+            const int b1 = std::max(pair_node_a[p], pair_node_b[p]);
+
+            for (int q = p + 1; q < n_pairs; ++q) {
+
+                const int a2 = std::min(pair_node_a[q], pair_node_b[q]);
+                const int b2 = std::max(pair_node_a[q], pair_node_b[q]);
+
+                ASSERT_(
+                    !(a1 == a2 && b1 == b2),
+                    "FEM import: duplicate pairwise k_ce record for pair ("
+                    + std::to_string(a1) + ", " + std::to_string(b1)
+                    + ") in abm_cell_id = " + abm_cell_id
+                );
+            }
+        }
+
+        // Convert temporary FEM data into persistent pairwise k_ce records for the cell.
+        std::vector<bdm::BiologicalCell::PairMechanicsRecord> pair_mechanics_records;
+        pair_mechanics_records.reserve(n_pairs);
+
+        for (int p = 0; p < n_pairs; ++p) {
+
+            bdm::BiologicalCell::PairMechanicsRecord record;
+
+            // Store node IDs canonically so A < B.
+            record.node_id_a = std::min(pair_node_a[p], pair_node_b[p]);
+            record.node_id_b = std::max(pair_node_a[p], pair_node_b[p]);
+            record.k_ce = pair_kce[p];
+            record.has_valid_k_ce = true;
+
+            pair_mechanics_records.push_back(record);
+        }
+
+        // -------------------------------------------------------------------------
+        // Step 7e: Build persistent attachment records
         // -------------------------------------------------------------------------
 
         std::vector<bdm::BiologicalCell::AttachmentRecord>
@@ -1672,7 +1846,7 @@ class CellMatrixInteraction {
         }
 
         // -------------------------------------------------------------------------
-        // Step 7e: Update the cell and store the imported attachment state
+        // Step 7f: Update the cell and store the imported attachment state
         //
         // The legacy vectors remain populated for backward compatibility while the
         // persistent attachment records are introduced gradually.
@@ -1683,8 +1857,11 @@ class CellMatrixInteraction {
         // Store the persistent records and synchronise the compatibility vectors.
         cell->SetAttachmentRecords(attachment_records);
 
+        // Store the pairwise mechanics belonging to this attachment set.
+        cell->SetPairMechanicsRecords(pair_mechanics_records);
+
         // -------------------------------------------------------------------------
-        // Step 7f: Validate the stored persistent attachment state
+        // Step 7g: Validate the stored persistent attachment state
         // -------------------------------------------------------------------------
 
         ASSERT_(
@@ -1698,47 +1875,74 @@ class CellMatrixInteraction {
             a < cell->GetNumberOfAttachmentRecords();
             ++a) {
 
-        const auto& record =
-            cell->GetAttachmentRecord(a);
+            const auto& record =
+                cell->GetAttachmentRecord(a);
 
-        ASSERT_(
-            record.node_id == attachment_node_ids[a],
-            "FEM import: stored attachment node ID does not match the imported "
-            "node ID for abm_cell_id = " + abm_cell_id
-        );
+            ASSERT_(
+                record.node_id == attachment_node_ids[a],
+                "FEM import: stored attachment node ID does not match the imported "
+                "node ID for abm_cell_id = " + abm_cell_id
+            );
 
-        ASSERT_(
-            record.position[0] == attachment_points[a][0] &&
-            record.position[1] == attachment_points[a][1] &&
-            record.position[2] == attachment_points[a][2],
-            "FEM import: stored attachment position does not match the imported "
-            "position for abm_cell_id = " + abm_cell_id
-        );
+            ASSERT_(
+                record.position[0] == attachment_points[a][0] &&
+                record.position[1] == attachment_points[a][1] &&
+                record.position[2] == attachment_points[a][2],
+                "FEM import: stored attachment position does not match the imported "
+                "position for abm_cell_id = " + abm_cell_id
+            );
 
-        ASSERT_(
-            record.k_ecm == k_values[a],
-            "FEM import: stored attachment k_ecm does not match the imported value "
-            "for abm_cell_id = " + abm_cell_id
-        );
+            ASSERT_(
+                record.k_ecm == k_values[a],
+                "FEM import: stored attachment k_ecm does not match the imported value "
+                "for abm_cell_id = " + abm_cell_id
+            );
 
-        ASSERT_(
-            record.has_valid_k_ecm,
-            "FEM import: FEM-returned attachment does not have valid k_ecm for "
-            "abm_cell_id = " + abm_cell_id
-        );
+            ASSERT_(
+                record.has_valid_k_ecm,
+                "FEM import: FEM-returned attachment does not have valid k_ecm for "
+                "abm_cell_id = " + abm_cell_id
+            );
 
-        ASSERT_(
-            !record.newly_formed,
-            "FEM import: FEM-returned attachment was incorrectly marked as newly "
-            "formed for abm_cell_id = " + abm_cell_id
-        );
+            ASSERT_(
+                !record.newly_formed,
+                "FEM import: FEM-returned attachment was incorrectly marked as newly "
+                "formed for abm_cell_id = " + abm_cell_id
+            );
         }
         
+        // Validate the stored persistent pairwise mechanics state
+        ASSERT_(
+            cell->GetNumberOfPairMechanicsRecords() == pair_mechanics_records.size(),
+            "FEM import: stored pair-mechanics count does not match the imported "
+            "count for abm_cell_id = " + abm_cell_id
+        );
+
+        for (std::size_t p = 0;
+            p < cell->GetNumberOfPairMechanicsRecords();
+            ++p) {
+
+            const auto& stored_record = cell->GetPairMechanicsRecord(p);
+
+            const auto& imported_record = pair_mechanics_records[p];
+
+            ASSERT_(
+                stored_record.node_id_a == imported_record.node_id_a && stored_record.node_id_b == imported_record.node_id_b,
+                "FEM import: stored pair node IDs do not match the imported pair "
+                "for abm_cell_id = " + abm_cell_id
+            );
+
+            ASSERT_(
+                stored_record.k_ce == imported_record.k_ce,
+                "FEM import: stored pair k_ce does not match the imported value "
+                "for abm_cell_id = " + abm_cell_id
+            );
+        }
 
         cell->SetKce(k_ce);
 
         // -------------------------------------------------------------------------
-        // Step 7g: Update adaptive cell-specific contractile force
+        // Step 7h: Update adaptive cell-specific contractile force
         // -------------------------------------------------------------------------
 
         double adaptive_contractile_force = 0.0;
@@ -1749,42 +1953,65 @@ class CellMatrixInteraction {
 
         if (phenotype_it != cells.end() && phenotype_id >= 1) {
 
-        const std::string& CP_name = phenotype_it->second;
-        const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+            const std::string& CP_name = phenotype_it->second;
+            const std::string mech_base = CP_name + "/cell_matrix_mechanics";
 
-        const bool mechanics_enabled =
-            this->params()->have_parameter<bool>(mech_base + "/enabled") &&
-            this->params()->get<bool>(mech_base + "/enabled");
+            const bool mechanics_enabled =
+                this->params()->have_parameter<bool>(mech_base + "/enabled") &&
+                this->params()->get<bool>(mech_base + "/enabled");
 
-        if (mechanics_enabled) {
+            if (mechanics_enabled) {
 
-            const double min_contractile_force =
-                this->params()->get<double>(mech_base + "/min_contractile_force");
+                const double min_contractile_force =
+                    this->params()->get<double>(mech_base + "/min_contractile_force");
 
-            const double max_contractile_force =
-                this->params()->get<double>(mech_base + "/max_contractile_force");
+                const double max_contractile_force =
+                    this->params()->get<double>(mech_base + "/max_contractile_force");
 
-            const double contractility_kce_sensitivity =
-                this->params()->get<double>(mech_base + "/contractility_kce_sensitivity");
+                const double contractility_kce_sensitivity =
+                    this->params()->get<double>(mech_base + "/contractility_kce_sensitivity");
 
-            const double contractility_kce_midpoint =
-                this->params()->get<double>(mech_base + "/contractility_kce_midpoint");
+                const double contractility_kce_midpoint =
+                    this->params()->get<double>(mech_base + "/contractility_kce_midpoint");
 
-            adaptive_contractile_force =
-                calculate_contractile_force_from_kce(
-                    k_ce,
-                    min_contractile_force,
-                    max_contractile_force,
-                    contractility_kce_sensitivity,
-                    contractility_kce_midpoint
-                );
-        }
+                adaptive_contractile_force =
+                    calculate_contractile_force_from_kce(
+                        k_ce,
+                        min_contractile_force,
+                        max_contractile_force,
+                        contractility_kce_sensitivity,
+                        contractility_kce_midpoint
+                    );
+
+                // Calculate one contractile force for each attachment pair.
+                for (std::size_t p = 0;
+                    p < cell->GetNumberOfPairMechanicsRecords();
+                    ++p) {
+
+                    const auto& pair_record = cell->GetPairMechanicsRecord(p);
+
+                    const double pair_contractile_force =
+                        calculate_contractile_force_from_kce(
+                            pair_record.k_ce,
+                            min_contractile_force,
+                            max_contractile_force,
+                            contractility_kce_sensitivity,
+                            contractility_kce_midpoint
+                        );
+
+                    cell->SetPairContractileForce(
+                        p,
+                        pair_contractile_force
+                    );
+                }
+                    
+            }
         }
 
         cell->SetContractileForce(adaptive_contractile_force);
 
         // -------------------------------------------------------------------------
-        // Step 7h: Update the internal ABM mechanics state
+        // Step 7i: Update the internal ABM mechanics state
         // -------------------------------------------------------------------------
 
         if (n_attach > 0) {
@@ -1807,17 +2034,29 @@ class CellMatrixInteraction {
         imported_flag_it->second = true;
 
         if (i < debug_cells_to_print) {
-        std::cout << "[FEM IMPORT] abm_cell_id=" << abm_cell_id
-                    << " pos=(" << x << ", " << y << ", " << z << ")"
-                    << " k_ce=" << k_ce
-                    << " contractile_force=" << adaptive_contractile_force
-                    << " n_attach=" << n_attach
+            std::cout << "[FEM IMPORT] abm_cell_id=" << abm_cell_id
+                << " pos=(" << x << ", " << y << ", " << z << ")"
+                << " k_ce=" << k_ce
+                << " contractile_force=" << adaptive_contractile_force
+                << " n_attach=" << n_attach
+                << "\n";
+            
+            // Print the pairwise k_ce records for debugging
+            for (const auto& pair_record : cell->GetPairMechanicsRecords()) {
+
+                std::cout
+                    << "    [PAIR KCE] pair=(" << pair_record.node_id_a << ", " << pair_record.node_id_b << ")"
+                    << " k_ce=" << pair_record.k_ce
+                    << " k_ce_valid=" << pair_record.has_valid_k_ce
+                    << " force=" << pair_record.contractile_force
                     << "\n";
+            }
         }
+
     }
 
     // ---------------------------------------------------------------------------
-    // Step 7: Confirm every ABM cell was imported exactly once
+    // Step 8: Confirm every ABM cell was imported exactly once
     // ---------------------------------------------------------------------------
 
     for (const auto& item : imported_flags) {
