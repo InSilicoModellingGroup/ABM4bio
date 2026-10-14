@@ -450,6 +450,9 @@ class CellMatrixInteraction {
         std::vector<std::string> csv_lines;
         csv_lines.reserve(biological_cells.size());
 
+        const int debug_cells_to_print = 3;
+        int debug_exported_cells = 0;
+
         for (auto* cell : biological_cells) {
 
             const auto& pos = cell->GetPosition();
@@ -458,6 +461,26 @@ class CellMatrixInteraction {
             uid_stream << cell->GetUid();
 
             const std::string abm_cell_id = uid_stream.str();
+
+            // Check if extra printing is enabled for this cell type. This is useful for debugging
+            bool mechanics_verbose = false;
+            const int phenotype_id = cell->GetPhenotype();
+            const auto phenotype_it = cells.find(phenotype_id);
+
+            if (phenotype_it != cells.end() && phenotype_id >= 1) {
+
+                const std::string& CP_name = phenotype_it->second;
+
+                const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+
+                mechanics_verbose =
+                    this->params()->have_parameter<bool>(
+                        mech_base + "/verbose"
+                    ) &&
+                    this->params()->get<bool>(
+                        mech_base + "/verbose"
+                    );
+            }
 
             // -------------------------------------------------------------------------
             // Step 5a: Determine whether and how this cell should be exported
@@ -568,7 +591,36 @@ class CellMatrixInteraction {
                 << "\"" << pair_contractile_forces_text << "\""
                 << "\n";
 
+            // Optional debug output for the first few exported cells.
+            if (mechanics_verbose && debug_exported_cells < debug_cells_to_print) {
+
+                std::cout
+                    << "[FEM EXPORT] abm_cell_id=" << abm_cell_id
+                    << " pos=(" << pos[0] << ", " << pos[1] << ", " << pos[2] << ")"
+                    << " state=" << cell_state
+                    << " k_ce=" << cell->GetKce()
+                    << " contractile_force=" << contractile_force
+                    << " n_attach=" << cell->GetNumberOfAttachmentRecords()
+                    << "\n";
+
+                for (const auto& pair_record :
+                    cell->GetPairMechanicsRecords()) {
+
+                    std::cout
+                        << "    [PAIR EXPORT] pair=("
+                        << pair_record.node_id_a << ", "
+                        << pair_record.node_id_b << ")"
+                        << " k_ce=" << pair_record.k_ce
+                        << " k_ce_valid=" << pair_record.has_valid_k_ce
+                        << " force=" << pair_record.contractile_force
+                        << "\n";
+                }
+            }
+
             csv_lines.push_back(line.str());
+
+            ++debug_exported_cells;
+
         }
 
         // ---------------------------------------------------------------------------
@@ -744,6 +796,11 @@ class CellMatrixInteraction {
                     mech_base + "/perturbance_dist"
                 );
 
+            const double min_contractile_force =
+                this->params()->get<double>(
+                    mech_base + "/min_contractile_force"
+                );
+
             const int random_state =
                 this->params()->get<int>(
                     mech_base + "/random_state"
@@ -818,6 +875,11 @@ class CellMatrixInteraction {
             cmd +=
             "--delta_F "
             + std::to_string(delta_F)
+            + " ";
+
+            cmd +=
+            "--min_contractile_force "
+            + std::to_string(min_contractile_force)
             + " ";
 
             cmd +=
@@ -1446,628 +1508,645 @@ class CellMatrixInteraction {
 
     inline
     void ImportFemCells(
-    bdm::Simulation& sim,
-    const std::map<int, std::string>& cells,
-    int time)
-    {
-    /*
-    * Function goal
-    * -------------
-    * Read FEM-calculated cell mechanics data and assign it to the corresponding
-    * ABM cells using their BioDynaMo UID strings.
-    *
-    * Only cells included in the current ABM-to-FEM export are expected in the FEM
-    * result file. Cells retained entirely within the ABM are left unchanged.
-    *
-    * Input file format
-    * -----------------
-    * The first line contains the number of cells processed by the FEM:
-    *
-    *   <number_of_cells>
-    *
-    * Each subsequent row contains:
-    *
-    *   <abm_cell_id>
-    *   <cell_x> <cell_y> <cell_z>
-    *   <k_ce>
-    *   <number_of_attachments>
-    *   <attachment_node_ids>
-    *   <attachment_coordinates>
-    *   <attachment_k_ecm_values>
-    *
-    * For a cell with N attachments:
-    *
-    *   abm_cell_id
-    *   cell_x cell_y cell_z
-    *   k_ce
-    *   N
-    *   node_id_1 ... node_id_N
-    *   attach_x_1 attach_y_1 attach_z_1
-    *   ...
-    *   attach_x_N attach_y_N attach_z_N
-    *   k_ecm_1 ... k_ecm_N
-    *
-    * Attachment node IDs use persistent one-based scaffold/FEM IDs.
-    * Example for a cell with two attachments:
-    *
-    *   0-0 249.2765 504.1778 595.3332 41.6827 2
-    *   55495 78082
-    *   270.2821 518.9576 592.0374
-    *   230.3962 489.4993 593.8962
-    *   42.3303 23.3542
-    *
-    * Notes
-    * -----
-    * - `abm_cell_id` is the BioDynaMo UID string, for example "0-0".
-    * - Attachment node IDs use the persistent one-based FEM/scaffold IDs.
-    * - Attachment coordinates represent the current deformed scaffold geometry.
-    * - One k_ecm value is provided for each attachment.
-    * - The number of node IDs, coordinates and k_ecm values must all equal N.
-    */
+        bdm::Simulation& sim,
+        const std::map<int, std::string>& cells,
+        int time)
+        {
+        /*
+        * Function goal
+        * -------------
+        * Read FEM-calculated cell mechanics data and assign it to the corresponding
+        * ABM cells using their BioDynaMo UID strings.
+        *
+        * Only cells included in the current ABM-to-FEM export are expected in the FEM
+        * result file. Cells retained entirely within the ABM are left unchanged.
+        *
+        * Input file format
+        * -----------------
+        * The first line contains the number of cells processed by the FEM:
+        *
+        *   <number_of_cells>
+        *
+        * Each subsequent row contains:
+        *
+        *   <abm_cell_id>
+        *   <cell_x> <cell_y> <cell_z>
+        *   <k_ce>
+        *   <number_of_attachments>
+        *   <attachment_node_ids>
+        *   <attachment_coordinates>
+        *   <attachment_k_ecm_values>
+        *
+        * For a cell with N attachments:
+        *
+        *   abm_cell_id
+        *   cell_x cell_y cell_z
+        *   k_ce
+        *   N
+        *   node_id_1 ... node_id_N
+        *   attach_x_1 attach_y_1 attach_z_1
+        *   ...
+        *   attach_x_N attach_y_N attach_z_N
+        *   k_ecm_1 ... k_ecm_N
+        *
+        * Attachment node IDs use persistent one-based scaffold/FEM IDs.
+        * Example for a cell with two attachments:
+        *
+        *   0-0 249.2765 504.1778 595.3332 41.6827 2
+        *   55495 78082
+        *   270.2821 518.9576 592.0374
+        *   230.3962 489.4993 593.8962
+        *   42.3303 23.3542
+        *
+        * Notes
+        * -----
+        * - `abm_cell_id` is the BioDynaMo UID string, for example "0-0".
+        * - Attachment node IDs use the persistent one-based FEM/scaffold IDs.
+        * - Attachment coordinates represent the current deformed scaffold geometry.
+        * - One k_ecm value is provided for each attachment.
+        * - The number of node IDs, coordinates and k_ecm values must all equal N.
+        */
 
-    // ---------------------------------------------------------------------------
-    // Step 1: Build FEM result filename
-    // ---------------------------------------------------------------------------
+        // ---------------------------------------------------------------------------
+        // Step 1: Build FEM result filename
+        // ---------------------------------------------------------------------------
 
-    char buf[2048];
+        char buf[2048];
 
-    const int time_inc = time - 1;
+        const int time_inc = time - 1;
 
-    std::snprintf(buf, sizeof(buf),
-                    "./results/FEM/step_%d/cell_mechanics_step_%d.dat",
-                    time_inc, time_inc);
+        std::snprintf(buf, sizeof(buf),
+                        "./results/FEM/step_%d/cell_mechanics_step_%d.dat",
+                        time_inc, time_inc);
 
-    const std::string fname(buf);
+        const std::string fname(buf);
 
-    // ---------------------------------------------------------------------------
-    // Step 2: Open FEM result file
-    // ---------------------------------------------------------------------------
+        // ---------------------------------------------------------------------------
+        // Step 2: Open FEM result file
+        // ---------------------------------------------------------------------------
 
-    std::ifstream fin(fname);
+        std::ifstream fin(fname);
 
-    ASSERT_(fin, "FEM import: could not open file " + fname);
+        ASSERT_(fin, "FEM import: could not open file " + fname);
 
-    // ---------------------------------------------------------------------------
-    // Step 3: Read number of cells
-    // ---------------------------------------------------------------------------
+        // ---------------------------------------------------------------------------
+        // Step 3: Read number of cells
+        // ---------------------------------------------------------------------------
 
-    int n_cells = -1;
+        int n_cells = -1;
 
-    fin >> n_cells;
+        fin >> n_cells;
 
-    ASSERT_(fin && n_cells >= 0,
-            "FEM import: invalid n_cells in " + fname);
+        ASSERT_(fin && n_cells >= 0,
+                "FEM import: invalid n_cells in " + fname);
 
-    // ---------------------------------------------------------------------------
-    // Step 4: Build ABM cell lookup using BioDynaMo UID string
-    // ---------------------------------------------------------------------------
+        // ---------------------------------------------------------------------------
+        // Step 4: Build ABM cell lookup using BioDynaMo UID string
+        // ---------------------------------------------------------------------------
 
-    // Collect BiologicalCell pointers safely first.
-    std::vector<bdm::BiologicalCell*> biological_cells;
-    std::mutex biological_cells_mutex;
+        // Collect BiologicalCell pointers safely first.
+        std::vector<bdm::BiologicalCell*> biological_cells;
+        std::mutex biological_cells_mutex;
 
-    auto* rm = sim.GetResourceManager();
+        auto* rm = sim.GetResourceManager();
 
-    rm->ForEachAgent([&](bdm::Agent* agent) {
-        auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
+        rm->ForEachAgent([&](bdm::Agent* agent) {
+            auto* cell = dynamic_cast<bdm::BiologicalCell*>(agent);
 
-        if (!cell) {
-        return;
+            if (!cell) {
+            return;
+            }
+
+            std::lock_guard<std::mutex> lock(biological_cells_mutex);
+            biological_cells.push_back(cell);
+        });
+
+        // Build the lookup serially after the agent collection step.
+        std::unordered_map<std::string, bdm::BiologicalCell*> cell_lookup;
+
+        for (auto* cell : biological_cells) {
+            std::ostringstream uid_stream;
+            uid_stream << cell->GetUid();
+
+            const std::string abm_cell_id = uid_stream.str();
+
+            ASSERT_(cell_lookup.find(abm_cell_id) == cell_lookup.end(),
+                    "FEM import: duplicate ABM cell UID found: " + abm_cell_id);
+
+            cell_lookup[abm_cell_id] = cell;
         }
 
-        std::lock_guard<std::mutex> lock(biological_cells_mutex);
-        biological_cells.push_back(cell);
-    });
-
-    // Build the lookup serially after the agent collection step.
-    std::unordered_map<std::string, bdm::BiologicalCell*> cell_lookup;
-
-    for (auto* cell : biological_cells) {
-        std::ostringstream uid_stream;
-        uid_stream << cell->GetUid();
-
-        const std::string abm_cell_id = uid_stream.str();
-
-        ASSERT_(cell_lookup.find(abm_cell_id) == cell_lookup.end(),
-                "FEM import: duplicate ABM cell UID found: " + abm_cell_id);
-
-        cell_lookup[abm_cell_id] = cell;
-    }
-
-    // ---------------------------------------------------------------------------
-    // Step 5: Validate the expected FEM result count
-    //
-    // The FEM result file should contain one row for every cell exported during
-    // the current coupling step, not one row for every ABM cell.
-    // ---------------------------------------------------------------------------
-
-    ASSERT_(
-        n_cells == static_cast<int>(exported_cell_ids_.size()),
-        "FEM import: file n_cells does not match the number of cells exported "
-        "to the FEM"
-    );
-
-    // Confirm that every exported UID still identifies a BiologicalCell.
-    for (const auto& exported_id : exported_cell_ids_) {
-        ASSERT_(
-            cell_lookup.find(exported_id) != cell_lookup.end(),
-            "FEM import: exported ABM cell UID no longer exists: "
-            + exported_id
-        );
-    }
-
-    // ---------------------------------------------------------------------------
-    // Step 6: Track only the cells expected from the FEM
-    //
-    // Single-attachment cells are not exported to the FEM, so they are not expected 
-    // to be present in the FEM result file. 
-    // ---------------------------------------------------------------------------
-
-    std::unordered_map<std::string, bool> imported_flags;
-
-    for (const auto& exported_id : exported_cell_ids_) {
-        imported_flags.emplace(exported_id, false);
-    }
-
-    const int debug_cells_to_print = 3;
-
-    for (int i = 0; i < n_cells; ++i) {
-
-        std::string abm_cell_id;
-        double x = 0.0;
-        double y = 0.0;
-        double z = 0.0;
-        double k_ce = 0.0;
-        int n_attach = 0;
-
-        fin >> abm_cell_id >> x >> y >> z >> k_ce >> n_attach;
-
-        ASSERT_(fin && n_attach >= 0,
-                "FEM import: failed parsing header for row " + std::to_string(i)
-                + " in " + fname);
-
-        auto cell_it = cell_lookup.find(abm_cell_id);
-
-        ASSERT_(cell_it != cell_lookup.end(),
-                "FEM import: could not find ABM cell with abm_cell_id = "
-                + abm_cell_id);
-
-        // The FEM must not return cells that were omitted from the current export.
-        auto imported_flag_it =
-        imported_flags.find(abm_cell_id);
+        // ---------------------------------------------------------------------------
+        // Step 5: Validate the expected FEM result count
+        //
+        // The FEM result file should contain one row for every cell exported during
+        // the current coupling step, not one row for every ABM cell.
+        // ---------------------------------------------------------------------------
 
         ASSERT_(
-            imported_flag_it != imported_flags.end(),
-            "FEM import: FEM returned unexpected or non-exported abm_cell_id = "
-            + abm_cell_id
+            n_cells == static_cast<int>(exported_cell_ids_.size()),
+            "FEM import: file n_cells does not match the number of cells exported "
+            "to the FEM"
         );
 
-        ASSERT_(
-            !imported_flag_it->second,
-            "FEM import: duplicate FEM row for abm_cell_id = "
-            + abm_cell_id
-        );
-
-        bdm::BiologicalCell* cell = cell_it->second;
-
-        // -------------------------------------------------------------------------
-        // Step 7a: Read attachment node IDs
-        // -------------------------------------------------------------------------
-
-        std::vector<int> attachment_node_ids(n_attach);
-
-        for (int a = 0; a < n_attach; ++a) {
-        fin >> attachment_node_ids[a];
-
-        ASSERT_(fin,
-                "FEM import: not enough attachment node IDs for abm_cell_id = "
-                + abm_cell_id + " in " + fname);
-        }
-
-        // -------------------------------------------------------------------------
-        // Step 7b: Read attachment coordinates
-        // -------------------------------------------------------------------------
-
-        std::vector<bdm::Double3> attachment_points(n_attach);
-
-        for (int a = 0; a < n_attach; ++a) {
-        double ax = 0.0;
-        double ay = 0.0;
-        double az = 0.0;
-
-        fin >> ax >> ay >> az;
-
-        ASSERT_(fin,
-                "FEM import: not enough attachment xyz values for abm_cell_id = "
-                + abm_cell_id + " in " + fname);
-
-        attachment_points[a] = bdm::Double3{ax, ay, az};
-        }
-
-        // -------------------------------------------------------------------------
-        // Step 7c: Read attachment stiffness values
-        // -------------------------------------------------------------------------
-
-        std::vector<double> k_values(n_attach);
-
-        for (int a = 0; a < n_attach; ++a) {
-        fin >> k_values[a];
-
-        ASSERT_(fin,
-                "FEM import: not enough stiffness values for abm_cell_id = "
-                + abm_cell_id + " in " + fname);
-        }
-
-        // -------------------------------------------------------------------------
-        // Step 7d: Read pairwise k_ce records
-        // -------------------------------------------------------------------------
-
-        int n_pairs = -1;
-
-        fin >> n_pairs;
-
-        ASSERT_(
-            fin && n_pairs >= 0,
-            "FEM import: invalid n_pairs for abm_cell_id = " + abm_cell_id + " in " + fname
-        );
-
-        const int expected_n_pairs = n_attach * (n_attach - 1) / 2;
-
-        ASSERT_(
-            n_pairs == expected_n_pairs,
-            "FEM import: incorrect number of pairwise k_ce records for abm_cell_id = " + abm_cell_id
-            + ". Expected " + std::to_string(expected_n_pairs)
-            + ", received " + std::to_string(n_pairs)
-        );
-
-        std::vector<int> pair_node_a(n_pairs);
-        std::vector<int> pair_node_b(n_pairs);
-        std::vector<double> pair_kce(n_pairs);
-
-        // Read the pairwise k_ce records
-        for (int p = 0; p < n_pairs; ++p) {
-
-            fin
-                >> pair_node_a[p]
-                >> pair_node_b[p]
-                >> pair_kce[p];
-
+        // Confirm that every exported UID still identifies a BiologicalCell.
+        for (const auto& exported_id : exported_cell_ids_) {
             ASSERT_(
-                fin,
-                "FEM import: failed reading pairwise k_ce record " + std::to_string(p)
-                + " for abm_cell_id = " + abm_cell_id
+                cell_lookup.find(exported_id) != cell_lookup.end(),
+                "FEM import: exported ABM cell UID no longer exists: "
+                + exported_id
             );
         }
 
-        // Validate the node pairs
-        for (int p = 0; p < n_pairs; ++p) {
+        // ---------------------------------------------------------------------------
+        // Step 6: Track only the cells expected from the FEM
+        //
+        // Single-attachment cells are not exported to the FEM, so they are not expected 
+        // to be present in the FEM result file. 
+        // ---------------------------------------------------------------------------
 
-            const int node_a = pair_node_a[p];
-            const int node_b = pair_node_b[p];
+        std::unordered_map<std::string, bool> imported_flags;
 
-            const bool node_a_exists =
-                std::find(
-                    attachment_node_ids.begin(),
-                    attachment_node_ids.end(),
-                    node_a
-                ) != attachment_node_ids.end();
-
-            const bool node_b_exists =
-                std::find(
-                    attachment_node_ids.begin(),
-                    attachment_node_ids.end(),
-                    node_b
-                ) != attachment_node_ids.end();
-
-            ASSERT_(
-                node_a_exists && node_b_exists,
-                "FEM import: pairwise k_ce contains a node that is not part of "
-                "the attachment set for abm_cell_id = " + abm_cell_id
-            );
-
-            ASSERT_(
-                node_a != node_b,
-                "FEM import: pairwise k_ce contains a self-pair for abm_cell_id = " + abm_cell_id
-            );
-
-            ASSERT_(
-                std::isfinite(pair_kce[p]),
-                "FEM import: pairwise k_ce is non-finite for abm_cell_id = " + abm_cell_id
-            );
-
-            ASSERT_(
-                pair_kce[p] >= 0.0,
-                "FEM import: pairwise k_ce is negative for abm_cell_id = " + abm_cell_id
-            );
+        for (const auto& exported_id : exported_cell_ids_) {
+            imported_flags.emplace(exported_id, false);
         }
 
-        // Check for duplicate pairs (order-independent)
-        for (int p = 0; p < n_pairs; ++p) {
+        const int debug_cells_to_print = 3;
 
-            const int a1 = std::min(pair_node_a[p], pair_node_b[p]);
-            const int b1 = std::max(pair_node_a[p], pair_node_b[p]);
+        for (int i = 0; i < n_cells; ++i) {
 
-            for (int q = p + 1; q < n_pairs; ++q) {
+            std::string abm_cell_id;
+            double x = 0.0;
+            double y = 0.0;
+            double z = 0.0;
+            double k_ce = 0.0;
+            int n_attach = 0;
 
-                const int a2 = std::min(pair_node_a[q], pair_node_b[q]);
-                const int b2 = std::max(pair_node_a[q], pair_node_b[q]);
+            fin >> abm_cell_id >> x >> y >> z >> k_ce >> n_attach;
+
+            ASSERT_(fin && n_attach >= 0,
+                    "FEM import: failed parsing header for row " + std::to_string(i)
+                    + " in " + fname);
+
+            auto cell_it = cell_lookup.find(abm_cell_id);
+
+            ASSERT_(cell_it != cell_lookup.end(),
+                    "FEM import: could not find ABM cell with abm_cell_id = "
+                    + abm_cell_id);
+
+            // The FEM must not return cells that were omitted from the current export.
+            auto imported_flag_it =
+            imported_flags.find(abm_cell_id);
+
+            ASSERT_(
+                imported_flag_it != imported_flags.end(),
+                "FEM import: FEM returned unexpected or non-exported abm_cell_id = "
+                + abm_cell_id
+            );
+
+            ASSERT_(
+                !imported_flag_it->second,
+                "FEM import: duplicate FEM row for abm_cell_id = "
+                + abm_cell_id
+            );
+
+            bdm::BiologicalCell* cell = cell_it->second;
+
+            // -------------------------------------------------------------------------
+            // Step 7a: Read attachment node IDs
+            // -------------------------------------------------------------------------
+
+            std::vector<int> attachment_node_ids(n_attach);
+
+            for (int a = 0; a < n_attach; ++a) {
+            fin >> attachment_node_ids[a];
+
+            ASSERT_(fin,
+                    "FEM import: not enough attachment node IDs for abm_cell_id = "
+                    + abm_cell_id + " in " + fname);
+            }
+
+            // -------------------------------------------------------------------------
+            // Step 7b: Read attachment coordinates
+            // -------------------------------------------------------------------------
+
+            std::vector<bdm::Double3> attachment_points(n_attach);
+
+            for (int a = 0; a < n_attach; ++a) {
+            double ax = 0.0;
+            double ay = 0.0;
+            double az = 0.0;
+
+            fin >> ax >> ay >> az;
+
+            ASSERT_(fin,
+                    "FEM import: not enough attachment xyz values for abm_cell_id = "
+                    + abm_cell_id + " in " + fname);
+
+            attachment_points[a] = bdm::Double3{ax, ay, az};
+            }
+
+            // -------------------------------------------------------------------------
+            // Step 7c: Read attachment stiffness values
+            // -------------------------------------------------------------------------
+
+            std::vector<double> k_values(n_attach);
+
+            for (int a = 0; a < n_attach; ++a) {
+            fin >> k_values[a];
+
+            ASSERT_(fin,
+                    "FEM import: not enough stiffness values for abm_cell_id = "
+                    + abm_cell_id + " in " + fname);
+            }
+
+            // -------------------------------------------------------------------------
+            // Step 7d: Read pairwise k_ce records
+            // -------------------------------------------------------------------------
+
+            int n_pairs = -1;
+
+            fin >> n_pairs;
+
+            ASSERT_(
+                fin && n_pairs >= 0,
+                "FEM import: invalid n_pairs for abm_cell_id = " + abm_cell_id + " in " + fname
+            );
+
+            const int expected_n_pairs = n_attach * (n_attach - 1) / 2;
+
+            ASSERT_(
+                n_pairs == expected_n_pairs,
+                "FEM import: incorrect number of pairwise k_ce records for abm_cell_id = " + abm_cell_id
+                + ". Expected " + std::to_string(expected_n_pairs)
+                + ", received " + std::to_string(n_pairs)
+            );
+
+            std::vector<int> pair_node_a(n_pairs);
+            std::vector<int> pair_node_b(n_pairs);
+            std::vector<double> pair_kce(n_pairs);
+
+            // Read the pairwise k_ce records
+            for (int p = 0; p < n_pairs; ++p) {
+
+                fin
+                    >> pair_node_a[p]
+                    >> pair_node_b[p]
+                    >> pair_kce[p];
 
                 ASSERT_(
-                    !(a1 == a2 && b1 == b2),
-                    "FEM import: duplicate pairwise k_ce record for pair ("
-                    + std::to_string(a1) + ", " + std::to_string(b1)
-                    + ") in abm_cell_id = " + abm_cell_id
+                    fin,
+                    "FEM import: failed reading pairwise k_ce record " + std::to_string(p)
+                    + " for abm_cell_id = " + abm_cell_id
                 );
             }
-        }
 
-        // Convert temporary FEM data into persistent pairwise k_ce records for the cell.
-        std::vector<bdm::BiologicalCell::PairMechanicsRecord> pair_mechanics_records;
-        pair_mechanics_records.reserve(n_pairs);
+            // Validate the node pairs
+            for (int p = 0; p < n_pairs; ++p) {
 
-        for (int p = 0; p < n_pairs; ++p) {
+                const int node_a = pair_node_a[p];
+                const int node_b = pair_node_b[p];
 
-            bdm::BiologicalCell::PairMechanicsRecord record;
+                const bool node_a_exists =
+                    std::find(
+                        attachment_node_ids.begin(),
+                        attachment_node_ids.end(),
+                        node_a
+                    ) != attachment_node_ids.end();
 
-            // Store node IDs canonically so A < B.
-            record.node_id_a = std::min(pair_node_a[p], pair_node_b[p]);
-            record.node_id_b = std::max(pair_node_a[p], pair_node_b[p]);
-            record.k_ce = pair_kce[p];
-            record.has_valid_k_ce = true;
+                const bool node_b_exists =
+                    std::find(
+                        attachment_node_ids.begin(),
+                        attachment_node_ids.end(),
+                        node_b
+                    ) != attachment_node_ids.end();
 
-            pair_mechanics_records.push_back(record);
-        }
+                ASSERT_(
+                    node_a_exists && node_b_exists,
+                    "FEM import: pairwise k_ce contains a node that is not part of "
+                    "the attachment set for abm_cell_id = " + abm_cell_id
+                );
 
-        // -------------------------------------------------------------------------
-        // Step 7e: Build persistent attachment records
-        // -------------------------------------------------------------------------
+                ASSERT_(
+                    node_a != node_b,
+                    "FEM import: pairwise k_ce contains a self-pair for abm_cell_id = " + abm_cell_id
+                );
 
-        std::vector<bdm::BiologicalCell::AttachmentRecord>
-        attachment_records;
+                ASSERT_(
+                    std::isfinite(pair_kce[p]),
+                    "FEM import: pairwise k_ce is non-finite for abm_cell_id = " + abm_cell_id
+                );
 
-        attachment_records.reserve(n_attach);
+                ASSERT_(
+                    pair_kce[p] >= 0.0,
+                    "FEM import: pairwise k_ce is negative for abm_cell_id = " + abm_cell_id
+                );
+            }
 
-        for (int a = 0; a < n_attach; ++a) {
+            // Check for duplicate pairs (order-independent)
+            for (int p = 0; p < n_pairs; ++p) {
 
-        bdm::BiologicalCell::AttachmentRecord record;
+                const int a1 = std::min(pair_node_a[p], pair_node_b[p]);
+                const int b1 = std::max(pair_node_a[p], pair_node_b[p]);
 
-        record.node_id = attachment_node_ids[a];
-        record.position = attachment_points[a];
-        record.k_ecm = k_values[a];
+                for (int q = p + 1; q < n_pairs; ++q) {
 
-        // FEM-returned attachments have a calculated k_ecm value.
-        record.has_valid_k_ecm = true;
+                    const int a2 = std::min(pair_node_a[q], pair_node_b[q]);
+                    const int b2 = std::max(pair_node_a[q], pair_node_b[q]);
 
-        // These attachments were returned by the FEM rather than newly formed
-        // during the current ABM step.
-        record.newly_formed = false;
-
-        attachment_records.push_back(record);
-        }
-
-        // -------------------------------------------------------------------------
-        // Step 7f: Update the cell and store the imported attachment state
-        //
-        // The legacy vectors remain populated for backward compatibility while the
-        // persistent attachment records are introduced gradually.
-        // -------------------------------------------------------------------------
-
-        cell->SetPosition(bdm::Double3{x, y, z});
-
-        // Store the persistent records and synchronise the compatibility vectors.
-        cell->SetAttachmentRecords(attachment_records);
-
-        // Store the pairwise mechanics belonging to this attachment set.
-        cell->SetPairMechanicsRecords(pair_mechanics_records);
-
-        // -------------------------------------------------------------------------
-        // Step 7g: Validate the stored persistent attachment state
-        // -------------------------------------------------------------------------
-
-        ASSERT_(
-            cell->GetNumberOfAttachmentRecords()
-                == attachment_records.size(),
-            "FEM import: stored attachment-record count does not match the imported "
-            "count for abm_cell_id = " + abm_cell_id
-        );
-
-        for (std::size_t a = 0;
-            a < cell->GetNumberOfAttachmentRecords();
-            ++a) {
-
-            const auto& record =
-                cell->GetAttachmentRecord(a);
-
-            ASSERT_(
-                record.node_id == attachment_node_ids[a],
-                "FEM import: stored attachment node ID does not match the imported "
-                "node ID for abm_cell_id = " + abm_cell_id
-            );
-
-            ASSERT_(
-                record.position[0] == attachment_points[a][0] &&
-                record.position[1] == attachment_points[a][1] &&
-                record.position[2] == attachment_points[a][2],
-                "FEM import: stored attachment position does not match the imported "
-                "position for abm_cell_id = " + abm_cell_id
-            );
-
-            ASSERT_(
-                record.k_ecm == k_values[a],
-                "FEM import: stored attachment k_ecm does not match the imported value "
-                "for abm_cell_id = " + abm_cell_id
-            );
-
-            ASSERT_(
-                record.has_valid_k_ecm,
-                "FEM import: FEM-returned attachment does not have valid k_ecm for "
-                "abm_cell_id = " + abm_cell_id
-            );
-
-            ASSERT_(
-                !record.newly_formed,
-                "FEM import: FEM-returned attachment was incorrectly marked as newly "
-                "formed for abm_cell_id = " + abm_cell_id
-            );
-        }
-        
-        // Validate the stored persistent pairwise mechanics state
-        ASSERT_(
-            cell->GetNumberOfPairMechanicsRecords() == pair_mechanics_records.size(),
-            "FEM import: stored pair-mechanics count does not match the imported "
-            "count for abm_cell_id = " + abm_cell_id
-        );
-
-        for (std::size_t p = 0;
-            p < cell->GetNumberOfPairMechanicsRecords();
-            ++p) {
-
-            const auto& stored_record = cell->GetPairMechanicsRecord(p);
-
-            const auto& imported_record = pair_mechanics_records[p];
-
-            ASSERT_(
-                stored_record.node_id_a == imported_record.node_id_a && stored_record.node_id_b == imported_record.node_id_b,
-                "FEM import: stored pair node IDs do not match the imported pair "
-                "for abm_cell_id = " + abm_cell_id
-            );
-
-            ASSERT_(
-                stored_record.k_ce == imported_record.k_ce,
-                "FEM import: stored pair k_ce does not match the imported value "
-                "for abm_cell_id = " + abm_cell_id
-            );
-        }
-
-        cell->SetKce(k_ce);
-
-        // -------------------------------------------------------------------------
-        // Step 7h: Update adaptive cell-specific contractile force
-        // -------------------------------------------------------------------------
-
-        double adaptive_contractile_force = 0.0;
-
-        const int phenotype_id = cell->GetPhenotype();
-
-        auto phenotype_it = cells.find(phenotype_id);
-
-        if (phenotype_it != cells.end() && phenotype_id >= 1) {
-
-            const std::string& CP_name = phenotype_it->second;
-            const std::string mech_base = CP_name + "/cell_matrix_mechanics";
-
-            const bool mechanics_enabled =
-                this->params()->have_parameter<bool>(mech_base + "/enabled") &&
-                this->params()->get<bool>(mech_base + "/enabled");
-
-            if (mechanics_enabled) {
-
-                const double min_contractile_force =
-                    this->params()->get<double>(mech_base + "/min_contractile_force");
-
-                const double max_contractile_force =
-                    this->params()->get<double>(mech_base + "/max_contractile_force");
-
-                const double contractility_kce_sensitivity =
-                    this->params()->get<double>(mech_base + "/contractility_kce_sensitivity");
-
-                const double contractility_kce_midpoint =
-                    this->params()->get<double>(mech_base + "/contractility_kce_midpoint");
-
-                adaptive_contractile_force =
-                    calculate_contractile_force_from_kce(
-                        k_ce,
-                        min_contractile_force,
-                        max_contractile_force,
-                        contractility_kce_sensitivity,
-                        contractility_kce_midpoint
+                    ASSERT_(
+                        !(a1 == a2 && b1 == b2),
+                        "FEM import: duplicate pairwise k_ce record for pair ("
+                        + std::to_string(a1) + ", " + std::to_string(b1)
+                        + ") in abm_cell_id = " + abm_cell_id
                     );
+                }
+            }
 
-                // Calculate one contractile force for each attachment pair.
-                for (std::size_t p = 0;
-                    p < cell->GetNumberOfPairMechanicsRecords();
-                    ++p) {
+            // Convert temporary FEM data into persistent pairwise k_ce records for the cell.
+            std::vector<bdm::BiologicalCell::PairMechanicsRecord> pair_mechanics_records;
+            pair_mechanics_records.reserve(n_pairs);
 
-                    const auto& pair_record = cell->GetPairMechanicsRecord(p);
+            for (int p = 0; p < n_pairs; ++p) {
 
-                    const double pair_contractile_force =
+                bdm::BiologicalCell::PairMechanicsRecord record;
+
+                // Store node IDs canonically so A < B.
+                record.node_id_a = std::min(pair_node_a[p], pair_node_b[p]);
+                record.node_id_b = std::max(pair_node_a[p], pair_node_b[p]);
+                record.k_ce = pair_kce[p];
+                record.has_valid_k_ce = true;
+
+                pair_mechanics_records.push_back(record);
+            }
+
+            // -------------------------------------------------------------------------
+            // Step 7e: Build persistent attachment records
+            // -------------------------------------------------------------------------
+
+            std::vector<bdm::BiologicalCell::AttachmentRecord>
+            attachment_records;
+
+            attachment_records.reserve(n_attach);
+
+            for (int a = 0; a < n_attach; ++a) {
+
+            bdm::BiologicalCell::AttachmentRecord record;
+
+            record.node_id = attachment_node_ids[a];
+            record.position = attachment_points[a];
+            record.k_ecm = k_values[a];
+
+            // FEM-returned attachments have a calculated k_ecm value.
+            record.has_valid_k_ecm = true;
+
+            // These attachments were returned by the FEM rather than newly formed
+            // during the current ABM step.
+            record.newly_formed = false;
+
+            attachment_records.push_back(record);
+            }
+
+            // -------------------------------------------------------------------------
+            // Step 7f: Update the cell and store the imported attachment state
+            //
+            // The legacy vectors remain populated for backward compatibility while the
+            // persistent attachment records are introduced gradually.
+            // -------------------------------------------------------------------------
+
+            cell->SetPosition(bdm::Double3{x, y, z});
+
+            // Store the persistent records and synchronise the compatibility vectors.
+            cell->SetAttachmentRecords(attachment_records);
+
+            // Store the pairwise mechanics belonging to this attachment set.
+            cell->SetPairMechanicsRecords(pair_mechanics_records);
+
+            // -------------------------------------------------------------------------
+            // Step 7g: Validate the stored persistent attachment state
+            // -------------------------------------------------------------------------
+
+            ASSERT_(
+                cell->GetNumberOfAttachmentRecords()
+                    == attachment_records.size(),
+                "FEM import: stored attachment-record count does not match the imported "
+                "count for abm_cell_id = " + abm_cell_id
+            );
+
+            for (std::size_t a = 0;
+                a < cell->GetNumberOfAttachmentRecords();
+                ++a) {
+
+                const auto& record =
+                    cell->GetAttachmentRecord(a);
+
+                ASSERT_(
+                    record.node_id == attachment_node_ids[a],
+                    "FEM import: stored attachment node ID does not match the imported "
+                    "node ID for abm_cell_id = " + abm_cell_id
+                );
+
+                ASSERT_(
+                    record.position[0] == attachment_points[a][0] &&
+                    record.position[1] == attachment_points[a][1] &&
+                    record.position[2] == attachment_points[a][2],
+                    "FEM import: stored attachment position does not match the imported "
+                    "position for abm_cell_id = " + abm_cell_id
+                );
+
+                ASSERT_(
+                    record.k_ecm == k_values[a],
+                    "FEM import: stored attachment k_ecm does not match the imported value "
+                    "for abm_cell_id = " + abm_cell_id
+                );
+
+                ASSERT_(
+                    record.has_valid_k_ecm,
+                    "FEM import: FEM-returned attachment does not have valid k_ecm for "
+                    "abm_cell_id = " + abm_cell_id
+                );
+
+                ASSERT_(
+                    !record.newly_formed,
+                    "FEM import: FEM-returned attachment was incorrectly marked as newly "
+                    "formed for abm_cell_id = " + abm_cell_id
+                );
+            }
+            
+            // Validate the stored persistent pairwise mechanics state
+            ASSERT_(
+                cell->GetNumberOfPairMechanicsRecords() == pair_mechanics_records.size(),
+                "FEM import: stored pair-mechanics count does not match the imported "
+                "count for abm_cell_id = " + abm_cell_id
+            );
+
+            for (std::size_t p = 0;
+                p < cell->GetNumberOfPairMechanicsRecords();
+                ++p) {
+
+                const auto& stored_record = cell->GetPairMechanicsRecord(p);
+
+                const auto& imported_record = pair_mechanics_records[p];
+
+                ASSERT_(
+                    stored_record.node_id_a == imported_record.node_id_a && stored_record.node_id_b == imported_record.node_id_b,
+                    "FEM import: stored pair node IDs do not match the imported pair "
+                    "for abm_cell_id = " + abm_cell_id
+                );
+
+                ASSERT_(
+                    stored_record.k_ce == imported_record.k_ce,
+                    "FEM import: stored pair k_ce does not match the imported value "
+                    "for abm_cell_id = " + abm_cell_id
+                );
+            }
+
+            cell->SetKce(k_ce);
+
+            // -------------------------------------------------------------------------
+            // Step 7h: Update adaptive cell-specific contractile force
+            // -------------------------------------------------------------------------
+
+            double adaptive_contractile_force = 0.0;
+
+            const int phenotype_id = cell->GetPhenotype();
+
+            auto phenotype_it = cells.find(phenotype_id);
+
+            bool mechanics_verbose = false;
+
+            if (phenotype_it != cells.end() && phenotype_id >= 1) {
+
+                const std::string& CP_name = phenotype_it->second;
+
+                const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+
+                mechanics_verbose =
+                    this->params()->have_parameter<bool>(
+                        mech_base + "/verbose"
+                    ) &&
+                    this->params()->get<bool>(
+                        mech_base + "/verbose"
+                    );
+            }
+
+            if (phenotype_it != cells.end() && phenotype_id >= 1) {
+
+                const std::string& CP_name = phenotype_it->second;
+                const std::string mech_base = CP_name + "/cell_matrix_mechanics";
+
+                const bool mechanics_enabled =
+                    this->params()->have_parameter<bool>(mech_base + "/enabled") &&
+                    this->params()->get<bool>(mech_base + "/enabled");
+
+                if (mechanics_enabled) {
+
+                    const double min_contractile_force =
+                        this->params()->get<double>(mech_base + "/min_contractile_force");
+
+                    const double max_contractile_force =
+                        this->params()->get<double>(mech_base + "/max_contractile_force");
+
+                    const double contractility_kce_sensitivity =
+                        this->params()->get<double>(mech_base + "/contractility_kce_sensitivity");
+
+                    const double contractility_kce_midpoint =
+                        this->params()->get<double>(mech_base + "/contractility_kce_midpoint");
+
+                    adaptive_contractile_force =
                         calculate_contractile_force_from_kce(
-                            pair_record.k_ce,
+                            k_ce,
                             min_contractile_force,
                             max_contractile_force,
                             contractility_kce_sensitivity,
                             contractility_kce_midpoint
                         );
 
-                    cell->SetPairContractileForce(
-                        p,
-                        pair_contractile_force
-                    );
+                    // Calculate one contractile force for each attachment pair.
+                    for (std::size_t p = 0;
+                        p < cell->GetNumberOfPairMechanicsRecords();
+                        ++p) {
+
+                        const auto& pair_record = cell->GetPairMechanicsRecord(p);
+
+                        const double pair_contractile_force =
+                            calculate_contractile_force_from_kce(
+                                pair_record.k_ce,
+                                min_contractile_force,
+                                max_contractile_force,
+                                contractility_kce_sensitivity,
+                                contractility_kce_midpoint
+                            );
+
+                        cell->SetPairContractileForce(
+                            p,
+                            pair_contractile_force
+                        );
+                    }
+                        
                 }
-                    
             }
-        }
 
-        cell->SetContractileForce(adaptive_contractile_force);
+            cell->SetContractileForce(adaptive_contractile_force);
 
-        // -------------------------------------------------------------------------
-        // Step 7i: Update the internal ABM mechanics state
-        // -------------------------------------------------------------------------
+            // -------------------------------------------------------------------------
+            // Step 7i: Update the internal ABM mechanics state
+            // -------------------------------------------------------------------------
 
-        if (n_attach > 0) {
-        // The cell now has an established attachment set managed by the ABM.
-        cell->SetCellMatrixLifecycleStatus(
-            bdm::BiologicalCell::CellMatrixLifecycleStatus::kEstablished
-        );
+            if (n_attach > 0) {
+            // The cell now has an established attachment set managed by the ABM.
+            cell->SetCellMatrixLifecycleStatus(
+                bdm::BiologicalCell::CellMatrixLifecycleStatus::kEstablished
+            );
 
-        // The imported k_ce, contractile force and attachment mechanics correspond
-        // to the attachment set returned by the FEM.
-        cell->ClearMechanicsRecalculationRequirement();
-        }
+            // The imported k_ce, contractile force and attachment mechanics correspond
+            // to the attachment set returned by the FEM.
+            cell->ClearMechanicsRecalculationRequirement();
+            }
 
-        // Confirm that the imported mechanics and lifecycle state agree.
-        cell->ValidateCellMatrixState();
+            // Confirm that the imported mechanics and lifecycle state agree.
+            cell->ValidateCellMatrixState();
 
-        // Do not update cell_state here.
-        // cell_state_ represents the last ABM-to-FEM state exported by ABM.
-        
-        imported_flag_it->second = true;
-
-        if (i < debug_cells_to_print) {
-            std::cout << "[FEM IMPORT] abm_cell_id=" << abm_cell_id
-                << " pos=(" << x << ", " << y << ", " << z << ")"
-                << " k_ce=" << k_ce
-                << " contractile_force=" << adaptive_contractile_force
-                << " n_attach=" << n_attach
-                << "\n";
+            // Do not update cell_state here.
+            // cell_state_ represents the last ABM-to-FEM state exported by ABM.
             
-            // Print the pairwise k_ce records for debugging
-            for (const auto& pair_record : cell->GetPairMechanicsRecords()) {
+            imported_flag_it->second = true;
 
-                std::cout
-                    << "    [PAIR KCE] pair=(" << pair_record.node_id_a << ", " << pair_record.node_id_b << ")"
-                    << " k_ce=" << pair_record.k_ce
-                    << " k_ce_valid=" << pair_record.has_valid_k_ce
-                    << " force=" << pair_record.contractile_force
+            if (mechanics_verbose && i < debug_cells_to_print) {
+                std::cout << "[FEM IMPORT] abm_cell_id=" << abm_cell_id
+                    << " pos=(" << x << ", " << y << ", " << z << ")"
+                    << " k_ce=" << k_ce
+                    << " contractile_force=" << adaptive_contractile_force
+                    << " n_attach=" << n_attach
                     << "\n";
+                
+                // Print the pairwise k_ce records for debugging
+                for (const auto& pair_record : cell->GetPairMechanicsRecords()) {
+
+                    std::cout
+                        << "    [PAIR KCE] pair=(" << pair_record.node_id_a << ", " << pair_record.node_id_b << ")"
+                        << " k_ce=" << pair_record.k_ce
+                        << " k_ce_valid=" << pair_record.has_valid_k_ce
+                        << " force=" << pair_record.contractile_force
+                        << "\n";
+                }
             }
+
         }
 
-    }
+        // ---------------------------------------------------------------------------
+        // Step 8: Confirm every ABM cell was imported exactly once
+        // ---------------------------------------------------------------------------
 
-    // ---------------------------------------------------------------------------
-    // Step 8: Confirm every ABM cell was imported exactly once
-    // ---------------------------------------------------------------------------
+        for (const auto& item : imported_flags) {
+            ASSERT_(
+                item.second,
+                "FEM import: no FEM row was returned for exported abm_cell_id = "
+                + item.first
+            );
+        }
 
-    for (const auto& item : imported_flags) {
-        ASSERT_(
-            item.second,
-            "FEM import: no FEM row was returned for exported abm_cell_id = "
-            + item.first
-        );
-    }
-
-    fin.close();
+        fin.close();
 
     }
 

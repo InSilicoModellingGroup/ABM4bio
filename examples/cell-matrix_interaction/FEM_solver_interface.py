@@ -19,6 +19,7 @@ parser.add_argument("--min_cell_radius", type=float, default=5.0, help="Minimum 
 parser.add_argument("--max_cell_radius", type=float, default=40.0, help="Maximum cell radius")
 parser.add_argument("--strut_radius", type=float, default=2.5, help="Radius of each strut - assumed homogeneous")
 parser.add_argument("--delta_F", type=float, default=0.1, help="Perturbance force used to calculate k_ce and k_ecm")
+parser.add_argument("--min_contractile_force", type=float, required=True, help="Minimum contractile force for newly created attachment pairs")
 parser.add_argument("--perturbance_dist", type=float, default=1000.0, help="Distance between cells being perturbed at the same time")
 parser.add_argument("--random_state", type=int, default=0, help="Randomize the cells or repeat the last run positions and attachments")
 parser.add_argument("--num_attachments", type=int, default=4, help="The maximum number of points a cell can attach to")
@@ -78,6 +79,7 @@ min_cell_radius = args.min_cell_radius
 max_cell_radius = args.max_cell_radius
 strut_radius = args.strut_radius
 delta_F = args.delta_F
+min_contractile_force = args.min_contractile_force
 perturbance_dist = args.perturbance_dist
 random_state = args.random_state
 num_attachments = args.num_attachments
@@ -169,6 +171,7 @@ try:
         "MAX_CELL_RADIUS": max_cell_radius,
         "STRUT_RADIUS": strut_radius,
         "DELTA_F": delta_F,
+        "MIN_CONTRACTILE_FORCE": min_contractile_force,
         "PERTURBANCE_DIST": perturbance_dist,
         "RANDOM_STATE": random_state,
         "NUM_ATTACHMENTS": num_attachments,
@@ -247,10 +250,11 @@ try:
         print("Job failed. Check the Slurm output for details.")
     else:
         print("Job completed successfully")
+        
+    if not verbose:
         out_file = f"FEM_SOLVER_folder/FEM_SOLVE-{job_id}.out"
         ssh.exec_command(f"rm -f {out_file}")
         
-   
 
     # Set up a SHH file transfer protocal (SFTP)
     if step_num == 0:
