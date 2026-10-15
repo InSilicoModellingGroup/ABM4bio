@@ -1701,6 +1701,46 @@ void init_cells(bdm::Simulation& sim,
             ) = 3600.0;
           }
 
+          if (!params.have_parameter<int>(
+                  mech_base + "/detachment_integrin_count")) {
+            params.set<int>(mech_base + "/detachment_integrin_count") = 1000;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_reference_force_per_bond")) {
+            params.set<double>(mech_base + "/detachment_reference_force_per_bond") = 29.0;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_koff_a1")) {
+            params.set<double>(mech_base + "/detachment_koff_a1") = 2.2;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_koff_b1")) {
+            params.set<double>(mech_base + "/detachment_koff_b1") = 29.9;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_koff_c1")) {
+            params.set<double>(mech_base + "/detachment_koff_c1") = 8.4;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_koff_a2")) {
+            params.set<double>(mech_base + "/detachment_koff_a2") = 1.2;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_koff_b2")) {
+            params.set<double>(mech_base + "/detachment_koff_b2") = 16.2;
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_koff_c2")) {
+            params.set<double>(mech_base + "/detachment_koff_c2") = 37.8;
+          }
+
           const double recommended_max_cell_matrix_time_step =
               params.get<double>(
                   mech_base +
@@ -1727,6 +1767,39 @@ void init_cells(bdm::Simulation& sim,
                   "Consider reducing time_step for a more realistic temporal "
                   "resolution."
                 << std::endl;
+          }
+
+          // Force-dependent attachment lifetime parameters
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_f_opt")) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_f_opt\" must be provided"
+            );
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_t_opt")) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_t_opt\" must be provided"
+            );
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_t_0")) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_t_0\" must be provided"
+            );
+          }
+
+          if (!params.have_parameter<double>(
+                  mech_base + "/detachment_sigma_2")) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_sigma_2\" must be provided"
+            );
           }
 
           // ---------------------------------------------------------------------
@@ -1828,6 +1901,78 @@ void init_cells(bdm::Simulation& sim,
                 "/reference_detachment_time\" must be > 0"
             );
           }
+
+          const double detachment_f_opt =
+            params.get<double>(
+                mech_base + "/detachment_f_opt"
+            );
+
+        const double detachment_t_opt =
+            params.get<double>(
+                mech_base + "/detachment_t_opt"
+            );
+
+        const double detachment_t_0 =
+            params.get<double>(
+                mech_base + "/detachment_t_0"
+            );
+
+        const double detachment_sigma_2 =
+            params.get<double>(
+                mech_base + "/detachment_sigma_2"
+            );
+
+        if (!std::isfinite(detachment_f_opt) ||
+            detachment_f_opt <= 0.0) {
+          ABORT_(
+              "model parameter \"" + mech_base +
+              "/detachment_f_opt\" must be finite and > 0"
+          );
+        }
+
+        if (!std::isfinite(detachment_t_opt) ||
+            detachment_t_opt <= 0.0) {
+          ABORT_(
+              "model parameter \"" + mech_base +
+              "/detachment_t_opt\" must be finite and > 0"
+          );
+        }
+
+        if (!std::isfinite(detachment_t_0) ||
+            detachment_t_0 <= 0.0 ||
+            detachment_t_0 >= detachment_t_opt) {
+          ABORT_(
+              "model parameter \"" + mech_base +
+              "/detachment_t_0\" must be > 0 and < detachment_t_opt"
+          );
+        }
+
+        if (!std::isfinite(detachment_sigma_2) ||
+            detachment_sigma_2 <= 0.0) {
+          ABORT_(
+              "model parameter \"" + mech_base +
+              "/detachment_sigma_2\" must be finite and > 0"
+          );
+        }
+
+        const double detachment_sigma_1 =
+            detachment_f_opt /
+            std::sqrt(
+                -std::log(
+                    detachment_t_0 /
+                    detachment_t_opt
+                )
+            );
+
+        ASSERT_(
+            std::isfinite(detachment_sigma_1) &&
+            detachment_sigma_1 > 0.0,
+            "Calculated detachment sigma_1 is invalid"
+        );
+
+        params.set<double>(
+            mech_base + "/detachment_sigma_1"
+        ) = detachment_sigma_1;
 
           // ---------------------------------------------------------------------
           // Attachment formation count parameters

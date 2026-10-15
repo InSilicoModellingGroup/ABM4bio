@@ -1412,35 +1412,41 @@ class CellMatrixInteraction {
             i < original_attachment_records.size();
             ++i) {
 
-        const auto& before =
-            original_attachment_records[i];
+            const auto& before =
+                original_attachment_records[i];
 
-        const auto& after =
-            cell->GetAttachmentRecord(i);
+            const auto& after =
+                cell->GetAttachmentRecord(i);
 
-        ASSERT_(
-            after.node_id == before.node_id,
-            "Attachment synchronisation changed the persistent node ID for cell "
-            + abm_cell_id
-        );
+            ASSERT_(
+                after.node_id == before.node_id,
+                "Attachment synchronisation changed the persistent node ID for cell "
+                + abm_cell_id
+            );
 
-        ASSERT_(
-            after.k_ecm == before.k_ecm,
-            "Attachment synchronisation changed k_ecm for cell "
-            + abm_cell_id
-        );
+            ASSERT_(
+                after.k_ecm == before.k_ecm,
+                "Attachment synchronisation changed k_ecm for cell "
+                + abm_cell_id
+            );
 
-        ASSERT_(
-            after.has_valid_k_ecm == before.has_valid_k_ecm,
-            "Attachment synchronisation changed k_ecm validity for cell "
-            + abm_cell_id
-        );
+            ASSERT_(
+                after.has_valid_k_ecm == before.has_valid_k_ecm,
+                "Attachment synchronisation changed k_ecm validity for cell "
+                + abm_cell_id
+            );
 
-        ASSERT_(
-            after.newly_formed == before.newly_formed,
-            "Attachment synchronisation changed newly_formed for cell "
-            + abm_cell_id
-        );
+            ASSERT_(
+                after.newly_formed == before.newly_formed,
+                "Attachment synchronisation changed newly_formed for cell "
+                + abm_cell_id
+            );
+
+            ASSERT_(
+                after.attachment_age == before.attachment_age,
+                "Attachment synchronisation changed attachment age for cell "
+                + abm_cell_id
+            );
         }
 
         ASSERT_(
@@ -1887,24 +1893,40 @@ class CellMatrixInteraction {
             std::vector<bdm::BiologicalCell::AttachmentRecord>
             attachment_records;
 
+            const auto previous_attachment_records = cell->GetAttachmentRecords();
+
             attachment_records.reserve(n_attach);
 
             for (int a = 0; a < n_attach; ++a) {
 
-            bdm::BiologicalCell::AttachmentRecord record;
+                bdm::BiologicalCell::AttachmentRecord record;
 
-            record.node_id = attachment_node_ids[a];
-            record.position = attachment_points[a];
-            record.k_ecm = k_values[a];
+                record.node_id = attachment_node_ids[a];
+                record.position = attachment_points[a];
+                record.k_ecm = k_values[a];
 
-            // FEM-returned attachments have a calculated k_ecm value.
-            record.has_valid_k_ecm = true;
+                // FEM-returned attachments have a calculated k_ecm value.
+                record.has_valid_k_ecm = true;
 
-            // These attachments were returned by the FEM rather than newly formed
-            // during the current ABM step.
-            record.newly_formed = false;
+                // New FEM-created attachments begin at age zero.
+                // Retained attachments preserve their existing age.
+                record.attachment_age = 0.0;
 
-            attachment_records.push_back(record);
+                for (const auto& previous_record :
+                    previous_attachment_records) {
+
+                    if (previous_record.node_id ==
+                        record.node_id) {
+
+                        record.attachment_age =
+                            previous_record.attachment_age;
+
+                        break;
+                    }
+                }
+
+                record.newly_formed = false;
+                attachment_records.push_back(record);
             }
 
             // -------------------------------------------------------------------------

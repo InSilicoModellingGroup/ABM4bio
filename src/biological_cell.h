@@ -130,6 +130,9 @@ public:
         // True only after k_ecm has been calculated by the FEM.
         bool has_valid_k_ecm = false;
 
+        // Time in seconds since this attachment formed.
+        double attachment_age = 0.0;
+
         // True when the attachment was formed by the ABM after the previous FEM step.
         bool newly_formed = false;
     };
@@ -143,7 +146,7 @@ public:
         // FEM-calculated stiffness between the two attachment nodes.
         double k_ce = 0.0;
 
-        // Trye once this pair has received a valid FEM-calculated k_ce value.
+        // True once this pair has received a valid FEM-calculated k_ce value.
         bool has_valid_k_ce = false;
 
         // Contractile force calculated from this pair's k_ce.
@@ -330,36 +333,33 @@ public:
         * misaligned.
         */
 
-        // -------------------------------------------------------------------------
-        // Step 1: Validate the records
-        // -------------------------------------------------------------------------
-
+        //  Validate the records
         for (std::size_t i = 0; i < records.size(); ++i) {
-        ASSERT_(
-            records[i].node_id > 0,
-            "AttachmentRecord contains a non-positive scaffold node ID"
-        );
 
-        // A cell must not attach to the same scaffold node more than once.
-        for (std::size_t j = i + 1; j < records.size(); ++j) {
             ASSERT_(
-            records[i].node_id != records[j].node_id,
-            "AttachmentRecord contains duplicate scaffold node ID "
-            + std::to_string(records[i].node_id)
+                records[i].node_id > 0,
+                "AttachmentRecord contains a non-positive scaffold node ID"
             );
-        }
+
+            ASSERT_(
+                std::isfinite(records[i].attachment_age) &&
+                records[i].attachment_age >= 0.0,
+                "AttachmentRecord contains an invalid attachment age"
+            );
+
+            // A cell must not attach to the same scaffold node more than once.
+            for (std::size_t j = i + 1; j < records.size(); ++j) {
+                ASSERT_(
+                records[i].node_id != records[j].node_id,
+                "AttachmentRecord contains duplicate scaffold node ID "
+                + std::to_string(records[i].node_id)
+                );
+            }
         }
 
-        // -------------------------------------------------------------------------
-        // Step 2: Replace the current attachment state
-        // -------------------------------------------------------------------------
-
+        // Replace the current attachment state
         attachment_records_ = records;
     }
-
-    // -----------------------------------------------------------------------------
-    // Update established attachments from the ABM
-    // -----------------------------------------------------------------------------
 
     void UpdateAttachmentRecordsFromAbm(
         const std::vector<AttachmentRecord>& records) {
@@ -424,6 +424,33 @@ public:
 
     std::size_t GetNumberOfAttachmentRecords() const {
         return attachment_records_.size();
+    }
+
+    void IncrementAttachmentAges(const double time_step) {
+
+        /*
+        * Advance the age of every currently retained attachment
+        * by one ABM timestep.
+        */
+
+        ASSERT_(
+            std::isfinite(time_step) &&
+            time_step > 0.0,
+            "Attachment age update requires a positive timestep"
+        );
+
+        for (auto& attachment :
+            attachment_records_) {
+
+            attachment.attachment_age +=
+                time_step;
+
+            ASSERT_(
+                std::isfinite(attachment.attachment_age) &&
+                attachment.attachment_age >= 0.0,
+                "Attachment age update produced an invalid age"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------------
@@ -746,20 +773,400 @@ public:
         pair_mechanics_records_[index].contractile_force = contractile_force;
     }
 
+    bdm::Double3 CalculateAttachmentContractileForceVector(
+            const int node_id) const {
+
+        /*
+        * Calculate the resultant contractile-force vector acting on one
+        * attachment node from every pair connected to that node.
+        */
+
+        ASSERT_(
+            node_id > 0,
+            "Attachment force calculation received a non-positive node ID"
+        );
+
+        // Find the requested attachment
+        const AttachmentRecord* target_attachment = nullptr;
+
+        for (const auto& attachment : attachment_records_) {
+
+            if (attachment.node_id == node_id) {
+                target_attachment = &attachment;
+                break;
+            }
+        }
+
+        ASSERT_(
+            target_attachment != nullptr,
+            "Attachment force calculation could not find node ID "
+            + std::to_string(node_id)
+        );
+
+        bdm::Double3 resultant_force = {0.0, 0.0, 0.0};
+
+        // Sum every pair force connected to this node
+        for (const auto& pair : pair_mechanics_records_) {
+
+            if (pair.node_id_a != node_id &&
+                pair.node_id_b != node_id) {
+            continue;
+            }
+
+            ASSERT_(
+                std::isfinite(pair.contractile_force) &&
+                pair.contractile_force >= 0.0,
+                "Attachment force calculation encountered invalid pair force"
+            );
+
+            const int other_node_id =
+                pair.node_id_a == node_id
+                    ? pair.node_id_b
+                    : pair.node_id_a;
+
+            const AttachmentRecord* other_attachment = nullptr;
+
+            for (const auto& attachment : attachment_records_) {
+
+                if (attachment.node_id == other_node_id) {
+                    other_attachment = &attachment;
+                    break;
+                }
+            }
+
+            ASSERT_(
+                other_attachment != nullptr,
+                "Attachment force calculation could not find paired node ID "
+                + std::to_string(other_node_id)
+            );
+
+            // Contractile force acts from this node towards the paired node.
+            const bdm::Double3 pair_direction =
+                other_attachment->position -
+                target_attachment->position;
+
+            const double pair_distance = L2norm(pair_direction);
+
+            ASSERT_(
+                pair_distance > 0.0,
+                "Attachment force calculation encountered coincident pair nodes"
+            );
+
+            const bdm::Double3 unit_direction = {
+                pair_direction[0] / pair_distance,
+                pair_direction[1] / pair_distance,
+                pair_direction[2] / pair_distance
+            };
+
+            resultant_force[0] += pair.contractile_force * unit_direction[0];
+
+            resultant_force[1] += pair.contractile_force * unit_direction[1];
+
+            resultant_force[2] += pair.contractile_force * unit_direction[2];
+        }
+
+        return resultant_force;
+    }
+
+    double CalculateAttachmentContractileForceMagnitude(
+        const int node_id) const {
+
+        const bdm::Double3 force_vector =
+            CalculateAttachmentContractileForceVector(
+                node_id
+            );
+
+        return L2norm(force_vector);
+    }
+
+    std::vector<double> CalculateAttachmentContractileForceMagnitudes() const {
+
+        /*
+        * Return one resultant contractile-force magnitude per attachment.
+        *
+        * The returned vector follows exactly the same ordering as
+        * attachment_records_.
+        */
+
+        std::vector<double> force_magnitudes;
+
+        force_magnitudes.reserve(
+            attachment_records_.size()
+        );
+
+        for (const auto& attachment :
+            attachment_records_) {
+
+            ASSERT_(
+                attachment.node_id > 0,
+                "Attachment force calculation encountered "
+                "a non-positive node ID"
+            );
+
+            const double force_magnitude =
+                this->CalculateAttachmentContractileForceMagnitude(
+                    attachment.node_id
+                );
+
+            ASSERT_(
+                std::isfinite(force_magnitude) &&
+                force_magnitude >= 0.0,
+                "Attachment force calculation produced "
+                "an invalid resultant magnitude"
+            );
+
+            force_magnitudes.push_back(
+                force_magnitude
+            );
+        }
+
+        ASSERT_(
+            force_magnitudes.size() ==
+                attachment_records_.size(),
+            "Attachment force magnitude count does not "
+            "match attachment count"
+        );
+
+        return force_magnitudes;
+    }
+
+    double CalculateAttachmentLifetimeFromForce(
+        const double force,
+        const double f_opt,
+        const double t_opt,
+        const double t_0,
+        const double sigma_2) const {
+
+        /*
+        * Calculate the force-dependent attachment lifetime T(F).
+        *
+        * Force quantities must use the same units.
+        */
+
+        ASSERT_(
+            std::isfinite(force) && force >= 0.0,
+            "Attachment lifetime calculation requires non-negative force"
+        );
+
+        ASSERT_(
+            std::isfinite(f_opt) && f_opt > 0.0,
+            "Attachment lifetime calculation requires positive Fopt"
+        );
+
+        ASSERT_(
+            std::isfinite(t_opt) && t_opt > 0.0,
+            "Attachment lifetime calculation requires positive Topt"
+        );
+
+        ASSERT_(
+            std::isfinite(t_0) && t_0 > 0.0 && t_0 < t_opt,
+            "Attachment lifetime calculation requires 0 < T0 < Topt"
+        );
+
+        ASSERT_(
+            std::isfinite(sigma_2) && sigma_2 > 0.0,
+            "Attachment lifetime calculation requires positive sigma2"
+        );
+
+        // Calculate sigma1 from T(0) = T0
+        const double sigma_1 =
+            f_opt /
+            std::sqrt(
+                -std::log(
+                    t_0 / t_opt
+                )
+            );
+
+        ASSERT_(
+            std::isfinite(sigma_1) && sigma_1 > 0.0,
+            "Attachment lifetime calculation produced invalid sigma1"
+        );
+
+        // Select the width on either side of the optimum
+        const double sigma =
+            force <= f_opt
+                ? sigma_1
+                : sigma_2;
+
+        // Calculate T(F)
+        const double normalised_force =
+            (force - f_opt) / sigma;
+
+        const double lifetime =
+            t_opt *
+            std::exp(
+                -normalised_force *
+                normalised_force
+            );
+
+        ASSERT_(
+            std::isfinite(lifetime) && lifetime > 0.0,
+            "Attachment lifetime calculation produced invalid T(F)"
+        );
+
+        return lifetime;
+    }
+
+    double CalculateCatchSlipOffRate(
+        const double force_per_bond_pN,
+        const double a1,
+        const double b1,
+        const double c1,
+        const double a2,
+        const double b2,
+        const double c2) const {
+
+        ASSERT_(
+            std::isfinite(force_per_bond_pN) &&
+            force_per_bond_pN >= 0.0,
+            "Catch-slip calculation requires non-negative force"
+        );
+
+        ASSERT_(a1 > 0.0 && a2 > 0.0,
+                "Catch-slip amplitudes must be positive");
+
+        ASSERT_(c1 > 0.0 && c2 > 0.0,
+                "Catch-slip widths must be positive");
+
+        const double term_1 =
+            a1 * std::exp(
+                -std::pow(
+                    (force_per_bond_pN - b1) / c1,
+                    2.0
+                )
+            );
+
+        const double term_2 =
+            a2 * std::exp(
+                -std::pow(
+                    (force_per_bond_pN - b2) / c2,
+                    2.0
+                )
+            );
+
+        const double k_off =
+            term_1 + term_2;
+
+        ASSERT_(
+            std::isfinite(k_off) &&
+            k_off > 0.0,
+            "Catch-slip calculation produced invalid k_off"
+        );
+
+        return k_off;
+    }
+
+    double CalculateForceBasedDetachmentProbability(
+            const double attachment_force_nN,
+            const int integrin_count,
+            const double reference_force_per_bond_pN,
+            const double reference_fa_lifetime,
+            const double a1,
+            const double b1,
+            const double c1,
+            const double a2,
+            const double b2,
+            const double c2,
+            const double time_step) const {
+
+        ASSERT_(
+            std::isfinite(attachment_force_nN) &&
+            attachment_force_nN >= 0.0,
+            "Attachment detachment requires non-negative force"
+        );
+
+        ASSERT_(
+            integrin_count > 0,
+            "Attachment detachment requires a positive integrin count"
+        );
+
+        ASSERT_(
+            reference_fa_lifetime > 0.0,
+            "Reference focal-adhesion lifetime must be positive"
+        );
+
+        ASSERT_(
+            time_step > 0.0,
+            "Attachment detachment requires a positive timestep"
+        );
+
+        // Convert attachment force from nN to pN per integrin
+        const double force_per_bond_pN =
+            attachment_force_nN *
+            1000.0 /
+            static_cast<double>(integrin_count);
+
+        // Calculate the raw catch-slip lifetimes
+        const double k_off =
+            CalculateCatchSlipOffRate(
+                force_per_bond_pN,
+                a1, b1, c1,
+                a2, b2, c2
+            );
+
+        const double reference_k_off =
+            CalculateCatchSlipOffRate(
+                reference_force_per_bond_pN,
+                a1, b1, c1,
+                a2, b2, c2
+            );
+
+        const double raw_lifetime =
+            1.0 / k_off;
+
+        const double raw_reference_lifetime =
+            1.0 / reference_k_off;
+
+        // Scale bond lifetime to focal-adhesion lifetime
+        const double lifetime_scale =
+            reference_fa_lifetime /
+            raw_reference_lifetime;
+
+        const double focal_adhesion_lifetime =
+            lifetime_scale *
+            raw_lifetime;
+
+        ASSERT_(
+            std::isfinite(focal_adhesion_lifetime) &&
+            focal_adhesion_lifetime > 0.0,
+            "Calculated focal-adhesion lifetime is invalid"
+        );
+
+        // Convert lifetime to timestep detachment probability
+        const double detachment_probability =
+            1.0 -
+            std::exp(
+                -time_step /
+                focal_adhesion_lifetime
+            );
+
+        ASSERT_(
+            detachment_probability >= 0.0 &&
+            detachment_probability <= 1.0,
+            "Force-based detachment probability is outside [0, 1]"
+        );
+
+        return detachment_probability;
+    }
+
     void SetKce(double k_ce) {
         // Matrix stiffness perceived by a cell
         k_ce_ = k_ce;
     }
+
     double GetKce() const {
         return k_ce_;
     }
+
     // Contractile force of the cell is adaptable
     void SetContractileForce(double contractile_force) {
         contractile_force_ = contractile_force;
     }
+
     double GetContractileForce() const {
         return contractile_force_;
     }
+
     // Cell state for coupled fem solver (cell-matrix mechanics)
     void SetCellState(const std::string& state) {
         ASSERT_(
@@ -1077,27 +1484,23 @@ public:
     }
 
     inline
-    std::vector<double> CalculateAttachmentDetachmentProbabilities(
-        const double optimum_k_ecm,
-        const double low_k_ecm_slope,
-        const double high_k_ecm_slope,
-        const double min_probability,
-        const double max_probability,
-        const double k_ecm_weight,
-        const double time_step,
-        const double reference_detachment_time) const {
-        /*
-        * Function goal
-        * -------------
-        * Calculate the timestep-adjusted detachment probability for every current
-        * attachment using its latest valid local scaffold stiffness (k_ecm).
-        *
-        * Returned probabilities follow the same order as attachment_records_.
-        */
+    std::vector<double>
+    CalculateAttachmentDetachmentProbabilities(
+        const int integrin_count,
+        const double reference_force_per_bond_pN,
+        const double reference_fa_lifetime,
+        const double a1,
+        const double b1,
+        const double c1,
+        const double a2,
+        const double b2,
+        const double c2,
+        const double time_step) const {
 
-        // -------------------------------------------------------------------------
-        // Step 1: Validate the current cell-matrix state
-        // -------------------------------------------------------------------------
+        /*
+        * Calculate one force-dependent detachment probability for every
+        * attachment using its resultant contractile force.
+        */
 
         ASSERT_(
             cell_matrix_lifecycle_status_ ==
@@ -1110,9 +1513,8 @@ public:
             "Attachment detachment probabilities require attachment records"
         );
 
-        // A cell must always retain at least one attachment.
         if (attachment_records_.size() == 1) {
-        return {0.0};
+            return {0.0};
         }
 
         ASSERT_(
@@ -1120,66 +1522,50 @@ public:
             "Attachment detachment probabilities require current FEM mechanics"
         );
 
-        // -------------------------------------------------------------------------
-        // Step 2: Calculate one probability per attachment
-        // -------------------------------------------------------------------------
+        // Calculate resultant force at every attachment
+        const std::vector<double>
+            attachment_force_magnitudes =
+                this->CalculateAttachmentContractileForceMagnitudes();
 
+        ASSERT_(
+            attachment_force_magnitudes.size() ==
+                attachment_records_.size(),
+            "Attachment force count does not match attachment count"
+        );
+
+        // Convert each force into a detachment probability
         std::vector<double> detachment_probabilities;
 
         detachment_probabilities.reserve(
             attachment_records_.size()
         );
 
-        for (const auto& attachment : attachment_records_) {
-        ASSERT_(
-            attachment.node_id > 0,
-            "Attachment detachment probability encountered an invalid node ID"
-        );
+        for (std::size_t i = 0;
+            i < attachment_records_.size();
+            ++i) {
 
-        ASSERT_(
-            attachment.has_valid_k_ecm,
-            "Attachment detachment probability requires valid k_ecm"
-        );
+            const double attachment_force =
+                attachment_force_magnitudes[i];
 
-        ASSERT_(
-            std::isfinite(attachment.k_ecm),
-            "Attachment detachment probability encountered non-finite k_ecm"
-        );
+            const double probability =
+                this->CalculateForceBasedDetachmentProbability(
+                    attachment_force,
+                    integrin_count,
+                    reference_force_per_bond_pN,
+                    reference_fa_lifetime,
+                    a1,
+                    b1,
+                    c1,
+                    a2,
+                    b2,
+                    c2,
+                    time_step
+                );
 
-        ASSERT_(
-            attachment.k_ecm >= 0.0,
-            "Attachment detachment probability encountered negative k_ecm"
-        );
-
-        const double reference_probability =
-            this->CalculateReferenceDetachmentProbability(
-                attachment.k_ecm,
-                optimum_k_ecm,
-                low_k_ecm_slope,
-                high_k_ecm_slope,
-                min_probability,
-                max_probability,
-                k_ecm_weight
+            detachment_probabilities.push_back(
+                probability
             );
-
-        const double time_adjusted_probability =
-            this->CalculateTimeAdjustedDetachmentProbability(
-                reference_probability,
-                time_step,
-                reference_detachment_time
-            );
-
-        detachment_probabilities.push_back(
-            time_adjusted_probability
-        );
         }
-
-        ASSERT_(
-            detachment_probabilities.size() ==
-                attachment_records_.size(),
-            "Attachment detachment probability count does not match attachment "
-            "record count"
-        );
 
         return detachment_probabilities;
     }
@@ -1437,14 +1823,16 @@ public:
 
     inline
     bool AttemptAttachmentDetachment(
-        const double optimum_k_ecm,
-        const double low_k_ecm_slope,
-        const double high_k_ecm_slope,
-        const double min_probability,
-        const double max_probability,
-        const double k_ecm_weight,
-        const double time_step,
-        const double reference_detachment_time) {
+        const int integrin_count,
+        const double reference_force_per_bond_pN,
+        const double reference_fa_lifetime,
+        const double a1,
+        const double b1,
+        const double c1,
+        const double a2,
+        const double b2,
+        const double c2,
+        const double time_step) {
         /*
         * Function goal
         * -------------
@@ -1480,14 +1868,16 @@ public:
 
         const std::vector<double> detachment_probabilities =
             this->CalculateAttachmentDetachmentProbabilities(
-                optimum_k_ecm,
-                low_k_ecm_slope,
-                high_k_ecm_slope,
-                min_probability,
-                max_probability,
-                k_ecm_weight,
-                time_step,
-                reference_detachment_time
+                integrin_count,
+                reference_force_per_bond_pN,
+                reference_fa_lifetime,
+                a1,
+                b1,
+                c1,
+                a2,
+                b2,
+                c2,
+                time_step
             );
 
         ASSERT_(
@@ -1562,32 +1952,26 @@ public:
         * Returns true when at least one attachment is removed.
         */
 
-        // -------------------------------------------------------------------------
-        // Step 1: Exclude cells that cannot undergo attachment turnover
-        // -------------------------------------------------------------------------
-
+        // Exclude cells that cannot undergo attachment turnover
         if (this->GetPhenotype() < 1) {
-        return false;
+            return false;
         }
 
         if (cell_matrix_lifecycle_status_ !=
             CellMatrixLifecycleStatus::kEstablished) {
-        return false;
+            return false;
         }
 
         if (attachment_records_.size() <= 1) {
-        return false;
+            return false;
         }
 
         // Do not use attachment mechanics that are waiting for FEM recalculation.
         if (requires_mechanics_recalculation_) {
-        return false;
+            return false;
         }
 
-        // -------------------------------------------------------------------------
-        // Step 2: Read the phenotype mechanics configuration
-        // -------------------------------------------------------------------------
-
+        // Read the phenotype mechanics configuration
         const std::string& phenotype_name =
             this->params()->get<std::string>(
                 "phenotype_ID/" +
@@ -1606,65 +1990,123 @@ public:
             );
 
         if (!mechanics_enabled) {
-        return false;
-        }
-
-        // -------------------------------------------------------------------------
-        // Step 3: Confirm that current attachment stiffness values are usable
-        // -------------------------------------------------------------------------
-
-        for (const auto& attachment : attachment_records_) {
-        ASSERT_(
-            attachment.node_id > 0,
-            "Attachment detachment encountered a non-positive node ID"
-        );
-
-        if (!attachment.has_valid_k_ecm) {
             return false;
         }
 
-        ASSERT_(
-            std::isfinite(attachment.k_ecm) &&
-            attachment.k_ecm >= 0.0,
-            "Attachment detachment encountered invalid k_ecm"
-        );
+        if (this->params()->get<bool>(
+            mech_base + "/verbose")) {
+
+            const std::vector<double>
+                attachment_force_magnitudes =
+                    this->CalculateAttachmentContractileForceMagnitudes();
+
+            for (std::size_t i = 0;
+                    i < attachment_records_.size();
+                    ++i) {
+
+                const auto& attachment =
+                    attachment_records_[i];
+
+                const bdm::Double3 force_vector =
+                    this->CalculateAttachmentContractileForceVector(
+                        attachment.node_id
+                    );
+
+                const double force_magnitude =
+                    attachment_force_magnitudes[i];
+
+                std::ostringstream debug_line;
+
+                debug_line
+                    << "    node=" << attachment.node_id
+                    << " force_vector=("
+                    << force_vector[0] << ", "
+                    << force_vector[1] << ", "
+                    << force_vector[2] << ")"
+                    << " magnitude=" << force_magnitude
+                    << "\n";
+
+                std::cout << debug_line.str();
+            }
         }
 
-        // -------------------------------------------------------------------------
-        // Step 4: Read the detachment parameters
-        // -------------------------------------------------------------------------
+        // Confirm that current pair mechanics are usable
+        const std::size_t expected_pair_count =
+            attachment_records_.size() *
+            (attachment_records_.size() - 1) /
+            2;
 
-        const double optimum_k_ecm =
-            this->params()->get<double>(
-                mech_base + "/detachment_optimum_kecm"
+        ASSERT_(
+            pair_mechanics_records_.size() ==
+                expected_pair_count,
+            "Attachment detachment pair count does not match attachment count"
+        );
+
+        for (const auto& pair :
+            pair_mechanics_records_) {
+
+            ASSERT_(
+                pair.node_id_a > 0 &&
+                pair.node_id_b > 0 &&
+                pair.node_id_a != pair.node_id_b,
+                "Attachment detachment encountered invalid pair node IDs"
             );
 
-        const double low_k_ecm_slope =
-            this->params()->get<double>(
-                mech_base + "/detachment_low_kecm_slope"
+            ASSERT_(
+                pair.has_valid_k_ce,
+                "Attachment detachment requires valid pair k_ce"
             );
 
-        const double high_k_ecm_slope =
-            this->params()->get<double>(
-                mech_base + "/detachment_high_kecm_slope"
+            ASSERT_(
+                std::isfinite(pair.contractile_force) &&
+                pair.contractile_force >= 0.0,
+                "Attachment detachment encountered invalid pair force"
+            );
+        }
+
+        // Read the detachment parameters
+        const int integrin_count =
+            this->params()->get<int>(
+                mech_base + "/detachment_integrin_count"
             );
 
-        const double min_probability =
+        const double reference_force_per_bond_pN =
             this->params()->get<double>(
-                mech_base + "/detachment_min_probability"
+                mech_base +
+                "/detachment_reference_force_per_bond"
             );
 
-        const double max_probability =
+        const double a1 =
             this->params()->get<double>(
-                mech_base + "/detachment_max_probability"
+                mech_base + "/detachment_koff_a1"
             );
 
-        const double k_ecm_weight =
+        const double b1 =
             this->params()->get<double>(
-                mech_base + "/detachment_kecm_weight"
+                mech_base + "/detachment_koff_b1"
             );
 
-        const double reference_detachment_time =
+        const double c1 =
+            this->params()->get<double>(
+                mech_base + "/detachment_koff_c1"
+            );
+
+        const double a2 =
+            this->params()->get<double>(
+                mech_base + "/detachment_koff_a2"
+            );
+
+        const double b2 =
+            this->params()->get<double>(
+                mech_base + "/detachment_koff_b2"
+            );
+
+        const double c2 =
+            this->params()->get<double>(
+                mech_base + "/detachment_koff_c2"
+            );
+
+        const double reference_fa_lifetime =
             this->params()->get<double>(
                 mech_base + "/reference_detachment_time"
             );
@@ -1674,19 +2116,107 @@ public:
                 "time_step"
             );
 
-        // -------------------------------------------------------------------------
-        // Step 5: Attempt stochastic detachment
-        // -------------------------------------------------------------------------
+        const double f_opt =
+            this->params()->get<double>(
+                mech_base + "/detachment_f_opt"
+            );
 
+        const double t_opt =
+            this->params()->get<double>(
+                mech_base + "/detachment_t_opt"
+            );
+
+        const double t_0 =
+            this->params()->get<double>(
+                mech_base + "/detachment_t_0"
+            );
+
+        const double sigma_2 =
+            this->params()->get<double>(
+                mech_base + "/detachment_sigma_2"
+            );
+
+        if (this->params()->get<bool>(
+                mech_base + "/verbose")) {
+
+            const std::vector<double>
+                attachment_force_magnitudes =
+                    this->CalculateAttachmentContractileForceMagnitudes();
+
+            const double sigma_1 =
+                f_opt /
+                std::sqrt(
+                    -std::log(
+                        t_0 /
+                        t_opt
+                    )
+                );
+
+            const double lifetime_at_zero =
+                this->CalculateAttachmentLifetimeFromForce(
+                    0.0,
+                    f_opt,
+                    t_opt,
+                    t_0,
+                    sigma_2
+                );
+
+            const double lifetime_at_optimum =
+                this->CalculateAttachmentLifetimeFromForce(
+                    f_opt,
+                    f_opt,
+                    t_opt,
+                    t_0,
+                    sigma_2
+                );
+
+            std::ostringstream lifetime_debug;
+
+            lifetime_debug
+                << "[ATTACHMENT LIFETIMES] cell="
+                << this->GetUid()
+                << " sigma1=" << sigma_1
+                << " T(0)=" << lifetime_at_zero
+                << " T(Fopt)=" << lifetime_at_optimum
+                << "\n";
+
+            for (std::size_t i = 0;
+                i < attachment_records_.size();
+                ++i) {
+
+                const double force =
+                    attachment_force_magnitudes[i];
+
+                const double lifetime =
+                    this->CalculateAttachmentLifetimeFromForce(
+                        force,
+                        f_opt,
+                        t_opt,
+                        t_0,
+                        sigma_2
+                    );
+
+                lifetime_debug
+                    << "    node=" << attachment_records_[i].node_id
+                    << " force=" << force << " nN"
+                    << " T(F)=" << lifetime << " s\n";
+            }
+
+            std::cout << lifetime_debug.str();
+        }
+
+        // Attempt stochastic detachment
         return this->AttemptAttachmentDetachment(
-            optimum_k_ecm,
-            low_k_ecm_slope,
-            high_k_ecm_slope,
-            min_probability,
-            max_probability,
-            k_ecm_weight,
-            time_step,
-            reference_detachment_time
+            integrin_count,
+            reference_force_per_bond_pN,
+            reference_fa_lifetime,
+            a1,
+            b1,
+            c1,
+            a2,
+            b2,
+            c2,
+            time_step
         );
     }
 
@@ -1947,12 +2477,12 @@ public:
         );
     }
 
-        inline
-        double SegmentDistance(
-            const bdm::Double3& segment_1_start,
-            const bdm::Double3& segment_1_end,
-            const bdm::Double3& segment_2_start,
-            const bdm::Double3& segment_2_end) const {
+    inline
+    double SegmentDistance(
+        const bdm::Double3& segment_1_start,
+        const bdm::Double3& segment_1_end,
+        const bdm::Double3& segment_2_start,
+        const bdm::Double3& segment_2_end) const {
         /*
         * Function goal
         * -------------
@@ -2128,13 +2658,13 @@ public:
         );
 
         return distance;
-        }
+    }
 
-        inline
-        double PointSegmentDistance(
-            const bdm::Double3& point,
-            const bdm::Double3& segment_start,
-            const bdm::Double3& segment_end) const {
+    inline
+    double PointSegmentDistance(
+        const bdm::Double3& point,
+        const bdm::Double3& segment_start,
+        const bdm::Double3& segment_end) const {
         /*
         * Function goal
         * -------------
@@ -2207,13 +2737,13 @@ public:
         );
 
         return distance;
-        }
+    }
         
-        inline
-        bool ScaffoldPathObstructed(
-            const ObstacleScaffold& active_scaffold,
-            int candidate_node_id,
-            double additional_clearance) const {
+    inline
+    bool ScaffoldPathObstructed(
+        const ObstacleScaffold& active_scaffold,
+        int candidate_node_id,
+        double additional_clearance) const {
         /*
         * Function goal
         * -------------
@@ -2351,12 +2881,12 @@ public:
         }
 
         return false;
-        }
+    }
         
-        inline
-        bool CellPathObstructed(
-            const bdm::Double3& candidate_position,
-            const double additional_clearance) const {
+    inline
+    bool CellPathObstructed(
+        const bdm::Double3& candidate_position,
+        const double additional_clearance) const {
         /*
         * Function goal
         * -------------
@@ -2477,15 +3007,15 @@ public:
         );
 
         return obstructed;
-        }
+    }
 
-        inline
-        std::vector<int> GenerateAttachmentCandidateNodeIds(
-            const ObstacleScaffold& active_scaffold,
-            const double min_attachment_separation,
-            const double max_attachment_separation,
-            const double candidate_scaffold_clearance,
-            const double candidate_cell_clearance) const {
+    inline
+    std::vector<int> GenerateAttachmentCandidateNodeIds(
+        const ObstacleScaffold& active_scaffold,
+        const double min_attachment_separation,
+        const double max_attachment_separation,
+        const double candidate_scaffold_clearance,
+        const double candidate_cell_clearance) const {
         /*
         * Function goal
         * -------------
@@ -2963,15 +3493,15 @@ public:
         );
 
         return persistence_weight;
-        }
+    }
         
-        inline
-        std::vector<double> CalculateAttachmentCandidateWeights(
-            const ObstacleScaffold& active_scaffold,
-            const std::vector<int>& candidate_node_ids,
-            const bdm::Double3& recent_movement,
-            const double distance_sensitivity,
-            const double persistence_sensitivity) const {
+    inline
+    std::vector<double> CalculateAttachmentCandidateWeights(
+        const ObstacleScaffold& active_scaffold,
+        const std::vector<int>& candidate_node_ids,
+        const bdm::Double3& recent_movement,
+        const double distance_sensitivity,
+        const double persistence_sensitivity) const {
         /*
         * Function goal
         * -------------
@@ -3111,12 +3641,12 @@ public:
         );
 
         return candidate_weights;
-        }
+    }
 
-        inline
-        std::vector<double> CalculateCandidateSelectionProbabilities(
-            const std::vector<double>& candidate_weights,
-            const double random_selection_strength) const {
+    inline
+    std::vector<double> CalculateCandidateSelectionProbabilities(
+        const std::vector<double>& candidate_weights,
+        const double random_selection_strength) const {
         /*
         * Function goal
         * -------------
@@ -3269,12 +3799,12 @@ public:
         );
 
         return selection_probabilities;
-        }
+    }
 
-        inline
-        int SelectAttachmentCandidateNodeId(
-            const std::vector<int>& candidate_node_ids,
-            const std::vector<double>& selection_probabilities) const {
+    inline
+    int SelectAttachmentCandidateNodeId(
+        const std::vector<int>& candidate_node_ids,
+        const std::vector<double>& selection_probabilities) const {
         /*
         * Function goal
         * -------------
@@ -3385,12 +3915,12 @@ public:
         // Protect against floating-point accumulation leaving the final cumulative
         // probability fractionally below 1.
         return candidate_node_ids.back();
-        }
+    }
 
-        inline
-        void AddSelectedAttachment(
-            const ObstacleScaffold& active_scaffold,
-            const int selected_node_id) {
+    inline
+    void AddSelectedAttachment(
+        const ObstacleScaffold& active_scaffold,
+        const int selected_node_id) {
         /*
         * Function goal
         * -------------
@@ -3434,22 +3964,18 @@ public:
 
         AttachmentRecord new_attachment;
 
-        new_attachment.node_id =
-            selected_node_id;
+        new_attachment.node_id = selected_node_id;
 
         new_attachment.position =
             active_scaffold.GetNodePosition(
                 selected_node_id
             );
 
-        new_attachment.k_ecm =
-            0.0;
+        new_attachment.k_ecm = 0.0;
 
-        new_attachment.has_valid_k_ecm =
-            false;
+        new_attachment.has_valid_k_ecm = false;
 
-        new_attachment.newly_formed =
-            true;
+        new_attachment.newly_formed = true;
 
         // -------------------------------------------------------------------------
         // Step 3: Append the attachment to the existing persistent state

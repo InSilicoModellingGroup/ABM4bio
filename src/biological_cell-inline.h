@@ -2289,6 +2289,37 @@ bool bdm::BiologicalCell::CheckMigration()
     const bdm::Double3 original_position =
         this->GetPosition();
 
+    // Update persistent attachment ages
+    const double attachment_time_step =
+        this->params()->get<double>(
+            "time_step"
+        );
+
+    this->IncrementAttachmentAges(
+        attachment_time_step
+    );
+
+    if (this->params()->get<bool>(
+        mech_base + "/verbose")) {
+
+      std::ostringstream age_debug;
+      age_debug
+          << "[ATTACHMENT AGES] cell="
+          << this->GetUid()
+          << "\n";
+
+      for (const auto& attachment :
+          attachment_records_) {
+
+        age_debug
+            << "    node=" << attachment.node_id
+            << " age=" << attachment.attachment_age
+            << " s\n";
+      }
+
+      std::cout << age_debug.str();
+    }
+
     // -----------------------------------------------------------------------
     // Step 2: Process stochastic detachment
     // -----------------------------------------------------------------------
