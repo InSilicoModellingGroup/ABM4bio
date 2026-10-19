@@ -4488,7 +4488,6 @@ void save_mechanics_snapshot(
         << "attachment_coordinates,"
         << "min_pairwise_distance,"
         << "max_pairwise_distance,"
-        << "k_ecm,"
         << "k_ce,"
         << "contractile_force"
         << std::endl;
@@ -4554,7 +4553,6 @@ void save_mechanics_snapshot(
     if (step == 0) {
 
       fout
-          << "\"[]\","
           << "\"[]\","
           << "\"[]\","
           << 0.0 << ","
@@ -4633,25 +4631,6 @@ void save_mechanics_snapshot(
     // Attachment max/min pairwise distances
     fout << min_pairwise_distance << ",";
     fout << max_pairwise_distance << ",";
-
-    // Attachment stiffness values: [k1,k2,...]
-    fout << "\"[";
-
-    for (std::size_t i = 0; i < attachments.size(); ++i) {
-
-      if (i > 0) {
-        fout << ",";
-      }
-
-      if (attachments[i].has_valid_k_ecm) {
-        fout << attachments[i].k_ecm;
-      }
-      else {
-        fout << "null";
-      }
-    }
-
-    fout << "]\",";
 
     // Cell-level mechanics.
     fout
@@ -4746,8 +4725,6 @@ void save_mechanics_snapshot(
   std::vector<double> point_contractile_force;
   std::vector<int> point_n_attachments;
   std::vector<int> point_attachment_node_id;
-  std::vector<double> point_k_ecm;
-  std::vector<int> point_k_ecm_valid;
 
   // VTK cell connectivity.
 
@@ -4762,8 +4739,6 @@ void save_mechanics_snapshot(
   std::vector<int> geometry_type;
   std::vector<double> geometry_k_ce;
   std::vector<int> geometry_attachment_node_id;
-  std::vector<double> geometry_k_ecm;
-  std::vector<int> geometry_k_ecm_valid;
   std::vector<int> geometry_attachment_node_id_A;
   std::vector<int> geometry_attachment_node_id_B;
 
@@ -4800,8 +4775,6 @@ void save_mechanics_snapshot(
     point_contractile_force.push_back(contractile_force);
     point_n_attachments.push_back(n_attachments);
     point_attachment_node_id.push_back(-1);
-    point_k_ecm.push_back(0.0);
-    point_k_ecm_valid.push_back(0);
 
     // Add one VTK_VERTEX for the cell centre.
     vtk_connectivity.push_back({centre_point_index});
@@ -4813,8 +4786,6 @@ void save_mechanics_snapshot(
     geometry_type.push_back(0);
     geometry_k_ce.push_back(k_ce);
     geometry_attachment_node_id.push_back(-1);
-    geometry_k_ecm.push_back(0.0);
-    geometry_k_ecm_valid.push_back(0);
     geometry_attachment_node_id_A.push_back(-1);
     geometry_attachment_node_id_B.push_back(-1);
 
@@ -4845,15 +4816,6 @@ void save_mechanics_snapshot(
         point_n_attachments.push_back(n_attachments);
         point_attachment_node_id.push_back(attachment.node_id);
 
-        if (attachment.has_valid_k_ecm) {
-          point_k_ecm.push_back(attachment.k_ecm);
-          point_k_ecm_valid.push_back(1);
-        }
-        else {
-          point_k_ecm.push_back(0.0);
-          point_k_ecm_valid.push_back(0);
-        }
-
         // Centre-to-attachment line.
         vtk_connectivity.push_back(
             {
@@ -4869,15 +4831,6 @@ void save_mechanics_snapshot(
         geometry_type.push_back(1);
         geometry_k_ce.push_back(k_ce);
         geometry_attachment_node_id.push_back(attachment.node_id);
-
-        if (attachment.has_valid_k_ecm) {
-          geometry_k_ecm.push_back(attachment.k_ecm);
-          geometry_k_ecm_valid.push_back(1);
-        }
-        else {
-          geometry_k_ecm.push_back(0.0);
-          geometry_k_ecm_valid.push_back(0);
-        }
 
         geometry_attachment_node_id_A.push_back(-1);
         geometry_attachment_node_id_B.push_back(-1);
@@ -4906,8 +4859,6 @@ void save_mechanics_snapshot(
 
           // These fields apply only to centre-to-attachment lines.
           geometry_attachment_node_id.push_back(-1);
-          geometry_k_ecm.push_back(0.0);
-          geometry_k_ecm_valid.push_back(0);
 
           // Store both attachment IDs for the stress fibre.
           geometry_attachment_node_id_A.push_back(attachments[i].node_id);
@@ -4950,8 +4901,6 @@ void save_mechanics_snapshot(
       point_contractile_force.push_back(contractile_force);
       point_n_attachments.push_back(n_attachments);
       point_attachment_node_id.push_back(-1);
-      point_k_ecm.push_back(0.0);
-      point_k_ecm_valid.push_back(0);
 
       // Intermediate latitude and longitude points
       for (int latitude = 1; latitude < latitude_divisions; ++latitude) {
@@ -4978,8 +4927,6 @@ void save_mechanics_snapshot(
           point_contractile_force.push_back(contractile_force);
           point_n_attachments.push_back(n_attachments);
           point_attachment_node_id.push_back(-1);
-          point_k_ecm.push_back(0.0);
-          point_k_ecm_valid.push_back(0);
         }
       }
 
@@ -4999,8 +4946,6 @@ void save_mechanics_snapshot(
       point_contractile_force.push_back(contractile_force);
       point_n_attachments.push_back(n_attachments);
       point_attachment_node_id.push_back(-1);
-      point_k_ecm.push_back(0.0);
-      point_k_ecm_valid.push_back(0);
       
       // ----------------------------------------------------------------
       // Mesh sphere points into triangles for VTK_POLYGON cells.
@@ -5030,8 +4975,6 @@ void save_mechanics_snapshot(
         geometry_type.push_back(3);
         geometry_k_ce.push_back(k_ce);
         geometry_attachment_node_id.push_back(-1);
-        geometry_k_ecm.push_back(0.0);
-        geometry_k_ecm_valid.push_back(0);
         geometry_attachment_node_id_A.push_back(-1);
         geometry_attachment_node_id_B.push_back(-1);
       }
@@ -5062,8 +5005,6 @@ void save_mechanics_snapshot(
           geometry_type.push_back(3);
           geometry_k_ce.push_back(k_ce);
           geometry_attachment_node_id.push_back(-1);
-          geometry_k_ecm.push_back(0.0);
-          geometry_k_ecm_valid.push_back(0);
           geometry_attachment_node_id_A.push_back(-1);
           geometry_attachment_node_id_B.push_back(-1);
 
@@ -5074,8 +5015,6 @@ void save_mechanics_snapshot(
           geometry_type.push_back(3);
           geometry_k_ce.push_back(k_ce);
           geometry_attachment_node_id.push_back(-1);
-          geometry_k_ecm.push_back(0.0);
-          geometry_k_ecm_valid.push_back(0);
           geometry_attachment_node_id_A.push_back(-1);
           geometry_attachment_node_id_B.push_back(-1);
         }
@@ -5100,8 +5039,6 @@ void save_mechanics_snapshot(
         geometry_type.push_back(3);
         geometry_k_ce.push_back(k_ce);
         geometry_attachment_node_id.push_back(-1);
-        geometry_k_ecm.push_back(0.0);
-        geometry_k_ecm_valid.push_back(0);
         geometry_attachment_node_id_A.push_back(-1);
         geometry_attachment_node_id_B.push_back(-1);
       }
@@ -5290,30 +5227,6 @@ void save_mechanics_snapshot(
       << std::endl;
 
   vtu_file
-      << "        <DataArray type=\"Float64\" "
-      << "Name=\"k_ecm\" format=\"ascii\">";
-
-  for (const auto value : point_k_ecm) {
-    vtu_file << " " << value;
-  }
-
-  vtu_file
-      << " </DataArray>"
-      << std::endl;
-
-  vtu_file
-      << "        <DataArray type=\"Int32\" "
-      << "Name=\"k_ecm_valid\" format=\"ascii\">";
-
-  for (const auto value : point_k_ecm_valid) {
-    vtu_file << " " << value;
-  }
-
-  vtu_file
-      << " </DataArray>"
-      << std::endl;
-
-  vtu_file
       << "      </PointData>"
       << std::endl;
 
@@ -5423,30 +5336,6 @@ void save_mechanics_snapshot(
       << "Name=\"attachment_node_id\" format=\"ascii\">";
 
   for (const auto value : geometry_attachment_node_id) {
-    vtu_file << " " << value;
-  }
-
-  vtu_file
-      << " </DataArray>"
-      << std::endl;
-
-  vtu_file
-      << "        <DataArray type=\"Float64\" "
-      << "Name=\"k_ecm\" format=\"ascii\">";
-
-  for (const auto value : geometry_k_ecm) {
-    vtu_file << " " << value;
-  }
-
-  vtu_file
-      << " </DataArray>"
-      << std::endl;
-
-  vtu_file
-      << "        <DataArray type=\"Int32\" "
-      << "Name=\"k_ecm_valid\" format=\"ascii\">";
-
-  for (const auto value : geometry_k_ecm_valid) {
     vtu_file << " " << value;
   }
 

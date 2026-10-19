@@ -2093,23 +2093,10 @@ void bdm::BiologicalCell::FollowSingleAttachmentScaffold(
       target_position - this->GetPosition();
 
   // Preserve the attachment and mechanics state before repositioning.
-  const int node_id_before =
-      attachment.node_id;
-
-  const double k_ecm_before =
-      attachment.k_ecm;
-
-  const bool has_valid_k_ecm_before =
-      attachment.has_valid_k_ecm;
-
-  const bool newly_formed_before =
-      attachment.newly_formed;
-
-  const double k_ce_before =
-      this->GetKce();
-
-  const double contractile_force_before =
-      this->GetContractileForce();
+  const int node_id_before = attachment.node_id;
+  const bool newly_formed_before = attachment.newly_formed;
+  const double k_ce_before = this->GetKce();
+  const double contractile_force_before = this->GetContractileForce();
 
   const bool requires_recalculation_before =
       this->RequiresMechanicsRecalculation();
@@ -2171,17 +2158,6 @@ void bdm::BiologicalCell::FollowSingleAttachmentScaffold(
   ASSERT_(
     updated_attachment.node_id == node_id_before,
     "Single-attachment scaffold tracking changed the persistent node ID"
-  );
-
-  ASSERT_(
-    updated_attachment.k_ecm == k_ecm_before,
-    "Single-attachment scaffold tracking changed k_ecm"
-  );
-
-  ASSERT_(
-    updated_attachment.has_valid_k_ecm ==
-        has_valid_k_ecm_before,
-    "Single-attachment scaffold tracking changed k_ecm validity"
   );
 
   ASSERT_(
@@ -2591,6 +2567,14 @@ bool bdm::BiologicalCell::CheckMigration()
           //
           this->active_displacement_ = {0.0, 0.0, 0.0};
           //
+          #if 0
+          /*
+          * Legacy direct mechanics-driven migration.
+          *
+          * This pathway selected the migration target using attachment-level k_ecm.
+          * Migration is now represented through attachment turnover and repositioning,
+          * so this pathway is retained only for possible future reference.
+          */
           // Mechanics driven migration
           const std::string mech_base = CP_name + "/cell_matrix_mechanics";
 
@@ -2719,7 +2703,7 @@ bool bdm::BiologicalCell::CheckMigration()
               }
             }
           }
-        
+          #endif
           // Brownian cell motion
           if (this->params()->get<double>(CP_name+"/can_migrate/half_range") > 0.0)
             {

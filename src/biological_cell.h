@@ -124,12 +124,6 @@ public:
         // Current attachment coordinate on the deformed scaffold.
         bdm::Double3 position = {0.0, 0.0, 0.0};
 
-        // Most recently calculated local scaffold stiffness, k_ecm.
-        double k_ecm = 0.0;
-
-        // True only after k_ecm has been calculated by the FEM.
-        bool has_valid_k_ecm = false;
-
         // Time in seconds since this attachment formed.
         double attachment_age = 0.0;
 
@@ -214,14 +208,12 @@ public:
     }
 
     void MarkMechanicsForRecalculation() {
+        
         /*
-        * Function goal
-        * -------------
         * Record that the attachment set has changed and its cell-level mechanics
         * must be recalculated by the FEM.
         *
-        * Existing k_ce, contractile force and retained attachment k_ecm values are
-        * deliberately preserved until the recalculation is completed.
+        * Existing k_ce, contractile force until the recalculation is completed.
         */
 
         requires_mechanics_recalculation_ = true;
@@ -238,14 +230,9 @@ public:
         requires_mechanics_recalculation_ = false;
     }
 
-    // -----------------------------------------------------------------------------
-    // Validate the internal cell-matrix state
-    // -----------------------------------------------------------------------------
-
     void ValidateCellMatrixState() const {
+        
         /*
-        * Function goal
-        * -------------
         * Confirm that the attachment lifecycle, attachment records and mechanics
         * recalculation state are internally consistent.
         */
@@ -257,7 +244,7 @@ public:
             attachment_records_.size();
 
         // -------------------------------------------------------------------------
-        // Step 1: Validate cells awaiting initial FEM attachment
+        // Validate cells awaiting initial FEM attachment
         // -------------------------------------------------------------------------
 
         if (lifecycle_status ==
@@ -279,7 +266,7 @@ public:
         }
 
         // -------------------------------------------------------------------------
-        // Step 2: Validate established cells
+        // Validate established cells
         // -------------------------------------------------------------------------
 
         if (lifecycle_status ==
@@ -292,27 +279,22 @@ public:
         }
 
         // -------------------------------------------------------------------------
-        // Step 3: Validate individual attachment records
+        // Validate individual attachment records
         // -------------------------------------------------------------------------
 
         for (const auto& record : attachment_records_) {
-        ASSERT_(
-            record.node_id > 0,
-            "Cell-matrix state contains a non-positive attachment node ID"
-        );
-
-        ASSERT_(
-            !(record.newly_formed && record.has_valid_k_ecm),
-            "A newly formed ABM attachment cannot already contain valid FEM k_ecm"
-        );
-
-        if (record.newly_formed) {
             ASSERT_(
-                requires_mechanics_recalculation_,
-                "A cell with a newly formed attachment must require mechanics "
-                "recalculation"
+                record.node_id > 0,
+                "Cell-matrix state contains a non-positive attachment node ID"
             );
-        }
+
+            if (record.newly_formed) {
+                ASSERT_(
+                    requires_mechanics_recalculation_,
+                    "A cell with a newly formed attachment must require mechanics "
+                    "recalculation"
+                );
+            }
         }
     }
     
@@ -368,9 +350,8 @@ public:
         * Replace an established cell's attachment set after an ABM-controlled
         * attachment change.
         *
-        * Existing k_ce, contractile force and retained attachment k_ecm values are
-        * preserved. The new attachment set is marked as requiring a FEM mechanics
-        * recalculation.
+        * Existing cell-level mechanics and retained attachment state are
+        * preserved until the FEM recalculation is completed.
         */
 
         // Confirm that the ABM owns this attachment set
@@ -449,62 +430,8 @@ public:
     }
 
     bool HasAttachmentRecords() const {
-        /*
-        * Return true when the cell has at least one persistent attachment record.
-        *
-        * A valid k_ecm value is not required because newly formed attachments have
-        * not yet been processed by the FEM.
-        */
-
+        // Return true when the cell has at least one persistent attachment record.
         return !attachment_records_.empty();
-    }
-
-    bool HaveAllAttachmentRecordsValidKecm() const {
-        /*
-        * Function goal
-        * -------------
-        * Return true when every stored attachment record has a FEM-calculated
-        * k_ecm value.
-        */
-
-        if (attachment_records_.empty()) {
-        return false;
-        }
-
-        for (const auto& record : attachment_records_) {
-        if (!record.has_valid_k_ecm) {
-            return false;
-        }
-        }
-
-        return true;
-    }
-
-    bool HasValidAttachmentRecordsForMechanics() const {
-        /*
-        * Function goal
-        * -------------
-        * Return true when the cell has attachment records and every record contains
-        * the valid FEM-calculated mechanics data required for contraction.
-        */
-
-        // A cell without attachment records cannot contract.
-        if (attachment_records_.empty()) {
-        return false;
-        }
-
-        // Every attachment must have a valid persistent ID and k_ecm value.
-        for (const auto& record : attachment_records_) {
-        if (record.node_id <= 0) {
-            return false;
-        }
-
-        if (!record.has_valid_k_ecm) {
-            return false;
-        }
-        }
-
-        return true;
     }
 
     void ClearAttachmentRecords() {
@@ -3646,9 +3573,6 @@ public:
             active_scaffold.GetNodePosition(
                 selected_node_id
             );
-
-        new_attachment.k_ecm = 0.0;
-        new_attachment.has_valid_k_ecm = false;
 
         new_attachment.attachment_age = 0.0;
 

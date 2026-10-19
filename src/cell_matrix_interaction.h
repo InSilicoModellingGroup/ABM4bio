@@ -1425,18 +1425,6 @@ class CellMatrixInteraction {
                 );
 
                 ASSERT_(
-                    after.k_ecm == before.k_ecm,
-                    "Attachment synchronisation changed k_ecm for cell "
-                    + abm_cell_id
-                );
-
-                ASSERT_(
-                    after.has_valid_k_ecm == before.has_valid_k_ecm,
-                    "Attachment synchronisation changed k_ecm validity for cell "
-                    + abm_cell_id
-                );
-
-                ASSERT_(
                     after.newly_formed == before.newly_formed,
                     "Attachment synchronisation changed newly_formed for cell "
                     + abm_cell_id
@@ -1519,11 +1507,9 @@ class CellMatrixInteraction {
     void ImportFemCells(
         bdm::Simulation& sim,
         const std::map<int, std::string>& cells,
-        int time)
-        {
+        int time) {
+
         /*
-        * Function goal
-        * -------------
         * Read FEM-calculated cell mechanics data and assign it to the corresponding
         * ABM cells using their BioDynaMo UID strings.
         *
@@ -1544,7 +1530,6 @@ class CellMatrixInteraction {
         *   <number_of_attachments>
         *   <attachment_node_ids>
         *   <attachment_coordinates>
-        *   <attachment_k_ecm_values>
         *
         * For a cell with N attachments:
         *
@@ -1556,7 +1541,6 @@ class CellMatrixInteraction {
         *   attach_x_1 attach_y_1 attach_z_1
         *   ...
         *   attach_x_N attach_y_N attach_z_N
-        *   k_ecm_1 ... k_ecm_N
         *
         * Attachment node IDs use persistent one-based scaffold/FEM IDs.
         * Example for a cell with two attachments:
@@ -1577,7 +1561,7 @@ class CellMatrixInteraction {
         */
 
         // ---------------------------------------------------------------------------
-        // Step 1: Build FEM result filename
+        // Build FEM result filename
         // ---------------------------------------------------------------------------
 
         char buf[2048];
@@ -1591,7 +1575,7 @@ class CellMatrixInteraction {
         const std::string fname(buf);
 
         // ---------------------------------------------------------------------------
-        // Step 2: Open FEM result file
+        // Open FEM result file
         // ---------------------------------------------------------------------------
 
         std::ifstream fin(fname);
@@ -1599,7 +1583,7 @@ class CellMatrixInteraction {
         ASSERT_(fin, "FEM import: could not open file " + fname);
 
         // ---------------------------------------------------------------------------
-        // Step 3: Read number of cells
+        // Read number of cells
         // ---------------------------------------------------------------------------
 
         int n_cells = -1;
@@ -1610,7 +1594,7 @@ class CellMatrixInteraction {
                 "FEM import: invalid n_cells in " + fname);
 
         // ---------------------------------------------------------------------------
-        // Step 4: Build ABM cell lookup using BioDynaMo UID string
+        // Build ABM cell lookup using BioDynaMo UID string
         // ---------------------------------------------------------------------------
 
         // Collect BiologicalCell pointers safely first.
@@ -1646,7 +1630,7 @@ class CellMatrixInteraction {
         }
 
         // ---------------------------------------------------------------------------
-        // Step 5: Validate the expected FEM result count
+        // Validate the expected FEM result count
         //
         // The FEM result file should contain one row for every cell exported during
         // the current coupling step, not one row for every ABM cell.
@@ -1668,7 +1652,7 @@ class CellMatrixInteraction {
         }
 
         // ---------------------------------------------------------------------------
-        // Step 6: Track only the cells expected from the FEM
+        // Track only the cells expected from the FEM
         //
         // Single-attachment cells are not exported to the FEM, so they are not expected 
         // to be present in the FEM result file. 
@@ -1722,7 +1706,7 @@ class CellMatrixInteraction {
             bdm::BiologicalCell* cell = cell_it->second;
 
             // -------------------------------------------------------------------------
-            // Step 7a: Read attachment node IDs
+            // Read attachment node IDs
             // -------------------------------------------------------------------------
 
             std::vector<int> attachment_node_ids(n_attach);
@@ -1736,7 +1720,7 @@ class CellMatrixInteraction {
             }
 
             // -------------------------------------------------------------------------
-            // Step 7b: Read attachment coordinates
+            // Read attachment coordinates
             // -------------------------------------------------------------------------
 
             std::vector<bdm::Double3> attachment_points(n_attach);
@@ -1756,21 +1740,7 @@ class CellMatrixInteraction {
             }
 
             // -------------------------------------------------------------------------
-            // Step 7c: Read attachment stiffness values
-            // -------------------------------------------------------------------------
-
-            std::vector<double> k_values(n_attach);
-
-            for (int a = 0; a < n_attach; ++a) {
-            fin >> k_values[a];
-
-            ASSERT_(fin,
-                    "FEM import: not enough stiffness values for abm_cell_id = "
-                    + abm_cell_id + " in " + fname);
-            }
-
-            // -------------------------------------------------------------------------
-            // Step 7d: Read pairwise k_ce records
+            // Read pairwise k_ce records
             // -------------------------------------------------------------------------
 
             int n_pairs = -1;
@@ -1890,7 +1860,7 @@ class CellMatrixInteraction {
             }
 
             // -------------------------------------------------------------------------
-            // Step 7e: Build persistent attachment records
+            // Build persistent attachment records
             // -------------------------------------------------------------------------
 
             std::vector<bdm::BiologicalCell::AttachmentRecord> attachment_records;
@@ -1905,10 +1875,6 @@ class CellMatrixInteraction {
 
                 record.node_id = attachment_node_ids[a];
                 record.position = attachment_points[a];
-                record.k_ecm = k_values[a];
-
-                // FEM-returned attachments have a calculated k_ecm value.
-                record.has_valid_k_ecm = true;
 
                 // New FEM-returned attachments begin with zero age.
                 // Their detachment threshold is assigned below if no previous
@@ -1944,7 +1910,7 @@ class CellMatrixInteraction {
             }
 
             // -------------------------------------------------------------------------
-            // Step 7f: Update the cell and store the imported attachment state
+            // Update the cell and store the imported attachment state
             //
             // The legacy vectors remain populated for backward compatibility while the
             // persistent attachment records are introduced gradually.
@@ -1959,7 +1925,7 @@ class CellMatrixInteraction {
             cell->SetPairMechanicsRecords(pair_mechanics_records);
 
             // -------------------------------------------------------------------------
-            // Step 7g: Validate the stored persistent attachment state
+            // Validate the stored persistent attachment state
             // -------------------------------------------------------------------------
 
             ASSERT_(
@@ -1988,18 +1954,6 @@ class CellMatrixInteraction {
                     record.position[2] == attachment_points[a][2],
                     "FEM import: stored attachment position does not match the imported "
                     "position for abm_cell_id = " + abm_cell_id
-                );
-
-                ASSERT_(
-                    record.k_ecm == k_values[a],
-                    "FEM import: stored attachment k_ecm does not match the imported value "
-                    "for abm_cell_id = " + abm_cell_id
-                );
-
-                ASSERT_(
-                    record.has_valid_k_ecm,
-                    "FEM import: FEM-returned attachment does not have valid k_ecm for "
-                    "abm_cell_id = " + abm_cell_id
                 );
 
                 ASSERT_(
@@ -2048,7 +2002,7 @@ class CellMatrixInteraction {
             cell->SetKce(k_ce);
 
             // -------------------------------------------------------------------------
-            // Step 7h: Update adaptive cell-specific contractile force
+            // Update adaptive cell-specific contractile force
             // -------------------------------------------------------------------------
 
             double adaptive_contractile_force = 0.0;
@@ -2134,7 +2088,7 @@ class CellMatrixInteraction {
             cell->SetContractileForce(adaptive_contractile_force);
 
             // -------------------------------------------------------------------------
-            // Step 7i: Update the internal ABM mechanics state
+            // Update the internal ABM mechanics state
             // -------------------------------------------------------------------------
 
             if (n_attach > 0) {
@@ -2179,7 +2133,7 @@ class CellMatrixInteraction {
         }
 
         // ---------------------------------------------------------------------------
-        // Step 8: Confirm every ABM cell was imported exactly once
+        // Confirm every ABM cell was imported exactly once
         // ---------------------------------------------------------------------------
 
         for (const auto& item : imported_flags) {
@@ -2201,8 +2155,8 @@ class CellMatrixInteraction {
     RefreshAttachmentRecordCoordinates(
         const std::vector<bdm::BiologicalCell::AttachmentRecord>& records,
         const ObstacleScaffold& active_scaffold,
-        const std::string& abm_cell_id) const
-    {
+        const std::string& abm_cell_id) const{
+        
         /*
         * Function goal
         * -------------
