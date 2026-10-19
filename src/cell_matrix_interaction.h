@@ -1359,152 +1359,155 @@ class CellMatrixInteraction {
         // -------------------------------------------------------------------------
 
         for (auto* cell : biological_cells) {
-        if (!cell->HasAttachmentRecords()) {
-            continue;
-        }
+            if (!cell->HasAttachmentRecords()) {
+                continue;
+            }
 
-        std::ostringstream uid_stream;
-        uid_stream << cell->GetUid();
+            std::ostringstream uid_stream;
+            uid_stream << cell->GetUid();
 
-        const std::string abm_cell_id =
-            uid_stream.str();
+            const std::string abm_cell_id =
+                uid_stream.str();
 
-        // Preserve the cell-level mechanics state so coordinate-only
-        // synchronisation can be validated.
-        const auto lifecycle_status_before =
-            cell->GetCellMatrixLifecycleStatus();
+            // Preserve the cell-level mechanics state so coordinate-only
+            // synchronisation can be validated.
+            const auto lifecycle_status_before =
+                cell->GetCellMatrixLifecycleStatus();
 
-        const bool requires_recalculation_before =
-            cell->RequiresMechanicsRecalculation();
+            const bool requires_recalculation_before =
+                cell->RequiresMechanicsRecalculation();
 
-        const double k_ce_before =
-            cell->GetKce();
+            const double k_ce_before =
+                cell->GetKce();
 
-        const double contractile_force_before =
-            cell->GetContractileForce();
+            const double contractile_force_before =
+                cell->GetContractileForce();
 
-        // Work on a copy so only the attachment coordinates are changed.
-        const auto original_attachment_records =
-            cell->GetAttachmentRecords();
+            // Work on a copy so only the attachment coordinates are changed.
+            const auto original_attachment_records =
+                cell->GetAttachmentRecords();
 
-        const auto attachment_records =
-            this->RefreshAttachmentRecordCoordinates(
-                original_attachment_records,
-                active_scaffold,
-                abm_cell_id
-            );
+            const auto attachment_records =
+                this->RefreshAttachmentRecordCoordinates(
+                    original_attachment_records,
+                    active_scaffold,
+                    abm_cell_id
+                );
 
-        // SetAttachmentRecords validates persistent IDs and duplicate nodes.
-        cell->SetAttachmentRecords(attachment_records);
+            // SetAttachmentRecords validates persistent IDs and duplicate nodes.
+            cell->SetAttachmentRecords(attachment_records);
 
-        // -----------------------------------------------------------------------
-        // Step 5: Confirm that only attachment coordinates changed
-        // -----------------------------------------------------------------------
-
-        ASSERT_(
-            cell->GetNumberOfAttachmentRecords()
-                == original_attachment_records.size(),
-            "Attachment synchronisation changed the attachment count for cell "
-            + abm_cell_id
-        );
-
-        for (std::size_t i = 0;
-            i < original_attachment_records.size();
-            ++i) {
-
-            const auto& before =
-                original_attachment_records[i];
-
-            const auto& after =
-                cell->GetAttachmentRecord(i);
+            // -----------------------------------------------------------------------
+            // Step 5: Confirm that only attachment coordinates changed
+            // -----------------------------------------------------------------------
 
             ASSERT_(
-                after.node_id == before.node_id,
-                "Attachment synchronisation changed the persistent node ID for cell "
+                cell->GetNumberOfAttachmentRecords()
+                    == original_attachment_records.size(),
+                "Attachment synchronisation changed the attachment count for cell "
+                + abm_cell_id
+            );
+
+            for (std::size_t i = 0;
+                i < original_attachment_records.size();
+                ++i) {
+
+                const auto& before =
+                    original_attachment_records[i];
+
+                const auto& after =
+                    cell->GetAttachmentRecord(i);
+
+                ASSERT_(
+                    after.node_id == before.node_id,
+                    "Attachment synchronisation changed the persistent node ID for cell "
+                    + abm_cell_id
+                );
+
+                ASSERT_(
+                    after.k_ecm == before.k_ecm,
+                    "Attachment synchronisation changed k_ecm for cell "
+                    + abm_cell_id
+                );
+
+                ASSERT_(
+                    after.has_valid_k_ecm == before.has_valid_k_ecm,
+                    "Attachment synchronisation changed k_ecm validity for cell "
+                    + abm_cell_id
+                );
+
+                ASSERT_(
+                    after.newly_formed == before.newly_formed,
+                    "Attachment synchronisation changed newly_formed for cell "
+                    + abm_cell_id
+                );
+
+                ASSERT_(
+                    after.attachment_age == before.attachment_age,
+                    "Attachment synchronisation changed attachment age for cell "
+                    + abm_cell_id
+                );
+
+                ASSERT_(
+                    after.detachment_threshold == before.detachment_threshold,
+                    "Attachment synchronisation changed detachment threshold for cell "
+                    + abm_cell_id
+                );
+
+
+            }
+
+            ASSERT_(
+                cell->GetCellMatrixLifecycleStatus() == lifecycle_status_before,
+                "Attachment synchronisation changed the lifecycle status for cell "
                 + abm_cell_id
             );
 
             ASSERT_(
-                after.k_ecm == before.k_ecm,
-                "Attachment synchronisation changed k_ecm for cell "
+                cell->RequiresMechanicsRecalculation() == requires_recalculation_before,
+                "Attachment synchronisation changed the mechanics-recalculation state "
+                "for cell " + abm_cell_id
+            );
+
+            ASSERT_(
+                cell->GetKce() == k_ce_before,
+                "Attachment synchronisation changed k_ce for cell "
                 + abm_cell_id
             );
 
             ASSERT_(
-                after.has_valid_k_ecm == before.has_valid_k_ecm,
-                "Attachment synchronisation changed k_ecm validity for cell "
+                cell->GetContractileForce() == contractile_force_before,
+                "Attachment synchronisation changed the contractile force for cell "
                 + abm_cell_id
             );
 
-            ASSERT_(
-                after.newly_formed == before.newly_formed,
-                "Attachment synchronisation changed newly_formed for cell "
-                + abm_cell_id
-            );
+            // Coordinate refresh must not create an inconsistent lifecycle state.
+            cell->ValidateCellMatrixState();
 
-            ASSERT_(
-                after.attachment_age == before.attachment_age,
-                "Attachment synchronisation changed attachment age for cell "
-                + abm_cell_id
-            );
-        }
+            // -----------------------------------------------------------------------
+            // Step 6: Reposition established single-attachment cells
+            // -----------------------------------------------------------------------
 
-        ASSERT_(
-            cell->GetCellMatrixLifecycleStatus()
-                == lifecycle_status_before,
-            "Attachment synchronisation changed the lifecycle status for cell "
-            + abm_cell_id
-        );
+            using LifecycleStatus =
+                bdm::BiologicalCell::CellMatrixLifecycleStatus;
 
-        ASSERT_(
-            cell->RequiresMechanicsRecalculation()
-                == requires_recalculation_before,
-            "Attachment synchronisation changed the mechanics-recalculation state "
-            "for cell " + abm_cell_id
-        );
+            if (lifecycle_status_before == LifecycleStatus::kEstablished &&
+                original_attachment_records.size() == 1) {
 
-        ASSERT_(
-            cell->GetKce() == k_ce_before,
-            "Attachment synchronisation changed k_ce for cell "
-            + abm_cell_id
-        );
+                const int attachment_node_id =
+                    original_attachment_records.front().node_id;
 
-        ASSERT_(
-            cell->GetContractileForce()
-                == contractile_force_before,
-            "Attachment synchronisation changed the contractile force for cell "
-            + abm_cell_id
-        );
+                const bdm::Double3 previous_attachment_position =
+                    original_attachment_records.front().position;
 
-        // Coordinate refresh must not create an inconsistent lifecycle state.
-        cell->ValidateCellMatrixState();
+                const bdm::Double3 cell_position_before = cell->GetPosition();
 
-        // -----------------------------------------------------------------------
-        // Step 6: Reposition established single-attachment cells
-        // -----------------------------------------------------------------------
+                cell->FollowSingleAttachmentScaffold(
+                    active_scaffold,
+                    previous_attachment_position
+                );
 
-        using LifecycleStatus =
-            bdm::BiologicalCell::CellMatrixLifecycleStatus;
-
-        if (lifecycle_status_before == LifecycleStatus::kEstablished &&
-            original_attachment_records.size() == 1) {
-
-        const int attachment_node_id =
-            original_attachment_records.front().node_id;
-
-        const bdm::Double3 previous_attachment_position =
-            original_attachment_records.front().position;
-
-        const bdm::Double3 cell_position_before =
-            cell->GetPosition();
-
-        cell->FollowSingleAttachmentScaffold(
-            active_scaffold,
-            previous_attachment_position
-        );
-
-        }
-
+            }
         }
     }
     
@@ -1890,8 +1893,7 @@ class CellMatrixInteraction {
             // Step 7e: Build persistent attachment records
             // -------------------------------------------------------------------------
 
-            std::vector<bdm::BiologicalCell::AttachmentRecord>
-            attachment_records;
+            std::vector<bdm::BiologicalCell::AttachmentRecord> attachment_records;
 
             const auto previous_attachment_records = cell->GetAttachmentRecords();
 
@@ -1908,9 +1910,13 @@ class CellMatrixInteraction {
                 // FEM-returned attachments have a calculated k_ecm value.
                 record.has_valid_k_ecm = true;
 
-                // New FEM-created attachments begin at age zero.
-                // Retained attachments preserve their existing age.
+                // New FEM-returned attachments begin with zero age.
+                // Their detachment threshold is assigned below if no previous
+                // persistent attachment with the same node ID exists.
                 record.attachment_age = 0.0;
+                record.detachment_threshold = -1.0;
+
+                bool retained_attachment = false;
 
                 for (const auto& previous_record :
                     previous_attachment_records) {
@@ -1918,11 +1924,19 @@ class CellMatrixInteraction {
                     if (previous_record.node_id ==
                         record.node_id) {
 
-                        record.attachment_age =
-                            previous_record.attachment_age;
+                        record.attachment_age =  previous_record.attachment_age;
+                        record.detachment_threshold = previous_record.detachment_threshold;
+                        retained_attachment = true;
 
                         break;
                     }
+                }
+
+                // A genuinely new FEM attachment receives its threshold exactly once.
+                if (!retained_attachment) {
+
+                    record.detachment_threshold =
+                        cell->GenerateAttachmentDetachmentThreshold();
                 }
 
                 record.newly_formed = false;
@@ -1986,6 +2000,14 @@ class CellMatrixInteraction {
                     record.has_valid_k_ecm,
                     "FEM import: FEM-returned attachment does not have valid k_ecm for "
                     "abm_cell_id = " + abm_cell_id
+                );
+
+                ASSERT_(
+                    std::isfinite(record.detachment_threshold) &&
+                    record.detachment_threshold >= 0.0 &&
+                    record.detachment_threshold <= 1.0,
+                    "FEM import: stored attachment has an invalid detachment threshold "
+                    "for abm_cell_id = " + abm_cell_id
                 );
 
                 ASSERT_(

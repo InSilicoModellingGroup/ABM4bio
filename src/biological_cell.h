@@ -133,6 +133,9 @@ public:
         // Time in seconds since this attachment formed.
         double attachment_age = 0.0;
 
+        // Persistent random threshold used for cumulative detachment probability.
+        double detachment_threshold = -1.0;
+
         // True when the attachment was formed by the ABM after the previous FEM step.
         bool newly_formed = false;
     };
@@ -317,10 +320,6 @@ public:
     // Cell-matrix mechanics: persistent attachment-record interface
     // =============================================================================
 
-    // -----------------------------------------------------------------------------
-    // Store attachment records
-    // -----------------------------------------------------------------------------
-
     void SetAttachmentRecords(
         const std::vector<AttachmentRecord>& records) {
         /*
@@ -397,10 +396,6 @@ public:
         MarkMechanicsForRecalculation();
     }
 
-    // -----------------------------------------------------------------------------
-    // Retrieve attachment records
-    // -----------------------------------------------------------------------------
-
     const std::vector<AttachmentRecord>& GetAttachmentRecords() const {
         return attachment_records_;
     }
@@ -453,14 +448,8 @@ public:
         }
     }
 
-    // -----------------------------------------------------------------------------
-    // Attachment-record state queries
-    // -----------------------------------------------------------------------------
-
     bool HasAttachmentRecords() const {
         /*
-        * Function goal
-        * -------------
         * Return true when the cell has at least one persistent attachment record.
         *
         * A valid k_ecm value is not required because newly formed attachments have
@@ -521,6 +510,44 @@ public:
     void ClearAttachmentRecords() {
         // Remove all persistent attachment records from this cell.
         attachment_records_.clear();
+    }
+
+    double GenerateAttachmentDetachmentThreshold() const {
+
+        /*
+        * Generate a persistent random threshold for cumulative detachment probability.
+        *
+        * This threshold is used to determine whether an attachment will detach
+        * during the next ABM timestep. It is generated once per attachment and
+        * stored in the attachment record.
+        */
+
+        auto* simulation = bdm::Simulation::GetActive();
+
+        ASSERT_(
+            simulation != nullptr,
+            "Attachment detachment threshold requires an active simulation"
+        );
+
+        auto* random_generator = simulation->GetRandom();
+
+        ASSERT_(
+            random_generator != nullptr,
+            "Attachment detachment threshold requires a random-number generator"
+        );
+
+        const double threshold =
+            random_generator->Uniform(
+                0.0,
+                1.0
+            );
+
+        ASSERT_(
+            std::isfinite(threshold) && threshold >= 0.0 && threshold <= 1.0,
+            "Generated attachment detachment threshold is outside [0, 1]"
+        );
+
+        return threshold;
     }
 
     void SetPairMechanicsRecords(
@@ -1007,146 +1034,38 @@ public:
         return lifetime;
     }
 
-    double CalculateCatchSlipOffRate(
-        const double force_per_bond_pN,
-        const double a1,
-        const double b1,
-        const double c1,
-        const double a2,
-        const double b2,
-        const double c2) const {
+    double CalculateAttachmentDetachmentProbabilityFromLifetime(
+        const double attachment_age,
+        const double attachment_lifetime) const {
+
+        /*
+        * Calculate the cumulative probability that an attachment
+        * has detached by its current age.
+        */
 
         ASSERT_(
-            std::isfinite(force_per_bond_pN) &&
-            force_per_bond_pN >= 0.0,
-            "Catch-slip calculation requires non-negative force"
-        );
-
-        ASSERT_(a1 > 0.0 && a2 > 0.0,
-                "Catch-slip amplitudes must be positive");
-
-        ASSERT_(c1 > 0.0 && c2 > 0.0,
-                "Catch-slip widths must be positive");
-
-        const double term_1 =
-            a1 * std::exp(
-                -std::pow(
-                    (force_per_bond_pN - b1) / c1,
-                    2.0
-                )
-            );
-
-        const double term_2 =
-            a2 * std::exp(
-                -std::pow(
-                    (force_per_bond_pN - b2) / c2,
-                    2.0
-                )
-            );
-
-        const double k_off =
-            term_1 + term_2;
-
-        ASSERT_(
-            std::isfinite(k_off) &&
-            k_off > 0.0,
-            "Catch-slip calculation produced invalid k_off"
-        );
-
-        return k_off;
-    }
-
-    double CalculateForceBasedDetachmentProbability(
-            const double attachment_force_nN,
-            const int integrin_count,
-            const double reference_force_per_bond_pN,
-            const double reference_fa_lifetime,
-            const double a1,
-            const double b1,
-            const double c1,
-            const double a2,
-            const double b2,
-            const double c2,
-            const double time_step) const {
-
-        ASSERT_(
-            std::isfinite(attachment_force_nN) &&
-            attachment_force_nN >= 0.0,
-            "Attachment detachment requires non-negative force"
+            std::isfinite(attachment_age) && attachment_age >= 0.0,
+            "Attachment detachment probability requires non-negative age"
         );
 
         ASSERT_(
-            integrin_count > 0,
-            "Attachment detachment requires a positive integrin count"
+            std::isfinite(attachment_lifetime) && attachment_lifetime > 0.0,
+            "Attachment detachment probability requires positive lifetime"
         );
 
-        ASSERT_(
-            reference_fa_lifetime > 0.0,
-            "Reference focal-adhesion lifetime must be positive"
-        );
-
-        ASSERT_(
-            time_step > 0.0,
-            "Attachment detachment requires a positive timestep"
-        );
-
-        // Convert attachment force from nN to pN per integrin
-        const double force_per_bond_pN =
-            attachment_force_nN *
-            1000.0 /
-            static_cast<double>(integrin_count);
-
-        // Calculate the raw catch-slip lifetimes
-        const double k_off =
-            CalculateCatchSlipOffRate(
-                force_per_bond_pN,
-                a1, b1, c1,
-                a2, b2, c2
-            );
-
-        const double reference_k_off =
-            CalculateCatchSlipOffRate(
-                reference_force_per_bond_pN,
-                a1, b1, c1,
-                a2, b2, c2
-            );
-
-        const double raw_lifetime =
-            1.0 / k_off;
-
-        const double raw_reference_lifetime =
-            1.0 / reference_k_off;
-
-        // Scale bond lifetime to focal-adhesion lifetime
-        const double lifetime_scale =
-            reference_fa_lifetime /
-            raw_reference_lifetime;
-
-        const double focal_adhesion_lifetime =
-            lifetime_scale *
-            raw_lifetime;
-
-        ASSERT_(
-            std::isfinite(focal_adhesion_lifetime) &&
-            focal_adhesion_lifetime > 0.0,
-            "Calculated focal-adhesion lifetime is invalid"
-        );
-
-        // Convert lifetime to timestep detachment probability
-        const double detachment_probability =
+        const double probability =
             1.0 -
             std::exp(
-                -time_step /
-                focal_adhesion_lifetime
+                -attachment_age /
+                attachment_lifetime
             );
 
         ASSERT_(
-            detachment_probability >= 0.0 &&
-            detachment_probability <= 1.0,
-            "Force-based detachment probability is outside [0, 1]"
+            std::isfinite(probability) && probability >= 0.0 && probability <= 1.0,
+            "Attachment detachment probability is outside [0, 1]"
         );
 
-        return detachment_probability;
+        return probability;
     }
 
     void SetKce(double k_ce) {
@@ -1324,183 +1243,24 @@ public:
     // stiffness between them.
     std::vector<PairMechanicsRecord> pair_mechanics_records_;
 
-
     inline
-    double CalculateReferenceDetachmentProbability(
-        const double k_ecm,
-        const double optimum_k_ecm,
-        const double low_k_ecm_slope,
-        const double high_k_ecm_slope,
-        const double min_probability,
-        const double max_probability,
-        const double k_ecm_weight) const {
+    std::vector<double> CalculateAttachmentDetachmentProbabilities(
+        const double f_opt,
+        const double t_opt,
+        const double t_0,
+        const double sigma_2) const {
+
         /*
-        * Function goal
-        * -------------
-        * Calculate the reference detachment probability for one attachment from
-        * its local scaffold stiffness (k_ecm).
+        * Calculate the cumulative detachment probability for each
+        * attachment using:
         *
-        * Detachment is least likely near the optimum stiffness and increases
-        * towards the configured limit at lower or higher stiffness values (biphasic).
+        *   current resultant force -> T(F)
+        *   attachment age + T(F)   -> Poff
         */
 
         // -------------------------------------------------------------------------
-        // Step 1: Validate the inputs
+        // Step 1: Validate the current cell-matrix state
         // -------------------------------------------------------------------------
-
-        ASSERT_(
-            k_ecm >= 0.0,
-            "Detachment probability calculation requires non-negative k_ecm"
-        );
-
-        ASSERT_(
-            optimum_k_ecm > 0.0,
-            "Detachment probability calculation requires positive optimum k_ecm"
-        );
-
-        ASSERT_(
-            low_k_ecm_slope > 0.0,
-            "Detachment probability calculation requires a positive low-k_ecm "
-            "slope"
-        );
-
-        ASSERT_(
-            high_k_ecm_slope > 0.0,
-            "Detachment probability calculation requires a positive high-k_ecm "
-            "slope"
-        );
-
-        ASSERT_(
-            min_probability >= 0.0 &&
-            min_probability <= 1.0,
-            "Minimum detachment probability must be between 0 and 1"
-        );
-
-        ASSERT_(
-            max_probability >= min_probability &&
-            max_probability <= 1.0,
-            "Maximum detachment probability must be between the minimum "
-            "probability and 1"
-        );
-
-        ASSERT_(
-            k_ecm_weight >= 0.0 &&
-            k_ecm_weight <= 1.0,
-            "Detachment k_ecm weight must be between 0 and 1"
-        );
-
-        // -------------------------------------------------------------------------
-        // Step 2: Select the slope on the appropriate side of the optimum
-        // -------------------------------------------------------------------------
-
-        const double selected_slope =
-            k_ecm <= optimum_k_ecm
-                ? low_k_ecm_slope
-                : high_k_ecm_slope;
-
-        const double distance_from_optimum =
-            std::abs(k_ecm - optimum_k_ecm);
-
-        // -------------------------------------------------------------------------
-        // Step 3: Calculate the bounded stiffness response
-        // -------------------------------------------------------------------------
-
-        const double stiffness_response =
-            1.0 -
-            std::exp(
-                -selected_slope * distance_from_optimum
-            );
-
-        // -------------------------------------------------------------------------
-        // Step 4: Calculate the reference probability
-        // -------------------------------------------------------------------------
-
-        const double reference_probability =
-            min_probability +
-            k_ecm_weight *
-            (max_probability - min_probability) *
-            stiffness_response;
-
-        ASSERT_(
-            reference_probability >= 0.0 &&
-            reference_probability <= 1.0,
-            "Calculated reference detachment probability is outside [0, 1]"
-        );
-
-        return reference_probability;
-    }
-
-    inline
-    double CalculateTimeAdjustedDetachmentProbability(
-        const double reference_probability,
-        const double time_step,
-        const double reference_detachment_time) const {
-        /*
-        * Function goal
-        * -------------
-        * Convert a detachment probability defined over a reference time interval
-        * into the equivalent probability for the current ABM timestep.
-        */
-
-        // -------------------------------------------------------------------------
-        // Step 1: Validate the inputs
-        // -------------------------------------------------------------------------
-
-        ASSERT_(
-            reference_probability >= 0.0 &&
-            reference_probability <= 1.0,
-            "Reference detachment probability must be between 0 and 1"
-        );
-
-        ASSERT_(
-            time_step > 0.0,
-            "Time-adjusted detachment probability requires a positive timestep"
-        );
-
-        ASSERT_(
-            reference_detachment_time > 0.0,
-            "Time-adjusted detachment probability requires a positive reference "
-            "time"
-        );
-
-        // -------------------------------------------------------------------------
-        // Step 2: Scale the probability to the current timestep
-        // -------------------------------------------------------------------------
-
-        const double time_adjusted_probability =
-            1.0 -
-            std::pow(
-                1.0 - reference_probability,
-                time_step / reference_detachment_time
-            );
-
-        ASSERT_(
-            time_adjusted_probability >= 0.0 &&
-            time_adjusted_probability <= 1.0,
-            "Calculated time-adjusted detachment probability is outside [0, 1]"
-        );
-
-        return time_adjusted_probability;
-    }
-
-    inline
-    std::vector<double>
-    CalculateAttachmentDetachmentProbabilities(
-        const int integrin_count,
-        const double reference_force_per_bond_pN,
-        const double reference_fa_lifetime,
-        const double a1,
-        const double b1,
-        const double c1,
-        const double a2,
-        const double b2,
-        const double c2,
-        const double time_step) const {
-
-        /*
-        * Calculate one force-dependent detachment probability for every
-        * attachment using its resultant contractile force.
-        */
 
         ASSERT_(
             cell_matrix_lifecycle_status_ ==
@@ -1513,6 +1273,7 @@ public:
             "Attachment detachment probabilities require attachment records"
         );
 
+        // A cell must always retain its final attachment.
         if (attachment_records_.size() == 1) {
             return {0.0};
         }
@@ -1522,10 +1283,12 @@ public:
             "Attachment detachment probabilities require current FEM mechanics"
         );
 
-        // Calculate resultant force at every attachment
-        const std::vector<double>
-            attachment_force_magnitudes =
-                this->CalculateAttachmentContractileForceMagnitudes();
+        // -------------------------------------------------------------------------
+        // Step 2: Calculate current resultant force on each attachment
+        // -------------------------------------------------------------------------
+
+        const std::vector<double> attachment_force_magnitudes =
+            this->CalculateAttachmentContractileForceMagnitudes();
 
         ASSERT_(
             attachment_force_magnitudes.size() ==
@@ -1533,7 +1296,10 @@ public:
             "Attachment force count does not match attachment count"
         );
 
-        // Convert each force into a detachment probability
+        // -------------------------------------------------------------------------
+        // Step 3: Calculate T(F) and cumulative Poff for each attachment
+        // -------------------------------------------------------------------------
+
         std::vector<double> detachment_probabilities;
 
         detachment_probabilities.reserve(
@@ -1544,22 +1310,36 @@ public:
             i < attachment_records_.size();
             ++i) {
 
-            const double attachment_force =
+            const auto& attachment =
+                attachment_records_[i];
+
+            ASSERT_(
+                attachment.node_id > 0,
+                "Attachment detachment probability encountered an invalid node ID"
+            );
+
+            ASSERT_(
+                std::isfinite(attachment.attachment_age) &&
+                attachment.attachment_age >= 0.0,
+                "Attachment detachment probability encountered invalid attachment age"
+            );
+
+            const double force =
                 attachment_force_magnitudes[i];
 
+            const double lifetime =
+                this->CalculateAttachmentLifetimeFromForce(
+                    force,
+                    f_opt,
+                    t_opt,
+                    t_0,
+                    sigma_2
+                );
+
             const double probability =
-                this->CalculateForceBasedDetachmentProbability(
-                    attachment_force,
-                    integrin_count,
-                    reference_force_per_bond_pN,
-                    reference_fa_lifetime,
-                    a1,
-                    b1,
-                    c1,
-                    a2,
-                    b2,
-                    c2,
-                    time_step
+                this->CalculateAttachmentDetachmentProbabilityFromLifetime(
+                    attachment.attachment_age,
+                    lifetime
                 );
 
             detachment_probabilities.push_back(
@@ -1567,22 +1347,26 @@ public:
             );
         }
 
+        ASSERT_(
+            detachment_probabilities.size() ==
+                attachment_records_.size(),
+            "Attachment detachment probability count does not match attachment count"
+        );
+
         return detachment_probabilities;
     }
 
     inline
     std::vector<std::size_t> SelectAttachmentIndicesForDetachment(
-        const std::vector<double>& detachment_probabilities,
-        const std::vector<double>& random_draws) const {
+        const std::vector<double>& detachment_probabilities) const {
+
         /*
-        * Function goal
-        * -------------
-        * Select attachments for detachment using one random draw per attachment,
-        * while ensuring that an established cell always retains at least one.
+        * Select attachments whose cumulative detachment probability
+        * has reached their persistent random threshold.
         */
 
         // -------------------------------------------------------------------------
-        // Step 1: Validate the current attachment state
+        // Step 1: Validate the attachment state
         // -------------------------------------------------------------------------
 
         ASSERT_(
@@ -1602,24 +1386,12 @@ public:
             "Detachment probability count does not match attachment count"
         );
 
-        ASSERT_(
-            random_draws.size() ==
-                attachment_records_.size(),
-            "Detachment random-draw count does not match attachment count"
-        );
-
-        // A previously attached cell must never lose its final attachment.
         if (attachment_records_.size() == 1) {
-        ASSERT_(
-            detachment_probabilities.front() == 0.0,
-            "A single attachment must have zero detachment probability"
-        );
-
-        return {};
+            return {};
         }
 
         // -------------------------------------------------------------------------
-        // Step 2: Apply one stochastic draw to each attachment
+        // Step 2: Compare cumulative probability with persistent threshold
         // -------------------------------------------------------------------------
 
         std::vector<std::size_t> selected_indices;
@@ -1631,74 +1403,89 @@ public:
         for (std::size_t i = 0;
             i < attachment_records_.size();
             ++i) {
-        const double probability =
-            detachment_probabilities[i];
 
-        const double random_draw =
-            random_draws[i];
+            const double probability =
+                detachment_probabilities[i];
 
-        ASSERT_(
-            std::isfinite(probability) &&
-            probability >= 0.0 &&
-            probability <= 1.0,
-            "Attachment detachment selection encountered an invalid probability"
-        );
+            const double threshold =
+                attachment_records_[i].detachment_threshold;
 
-        ASSERT_(
-            std::isfinite(random_draw) &&
-            random_draw >= 0.0 &&
-            random_draw <= 1.0,
-            "Attachment detachment selection encountered an invalid random draw"
-        );
+            ASSERT_(
+                std::isfinite(probability) &&
+                probability >= 0.0 &&
+                probability <= 1.0,
+                "Attachment detachment selection encountered invalid probability"
+            );
 
-        // Use < so that an attachment with probability zero can never detach.
-        if (random_draw < probability) {
+            ASSERT_(
+                std::isfinite(threshold) &&
+                threshold >= 0.0 &&
+                threshold <= 1.0,
+                "Attachment detachment selection encountered invalid threshold"
+            );
+
+            // Poff = 0 must never detach.
+            // Once cumulative Poff reaches the persistent threshold,
+            // this attachment is selected for detachment.
+            if (probability > 0.0 &&
+                probability >= threshold) {
+
             selected_indices.push_back(i);
-        }
+            }
         }
 
         // -------------------------------------------------------------------------
-        // Step 3: Preserve one attachment if every draw selected detachment
+        // Step 3: Preserve one attachment if all are selected
         // -------------------------------------------------------------------------
 
         if (selected_indices.size() ==
             attachment_records_.size()) {
-        std::size_t retained_index =
-            selected_indices.front();
 
-        double smallest_selection_margin =
-            detachment_probabilities[retained_index] -
-            random_draws[retained_index];
+            std::size_t retained_index =
+                selected_indices.front();
 
-        for (const std::size_t index : selected_indices) {
+            double smallest_selection_margin =
+                detachment_probabilities[retained_index] -
+                attachment_records_[retained_index]
+                    .detachment_threshold;
+
+            for (const std::size_t index :
+                selected_indices) {
+
             const double selection_margin =
                 detachment_probabilities[index] -
-                random_draws[index];
+                attachment_records_[index]
+                    .detachment_threshold;
 
             const bool has_smaller_margin =
-                selection_margin < smallest_selection_margin;
+                selection_margin <
+                smallest_selection_margin;
 
             const bool equal_margin_lower_node_id =
-                selection_margin == smallest_selection_margin &&
+                selection_margin ==
+                    smallest_selection_margin &&
                 attachment_records_[index].node_id <
                     attachment_records_[retained_index].node_id;
 
             if (has_smaller_margin ||
                 equal_margin_lower_node_id) {
-            retained_index = index;
-            smallest_selection_margin =
-                selection_margin;
-            }
-        }
 
-        selected_indices.erase(
-            std::remove(
-                selected_indices.begin(),
-                selected_indices.end(),
-                retained_index
-            ),
-            selected_indices.end()
-        );
+                retained_index =
+                    index;
+
+                smallest_selection_margin =
+                    selection_margin;
+            }
+            }
+
+            selected_indices.erase(
+                std::remove(
+                    selected_indices.begin(),
+                    selected_indices.end(),
+                    retained_index
+                ),
+                selected_indices.end()
+            );
         }
 
         ASSERT_(
@@ -1709,7 +1496,7 @@ public:
 
         return selected_indices;
     }
-
+   
     inline
     bool ApplySelectedAttachmentDetachments(
         const std::vector<std::size_t>& selected_indices) {
@@ -1823,116 +1610,61 @@ public:
 
     inline
     bool AttemptAttachmentDetachment(
-        const int integrin_count,
-        const double reference_force_per_bond_pN,
-        const double reference_fa_lifetime,
-        const double a1,
-        const double b1,
-        const double c1,
-        const double a2,
-        const double b2,
-        const double c2,
-        const double time_step) {
-        /*
-        * Function goal
-        * -------------
-        * Calculate attachment-level detachment probabilities, perform one random
-        * draw per attachment and remove the selected attachments.
-        *
-        * Returns true when at least one attachment is removed.
-        */
+        const double f_opt,
+        const double t_opt,
+        const double t_0,
+        const double sigma_2) {
 
-        // -------------------------------------------------------------------------
-        // Step 1: Validate the current attachment state
-        // -------------------------------------------------------------------------
+        /*
+        * Calculate force- and age-dependent cumulative detachment
+        * probabilities, compare them with persistent thresholds,
+        * and remove selected attachments.
+        */
 
         ASSERT_(
             cell_matrix_lifecycle_status_ ==
                 CellMatrixLifecycleStatus::kEstablished,
-            "Stochastic attachment detachment requires an established cell"
+            "Attachment detachment requires an established cell"
         );
 
         ASSERT_(
             !attachment_records_.empty(),
-            "Stochastic attachment detachment requires attachment records"
+            "Attachment detachment requires attachment records"
         );
 
-        // The final retained attachment cannot detach.
         if (attachment_records_.size() == 1) {
-        return false;
+            return false;
         }
 
         // -------------------------------------------------------------------------
-        // Step 2: Calculate one probability per attachment
+        // Step 1: Calculate cumulative detachment probabilities
         // -------------------------------------------------------------------------
 
         const std::vector<double> detachment_probabilities =
             this->CalculateAttachmentDetachmentProbabilities(
-                integrin_count,
-                reference_force_per_bond_pN,
-                reference_fa_lifetime,
-                a1,
-                b1,
-                c1,
-                a2,
-                b2,
-                c2,
-                time_step
+                f_opt,
+                t_opt,
+                t_0,
+                sigma_2
             );
 
         ASSERT_(
             detachment_probabilities.size() ==
                 attachment_records_.size(),
-            "Stochastic detachment probability count does not match attachment "
-            "count"
+            "Detachment probability count does not match attachment count"
         );
 
         // -------------------------------------------------------------------------
-        // Step 3: Generate one random draw per attachment
-        // -------------------------------------------------------------------------
-
-        auto* simulation =
-            bdm::Simulation::GetActive();
-
-        ASSERT_(
-            simulation != nullptr,
-            "Stochastic attachment detachment requires an active simulation"
-        );
-
-        auto* random_generator =
-            simulation->GetRandom();
-
-        ASSERT_(
-            random_generator != nullptr,
-            "Stochastic attachment detachment requires a random-number generator"
-        );
-
-        std::vector<double> random_draws;
-
-        random_draws.reserve(
-            attachment_records_.size()
-        );
-
-        for (std::size_t index = 0;
-            index < attachment_records_.size();
-            ++index) {
-        random_draws.push_back(
-            random_generator->Uniform(0.0, 1.0)
-        );
-        }
-
-        // -------------------------------------------------------------------------
-        // Step 4: Select the attachments whose draws permit detachment
+        // Step 2: Compare against persistent thresholds
         // -------------------------------------------------------------------------
 
         const std::vector<std::size_t> selected_indices =
             this->SelectAttachmentIndicesForDetachment(
-                detachment_probabilities,
-                random_draws
+                detachment_probabilities
             );
 
         // -------------------------------------------------------------------------
-        // Step 5: Apply the selected detachments
+        // Step 3: Apply selected detachments
         // -------------------------------------------------------------------------
 
         return this->ApplySelectedAttachmentDetachments(
@@ -1942,9 +1674,8 @@ public:
 
     inline
     bool ProcessAttachmentDetachment() {
+        
         /*
-        * Function goal
-        * -------------
         * Confirm that the cell is eligible for attachment turnover, read the
         * phenotype-specific detachment parameters and attempt stochastic
         * detachment.
@@ -2064,58 +1795,7 @@ public:
             );
         }
 
-        // Read the detachment parameters
-        const int integrin_count =
-            this->params()->get<int>(
-                mech_base + "/detachment_integrin_count"
-            );
-
-        const double reference_force_per_bond_pN =
-            this->params()->get<double>(
-                mech_base +
-                "/detachment_reference_force_per_bond"
-            );
-
-        const double a1 =
-            this->params()->get<double>(
-                mech_base + "/detachment_koff_a1"
-            );
-
-        const double b1 =
-            this->params()->get<double>(
-                mech_base + "/detachment_koff_b1"
-            );
-
-        const double c1 =
-            this->params()->get<double>(
-                mech_base + "/detachment_koff_c1"
-            );
-
-        const double a2 =
-            this->params()->get<double>(
-                mech_base + "/detachment_koff_a2"
-            );
-
-        const double b2 =
-            this->params()->get<double>(
-                mech_base + "/detachment_koff_b2"
-            );
-
-        const double c2 =
-            this->params()->get<double>(
-                mech_base + "/detachment_koff_c2"
-            );
-
-        const double reference_fa_lifetime =
-            this->params()->get<double>(
-                mech_base + "/reference_detachment_time"
-            );
-
-        const double time_step =
-            this->params()->get<double>(
-                "time_step"
-            );
-
+        //  Read the force-dependent detachment parameters
         const double f_opt =
             this->params()->get<double>(
                 mech_base + "/detachment_f_opt"
@@ -2180,9 +1860,7 @@ public:
                 << " T(Fopt)=" << lifetime_at_optimum
                 << "\n";
 
-            for (std::size_t i = 0;
-                i < attachment_records_.size();
-                ++i) {
+            for (std::size_t i = 0; i < attachment_records_.size(); ++i) {
 
                 const double force =
                     attachment_force_magnitudes[i];
@@ -2196,27 +1874,33 @@ public:
                         sigma_2
                     );
 
+                const double attachment_age = attachment_records_[i].attachment_age;
+
+                const double detachment_probability =
+                    this->CalculateAttachmentDetachmentProbabilityFromLifetime(
+                        attachment_age,
+                        lifetime
+                    );
+
                 lifetime_debug
                     << "    node=" << attachment_records_[i].node_id
+                    << " age=" << attachment_age << " s"
                     << " force=" << force << " nN"
-                    << " T(F)=" << lifetime << " s\n";
+                    << " T(F)=" << lifetime << " s"
+                    << " Poff=" << detachment_probability
+                    << " threshold=" << attachment_records_[i].detachment_threshold
+                    << "\n";
             }
 
             std::cout << lifetime_debug.str();
         }
 
-        // Attempt stochastic detachment
+        // Attempt force- and age-dependent detachment
         return this->AttemptAttachmentDetachment(
-            integrin_count,
-            reference_force_per_bond_pN,
-            reference_fa_lifetime,
-            a1,
-            b1,
-            c1,
-            a2,
-            b2,
-            c2,
-            time_step
+            f_opt,
+            t_opt,
+            t_0,
+            sigma_2
         );
     }
 
@@ -3921,20 +3605,15 @@ public:
     void AddSelectedAttachment(
         const ObstacleScaffold& active_scaffold,
         const int selected_node_id) {
+        
         /*
-        * Function goal
-        * -------------
         * Add one ABM-selected scaffold node to the cell's persistent attachment
         * records and mark the cell mechanics for FEM recalculation.
         */
 
-        // -------------------------------------------------------------------------
-        // Step 1: Validate the selected candidate
-        // -------------------------------------------------------------------------
-
+        // Validate the selected candidate
         ASSERT_(
-            cell_matrix_lifecycle_status_ ==
-                CellMatrixLifecycleStatus::kEstablished,
+            cell_matrix_lifecycle_status_ == CellMatrixLifecycleStatus::kEstablished,
             "Attachment formation requires an established cell"
         );
 
@@ -3958,10 +3637,7 @@ public:
             );
         }
 
-        // -------------------------------------------------------------------------
-        // Step 2: Create the new persistent attachment record
-        // -------------------------------------------------------------------------
-
+        // Create the new persistent attachment record
         AttachmentRecord new_attachment;
 
         new_attachment.node_id = selected_node_id;
@@ -3972,17 +3648,19 @@ public:
             );
 
         new_attachment.k_ecm = 0.0;
-
         new_attachment.has_valid_k_ecm = false;
+
+        new_attachment.attachment_age = 0.0;
+
+        // Attachment formation is assigned a detachment threshold to prevent 
+        // immediate detachment in the next mechanics update. 
+        new_attachment.detachment_threshold =
+            this->GenerateAttachmentDetachmentThreshold();
 
         new_attachment.newly_formed = true;
 
-        // -------------------------------------------------------------------------
-        // Step 3: Append the attachment to the existing persistent state
-        // -------------------------------------------------------------------------
-
-        std::vector<AttachmentRecord> updated_attachments =
-            attachment_records_;
+        // Append the attachment to the existing persistent state
+        std::vector<AttachmentRecord> updated_attachments = attachment_records_;
 
         updated_attachments.push_back(
             new_attachment
@@ -3992,10 +3670,7 @@ public:
             updated_attachments
         );
 
-        // -------------------------------------------------------------------------
-        // Step 4: Validate the updated cell-matrix state
-        // -------------------------------------------------------------------------
-
+        // Validate the updated cell-matrix state
         ASSERT_(
             this->RequiresMechanicsRecalculation(),
             "New attachment formation must request FEM mechanics recalculation"
@@ -4008,23 +3683,22 @@ public:
         );
 
         this->ValidateCellMatrixState();
-        }
+    }
 
-        inline
-        std::size_t AttemptAttachmentFormation(
-            const ObstacleScaffold& active_scaffold,
-            const std::size_t requested_addition_count,
-            const bdm::Double3& recent_movement,
-            const double min_attachment_separation,
-            const double max_attachment_separation,
-            const double candidate_scaffold_clearance,
-            const double candidate_cell_clearance,
-            const double cell_distance_sensitivity,
-            const double persistence_sensitivity,
-            const double random_selection_strength) {
+    inline
+    std::size_t AttemptAttachmentFormation(
+        const ObstacleScaffold& active_scaffold,
+        const std::size_t requested_addition_count,
+        const bdm::Double3& recent_movement,
+        const double min_attachment_separation,
+        const double max_attachment_separation,
+        const double candidate_scaffold_clearance,
+        const double candidate_cell_clearance,
+        const double cell_distance_sensitivity,
+        const double persistence_sensitivity,
+        const double random_selection_strength) {
+        
         /*
-        * Function goal
-        * -------------
         * Attempt the requested number of new attachments using the current
         * attachment geometry, candidate weights and stochastic selection rule.
         *
@@ -4033,19 +3707,13 @@ public:
         * Returns the number of attachments actually formed.
         */
 
-        // -------------------------------------------------------------------------
-        // Step 1: Nothing requested
-        // -------------------------------------------------------------------------
-
-        if (requested_addition_count == 0) {
+        // Nothing requested
+         if (requested_addition_count == 0) {
             return 0;
         }
 
-        // -------------------------------------------------------------------------
-        // Step 2: Validate the current state
-        // -------------------------------------------------------------------------
-
-        ASSERT_(
+        // Validate the current state
+         ASSERT_(
             cell_matrix_lifecycle_status_ ==
                 CellMatrixLifecycleStatus::kEstablished,
             "Attachment formation requires an established cell"
@@ -4061,10 +3729,7 @@ public:
 
         std::size_t formed_attachment_count = 0;
 
-        // -------------------------------------------------------------------------
-        // Step 3: Attempt each requested addition
-        // -------------------------------------------------------------------------
-
+        // Attempt each requested addition
         for (std::size_t addition = 0;
             addition < requested_addition_count;
             ++addition) {
@@ -4081,7 +3746,7 @@ public:
 
             // It is valid to form fewer attachments than requested.
             if (candidate_node_ids.empty()) {
-            break;
+                break;
             }
 
             // Calculate Stage 17 candidate weights.
@@ -4128,10 +3793,7 @@ public:
             ++formed_attachment_count;
         }
 
-        // -------------------------------------------------------------------------
-        // Step 4: Validate the final attachment state
-        // -------------------------------------------------------------------------
-
+        // Validate the final attachment state
         ASSERT_(
             formed_attachment_count <=
                 requested_addition_count,
@@ -4153,7 +3815,7 @@ public:
         }
 
         return formed_attachment_count;
-        }
+    }
 
 };
 // =============================================================================

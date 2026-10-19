@@ -1644,101 +1644,12 @@ void init_cells(bdm::Simulation& sim,
           // ---------------------------------------------------------------------
 
           if (!params.have_parameter<double>(
-                  mech_base + "/detachment_optimum_kecm")) {
-            params.set<double>(
-                mech_base + "/detachment_optimum_kecm"
-            ) = 50.0;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_low_kecm_slope")) {
-            params.set<double>(
-                mech_base + "/detachment_low_kecm_slope"
-            ) = 0.05;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_high_kecm_slope")) {
-            params.set<double>(
-                mech_base + "/detachment_high_kecm_slope"
-            ) = 0.05;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_min_probability")) {
-            params.set<double>(
-                mech_base + "/detachment_min_probability"
-            ) = 0.05;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_max_probability")) {
-            params.set<double>(
-                mech_base + "/detachment_max_probability"
-            ) = 0.50;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_kecm_weight")) {
-            params.set<double>(
-                mech_base + "/detachment_kecm_weight"
-            ) = 1.0;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/reference_detachment_time")) {
-            params.set<double>(
-                mech_base + "/reference_detachment_time"
-            ) = 600.0;
-          }
-
-          if (!params.have_parameter<double>(
                   mech_base +
                   "/recommended_max_cell_matrix_time_step")) {
             params.set<double>(
                 mech_base +
                 "/recommended_max_cell_matrix_time_step"
             ) = 3600.0;
-          }
-
-          if (!params.have_parameter<int>(
-                  mech_base + "/detachment_integrin_count")) {
-            params.set<int>(mech_base + "/detachment_integrin_count") = 1000;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_reference_force_per_bond")) {
-            params.set<double>(mech_base + "/detachment_reference_force_per_bond") = 29.0;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_koff_a1")) {
-            params.set<double>(mech_base + "/detachment_koff_a1") = 2.2;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_koff_b1")) {
-            params.set<double>(mech_base + "/detachment_koff_b1") = 29.9;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_koff_c1")) {
-            params.set<double>(mech_base + "/detachment_koff_c1") = 8.4;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_koff_a2")) {
-            params.set<double>(mech_base + "/detachment_koff_a2") = 1.2;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_koff_b2")) {
-            params.set<double>(mech_base + "/detachment_koff_b2") = 16.2;
-          }
-
-          if (!params.have_parameter<double>(
-                  mech_base + "/detachment_koff_c2")) {
-            params.set<double>(mech_base + "/detachment_koff_c2") = 37.8;
           }
 
           const double recommended_max_cell_matrix_time_step =
@@ -1806,173 +1717,77 @@ void init_cells(bdm::Simulation& sim,
           // Validate detachment probability parameters
           // ---------------------------------------------------------------------
 
-          const double detachment_optimum_kecm =
-              params.get<double>(
-                  mech_base + "/detachment_optimum_kecm"
-              );
-
-          const double detachment_low_kecm_slope =
-              params.get<double>(
-                  mech_base + "/detachment_low_kecm_slope"
-              );
-
-          const double detachment_high_kecm_slope =
-              params.get<double>(
-                  mech_base + "/detachment_high_kecm_slope"
-              );
-
-          const double detachment_min_probability =
-              params.get<double>(
-                  mech_base + "/detachment_min_probability"
-              );
-
-          const double detachment_max_probability =
-              params.get<double>(
-                  mech_base + "/detachment_max_probability"
-              );
-
-          const double detachment_kecm_weight =
-              params.get<double>(
-                  mech_base + "/detachment_kecm_weight"
-              );
-
-          const double reference_detachment_time =
-              params.get<double>(
-                  mech_base + "/reference_detachment_time"
-              );
-
-          if (detachment_optimum_kecm <= 0.0) {
-            ABORT_(
-                "model parameter \"" + mech_base +
-                "/detachment_optimum_kecm\" must be > 0"
-            );
-          }
-
-          if (detachment_low_kecm_slope <= 0.0) {
-            ABORT_(
-                "model parameter \"" + mech_base +
-                "/detachment_low_kecm_slope\" must be > 0"
-            );
-          }
-
-          if (detachment_high_kecm_slope <= 0.0) {
-            ABORT_(
-                "model parameter \"" + mech_base +
-                "/detachment_high_kecm_slope\" must be > 0"
-            );
-          }
-
-          if (detachment_min_probability < 0.0 ||
-              detachment_min_probability > 1.0) {
-            ABORT_(
-                "model parameter \"" + mech_base +
-                "/detachment_min_probability\" must be between 0 and 1"
-            );
-          }
-
-          if (detachment_max_probability < 0.0 ||
-              detachment_max_probability > 1.0) {
-            ABORT_(
-                "model parameter \"" + mech_base +
-                "/detachment_max_probability\" must be between 0 and 1"
-            );
-          }
-
-          if (detachment_min_probability >
-              detachment_max_probability) {
-            ABORT_(
-                "model parameter \"" + mech_base +
-                "/detachment_min_probability\" cannot exceed \"" +
-                mech_base + "/detachment_max_probability\""
-            );
-          }
-
-          if (detachment_kecm_weight < 0.0 ||
-              detachment_kecm_weight > 1.0) {
-            ABORT_(
-                "model parameter \"" + mech_base +
-                "/detachment_kecm_weight\" must be between 0 and 1"
-            );
-          }
-
-          if (reference_detachment_time <= 0.0) {
-            ABORT_(
-                "model parameter \"" + mech_base +
-                "/reference_detachment_time\" must be > 0"
-            );
-          }
-
           const double detachment_f_opt =
             params.get<double>(
                 mech_base + "/detachment_f_opt"
             );
 
-        const double detachment_t_opt =
-            params.get<double>(
-                mech_base + "/detachment_t_opt"
+          const double detachment_t_opt =
+              params.get<double>(
+                  mech_base + "/detachment_t_opt"
+              );
+
+          const double detachment_t_0 =
+              params.get<double>(
+                  mech_base + "/detachment_t_0"
+              );
+
+          const double detachment_sigma_2 =
+              params.get<double>(
+                  mech_base + "/detachment_sigma_2"
+              );
+
+          if (!std::isfinite(detachment_f_opt) ||
+              detachment_f_opt <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_f_opt\" must be finite and > 0"
             );
+          }
 
-        const double detachment_t_0 =
-            params.get<double>(
-                mech_base + "/detachment_t_0"
+          if (!std::isfinite(detachment_t_opt) ||
+              detachment_t_opt <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_t_opt\" must be finite and > 0"
             );
+          }
 
-        const double detachment_sigma_2 =
-            params.get<double>(
-                mech_base + "/detachment_sigma_2"
+          if (!std::isfinite(detachment_t_0) ||
+              detachment_t_0 <= 0.0 ||
+              detachment_t_0 >= detachment_t_opt) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_t_0\" must be > 0 and < detachment_t_opt"
             );
+          }
 
-        if (!std::isfinite(detachment_f_opt) ||
-            detachment_f_opt <= 0.0) {
-          ABORT_(
-              "model parameter \"" + mech_base +
-              "/detachment_f_opt\" must be finite and > 0"
-          );
-        }
-
-        if (!std::isfinite(detachment_t_opt) ||
-            detachment_t_opt <= 0.0) {
-          ABORT_(
-              "model parameter \"" + mech_base +
-              "/detachment_t_opt\" must be finite and > 0"
-          );
-        }
-
-        if (!std::isfinite(detachment_t_0) ||
-            detachment_t_0 <= 0.0 ||
-            detachment_t_0 >= detachment_t_opt) {
-          ABORT_(
-              "model parameter \"" + mech_base +
-              "/detachment_t_0\" must be > 0 and < detachment_t_opt"
-          );
-        }
-
-        if (!std::isfinite(detachment_sigma_2) ||
-            detachment_sigma_2 <= 0.0) {
-          ABORT_(
-              "model parameter \"" + mech_base +
-              "/detachment_sigma_2\" must be finite and > 0"
-          );
-        }
-
-        const double detachment_sigma_1 =
-            detachment_f_opt /
-            std::sqrt(
-                -std::log(
-                    detachment_t_0 /
-                    detachment_t_opt
-                )
+          if (!std::isfinite(detachment_sigma_2) ||
+              detachment_sigma_2 <= 0.0) {
+            ABORT_(
+                "model parameter \"" + mech_base +
+                "/detachment_sigma_2\" must be finite and > 0"
             );
+          }
 
-        ASSERT_(
-            std::isfinite(detachment_sigma_1) &&
-            detachment_sigma_1 > 0.0,
-            "Calculated detachment sigma_1 is invalid"
-        );
+          const double detachment_sigma_1 =
+              detachment_f_opt /
+              std::sqrt(
+                  -std::log(
+                      detachment_t_0 /
+                      detachment_t_opt
+                  )
+              );
 
-        params.set<double>(
-            mech_base + "/detachment_sigma_1"
-        ) = detachment_sigma_1;
+          ASSERT_(
+              std::isfinite(detachment_sigma_1) &&
+              detachment_sigma_1 > 0.0,
+              "Calculated detachment sigma_1 is invalid"
+          );
+
+          params.set<double>(
+              mech_base + "/detachment_sigma_1"
+          ) = detachment_sigma_1;
 
           // ---------------------------------------------------------------------
           // Attachment formation count parameters
@@ -4536,55 +4351,6 @@ void save_mechanics_setup(
     fout << "      \"contractility_kce_midpoint\": "
          << params.get<double>(
                 mech_base + "/contractility_kce_midpoint")
-         << "," << std::endl;
-
-    // Detachment behaviour
-    fout << "      \"detachment_optimum_kecm\": "
-         << params.get<double>(
-                mech_base + "/detachment_optimum_kecm")
-         << "," << std::endl;
-
-    fout << "      \"detachment_low_kecm_slope\": "
-         << params.get<double>(
-                mech_base + "/detachment_low_kecm_slope")
-         << "," << std::endl;
-
-    fout << "      \"detachment_high_kecm_slope\": "
-         << params.get<double>(
-                mech_base + "/detachment_high_kecm_slope")
-         << "," << std::endl;
-
-    fout << "      \"detachment_min_probability\": "
-         << params.get<double>(
-                mech_base + "/detachment_min_probability")
-         << "," << std::endl;
-
-    fout << "      \"detachment_max_probability\": "
-         << params.get<double>(
-                mech_base + "/detachment_max_probability")
-         << "," << std::endl;
-
-    fout << "      \"detachment_kecm_weight\": "
-         << params.get<double>(
-                mech_base + "/detachment_kecm_weight")
-         << "," << std::endl;
-
-    fout << "      \"reference_detachment_time\": "
-         << params.get<double>(
-                mech_base + "/reference_detachment_time")
-         << "," << std::endl;
-
-    // Attachment formation
-    fout << "      \"mean_attachment_additions_per_reference_time\": "
-         << params.get<double>(
-                mech_base +
-                "/mean_attachment_additions_per_reference_time")
-         << "," << std::endl;
-
-    fout << "      \"reference_attachment_formation_time\": "
-         << params.get<double>(
-                mech_base +
-                "/reference_attachment_formation_time")
          << "," << std::endl;
 
     // Candidate selection
