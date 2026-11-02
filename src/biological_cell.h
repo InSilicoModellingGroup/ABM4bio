@@ -196,6 +196,33 @@ public:
         return cell_matrix_lifecycle_status_;
     }
 
+    void MarkCellMatrixForDeath() {
+
+        /*
+        * Function goal
+        * -------------
+        * Mark a cell for removal after initial attachment has failed completely.
+        *
+        * A cell may only enter this state before any persistent attachment or
+        * FEM-mechanics state has been created.
+        */
+
+        ASSERT_(
+            attachment_records_.empty(),
+            "A cell marked for death after initial attachment failure "
+            "cannot contain persistent attachment records"
+        );
+
+        ASSERT_(
+            !requires_mechanics_recalculation_,
+            "A cell marked for death after initial attachment failure "
+            "cannot require mechanics recalculation"
+        );
+
+        cell_matrix_lifecycle_status_ =
+            CellMatrixLifecycleStatus::kMarkedForDeath;
+    }
+
     bool RequiresMechanicsRecalculation() const {
         /*
         * Function goal
@@ -269,13 +296,32 @@ public:
         // Validate established cells
         // -------------------------------------------------------------------------
 
-        if (lifecycle_status ==
-            CellMatrixLifecycleStatus::kEstablished) {
+        if (lifecycle_status == CellMatrixLifecycleStatus::kEstablished) {
 
-        ASSERT_(
-            attachment_count > 0,
-            "An established cell must retain at least one persistent attachment"
-        );
+            ASSERT_(
+                attachment_count > 0,
+                "An established cell must retain at least one persistent attachment"
+            );
+        }
+
+        // -------------------------------------------------------------------------
+        // Validate cells marked for removal after initial attachment failure
+        // -------------------------------------------------------------------------
+
+        if (lifecycle_status ==
+            CellMatrixLifecycleStatus::kMarkedForDeath) {
+
+            ASSERT_(
+                attachment_count == 0,
+                "A cell marked for death after initial attachment failure "
+                "cannot contain persistent attachment records"
+            );
+
+            ASSERT_(
+                !requires_mechanics_recalculation_,
+                "A cell marked for death after initial attachment failure "
+                "cannot require mechanics recalculation"
+            );
         }
 
         // -------------------------------------------------------------------------
@@ -296,6 +342,1101 @@ public:
                 );
             }
         }
+    }
+
+    inline
+    std::vector<int> GenerateInitialAttachmentCandidateNodeIds(
+        const ObstacleScaffold& active_scaffold) const {
+
+        /*
+        * Generate a list of candidate scaffold nodes for initial attachment.
+        * Candidates are searched within the configured maximum attachment separation
+        * from the cell centre. The initial attachment search is only valid before 
+        * the cell is established and requires no existing attachment records.
+        */
+
+        // Initial attachment search is only valid before the cell is established.
+        ASSERT_(
+            cell_matrix_lifecycle_status_ ==
+                CellMatrixLifecycleStatus::kNeedsInitialAttachment ||
+            cell_matrix_lifecycle_status_ ==
+                CellMatrixLifecycleStatus::kInitialAttachmentRetry,
+            "Initial attachment candidate generation requires an "
+            "uninitialised or retrying cell"
+        );
+
+        ASSERT_(
+            attachment_records_.empty(),
+            "Initial attachment candidate generation requires no existing "
+            "attachment records"
+        );
+
+        const std::string& phenotype_name =
+            this->params()->get<std::string>(
+                "phenotype_ID/" +
+                std::to_string(
+                    this->GetPhenotype()
+                )
+            );
+
+        const std::string mech_base =
+            phenotype_name +
+            "/cell_matrix_mechanics";
+
+        const double max_attachment_separation =
+            this->params()->get<double>(
+                mech_base +
+                "/max_attachment_separation"
+            );
+
+        ASSERT_(
+            std::isfinite(max_attachment_separation) &&
+            max_attachment_separation > 0.0,
+            "Initial attachment search requires a positive maximum "
+            "attachment separation"
+        );
+
+        // Preserve the previous FEM definition:
+        // candidate nodes are searched within max_cell_radius,
+        // where max_cell_radius = max_attachment_separation / 2.
+        const double search_radius = 0.5 * max_attachment_separation;
+
+        return active_scaffold.GetNodeIdsWithinRadius(
+            this->GetPosition(),
+            search_radius
+        );
+    }
+
+    inline
+    std::vector<std::pair<int, int>>
+    GenerateInitialAttachmentCandidatePairs(
+        const ObstacleScaffold& active_scaffold,
+        const std::vector<int>& candidate_node_ids) const {
+
+        /*
+        * Identify all valid pairs of candidate scaffold nodes for initial attachment.
+        * Pairs are valid if their separation is within the configured minimum and 
+        * maximum attachment separation. The initial attachment search is only valid 
+        * before the cell is established and requires no existing attachment records.
+        */
+
+        ASSERT_(
+            cell_matrix_lifecycle_status_ ==
+                CellMatrixLifecycleStatus::kNeedsInitialAttachment ||
+            cell_matrix_lifecycle_status_ ==
+                CellMatrixLifecycleStatus::kInitialAttachmentRetry,
+            "Initial attachment pair generation requires an "
+            "uninitialised or retrying cell"
+        );
+
+        ASSERT_(
+            attachment_records_.empty(),
+            "Initial attachment pair generation requires no existing "
+            "attachment records"
+        );
+
+        if (candidate_node_ids.size() < 2) {
+            return {};
+        }
+
+        const std::string& phenotype_name =
+            this->params()->get<std::string>(
+                "phenotype_ID/" +
+                std::to_string(
+                    this->GetPhenotype()
+                )
+            );
+
+        const std::string mech_base =
+            phenotype_name +
+            "/cell_matrix_mechanics";
+
+        const double min_attachment_separation =
+            this->params()->get<double>(
+                mech_base +
+                "/min_attachment_separation"
+            );
+
+        const double max_attachment_separation =
+            this->params()->get<double>(
+                mech_base +
+                "/max_attachment_separation"
+            );
+
+        ASSERT_(
+            std::isfinite(min_attachment_separation) &&
+            min_attachment_separation >= 0.0,
+            "Initial attachment minimum separation must be "
+            "finite and non-negative"
+        );
+
+        ASSERT_(
+            std::isfinite(max_attachment_separation) &&
+            max_attachment_separation > 0.0,
+            "Initial attachment maximum separation must be "
+            "finite and positive"
+        );
+
+        ASSERT_(
+            min_attachment_separation <=
+                max_attachment_separation,
+            "Initial attachment minimum separation exceeds maximum separation"
+        );
+
+        const double min_separation_squared =
+            min_attachment_separation *
+            min_attachment_separation;
+
+        const double max_separation_squared =
+            max_attachment_separation *
+            max_attachment_separation;
+
+        std::vector<std::pair<int, int>>
+            valid_pairs;
+
+        valid_pairs.reserve(
+            candidate_node_ids.size() *
+            (candidate_node_ids.size() - 1) / 2
+        );
+
+        for (std::size_t i = 0;
+            i < candidate_node_ids.size();
+            ++i) {
+
+            const int node_id_a =
+                candidate_node_ids[i];
+
+            ASSERT_(
+                active_scaffold.HasNode(node_id_a),
+                "Initial attachment pair generation could not find scaffold node "
+                + std::to_string(node_id_a)
+            );
+
+            const bdm::Double3& position_a =
+                active_scaffold.GetNodePosition(
+                    node_id_a
+                );
+
+            for (std::size_t j = i + 1;
+                j < candidate_node_ids.size();
+                ++j) {
+
+                const int node_id_b =
+                    candidate_node_ids[j];
+
+                ASSERT_(
+                    node_id_a != node_id_b,
+                    "Initial attachment candidate list contains duplicate node IDs"
+                );
+
+                ASSERT_(
+                    active_scaffold.HasNode(node_id_b),
+                    "Initial attachment pair generation could not find scaffold node "
+                    + std::to_string(node_id_b)
+                );
+
+                const bdm::Double3& position_b =
+                    active_scaffold.GetNodePosition(
+                        node_id_b
+                    );
+
+                const bdm::Double3 difference =
+                    position_a -
+                    position_b;
+
+                const double separation_squared =
+                    difference[0] * difference[0] +
+                    difference[1] * difference[1] +
+                    difference[2] * difference[2];
+
+                if (separation_squared <
+                        min_separation_squared ||
+                    separation_squared >
+                        max_separation_squared) {
+
+                    continue;
+                }
+
+                valid_pairs.emplace_back(
+                    node_id_a,
+                    node_id_b
+                );
+            }
+        }
+
+        return valid_pairs;
+    }
+
+    inline
+    std::vector<int> FindInitialAttachmentSupportingPath(
+        const ObstacleScaffold& active_scaffold,
+        const int node_id_a,
+        const int node_id_b,
+        const double centreline_tolerance) const {
+
+        /*
+        * Find connected scaffold route between attachment point A and B,
+        * stopping when A-B is no longer straight - used to identify shared strut. 
+        */
+
+        ASSERT_(
+            node_id_a > 0 && node_id_b > 0 && node_id_a != node_id_b,
+            "Supporting-path search received invalid attachment node IDs"
+        );
+
+        ASSERT_(
+            active_scaffold.HasNode(node_id_a) && active_scaffold.HasNode(node_id_b),
+            "Supporting-path search could not find an attachment node"
+        );
+
+        ASSERT_(
+            std::isfinite(centreline_tolerance) && centreline_tolerance >= 0.0,
+            "Supporting-path centreline tolerance must be finite and non-negative"
+        );
+
+        const bdm::Double3& position_a =
+            active_scaffold.GetNodePosition(
+                node_id_a
+            );
+
+        const bdm::Double3& position_b =
+            active_scaffold.GetNodePosition(
+                node_id_b
+            );
+
+        const bdm::Double3 pair_vector = position_b - position_a;
+        const double pair_length = L2norm(pair_vector);
+
+        ASSERT_(
+            std::isfinite(pair_length) && pair_length > 0.0,
+            "Supporting-path search requires distinct attachment positions"
+        );
+
+        const bdm::Double3 pair_direction = pair_vector * (1.0 / pair_length);
+        const double projection_tolerance = 1.0e-12 * std::max(1.0, pair_length);
+
+        // ---------------------------------------------------------------------
+        // Search only through connected nodes that remain close to the
+        // straight A-B centreline and progress towards B.
+        // ---------------------------------------------------------------------
+
+        std::vector<int> nodes_to_visit = {node_id_a};
+        std::unordered_set<int> visited_nodes;
+        std::unordered_map<int, int> parent_node;
+        std::unordered_map<int, int> parent_element;
+
+        visited_nodes.insert(node_id_a);
+
+        bool reached_node_b = false;
+
+        while (!nodes_to_visit.empty()) {
+
+            const int current_node_id = nodes_to_visit.back();
+            nodes_to_visit.pop_back();
+
+            if (current_node_id == node_id_b) {
+                reached_node_b =
+                    true;
+                break;
+            }
+
+            const bdm::Double3& current_position =
+                active_scaffold.GetNodePosition(
+                    current_node_id
+                );
+
+            const double current_projection = (current_position - position_a) * pair_direction;
+
+            const auto& connected_node_ids =
+                active_scaffold.GetConnectedNodeIds(
+                    current_node_id
+                );
+
+            const auto& connected_element_ids =
+                active_scaffold.GetConnectedElementIds(
+                    current_node_id
+                );
+
+            ASSERT_(
+                connected_node_ids.size() == connected_element_ids.size(),
+                "Supporting-path scaffold connectivity is inconsistent"
+            );
+
+            for (std::size_t i = 0; i < connected_node_ids.size(); ++i) {
+
+                const int next_node_id = connected_node_ids[i];
+
+                if (visited_nodes.find(next_node_id) != visited_nodes.end()) {
+                    continue;
+                }
+
+                const bdm::Double3& next_position =
+                    active_scaffold.GetNodePosition(
+                        next_node_id
+                    );
+
+                const bdm::Double3 relative_position = next_position - position_a;
+                const double next_projection = relative_position * pair_direction;
+
+                // The path must continue forwards towards B.
+                if (next_projection <= current_projection + projection_tolerance) {
+                    continue;
+                }
+
+                // Do not continue beyond B.
+                if (next_projection > pair_length + projection_tolerance) {
+                    continue;
+                }
+
+                const bdm::Double3 projected_position = position_a + pair_direction * next_projection;
+                const double perpendicular_distance = L2norm(next_position - projected_position);
+
+                if (perpendicular_distance > centreline_tolerance) {
+                    continue;
+                }
+
+                visited_nodes.insert(next_node_id);
+
+                parent_node[next_node_id] = current_node_id;
+                parent_element[next_node_id] = connected_element_ids[i];
+
+                nodes_to_visit.push_back(next_node_id);
+            }
+        }
+
+        if (!reached_node_b) {
+            return {};
+        }
+
+        // ---------------------------------------------------------------------
+        // Reconstruct the supporting element sequence from B back to A.
+        // ---------------------------------------------------------------------
+
+        std::vector<int> supporting_element_ids;
+
+        int current_node_id = node_id_b;
+
+        while (current_node_id != node_id_a) {
+
+            ASSERT_(
+                parent_node.find(current_node_id) != parent_node.end() &&
+                parent_element.find(current_node_id) != parent_element.end(),
+                "Supporting-path reconstruction encountered a missing parent"
+            );
+
+            supporting_element_ids.push_back(
+                parent_element.at(current_node_id)
+            );
+
+            current_node_id = parent_node.at(
+                    current_node_id
+                );
+        }
+
+        std::reverse(
+            supporting_element_ids.begin(),
+            supporting_element_ids.end()
+        );
+
+        ASSERT_(
+            !supporting_element_ids.empty(),
+            "Supporting-path search reached B without any scaffold elements"
+        );
+
+        return supporting_element_ids;
+    }
+    
+    inline
+    std::vector<double> CalculateInitialAttachmentPairWeights(
+        const ObstacleScaffold& active_scaffold,
+        const std::vector<std::pair<int, int>>& candidate_pairs,
+        const double distance_sensitivity) const {
+
+        /*
+        * Calculate a weight for each candidate scaffold node pair based on the
+        * distance of the pair's midpoint from the current cell centre. The initial
+        * attachment search is only valid before the cell is established and requires
+        * no existing attachment records.
+        */
+
+        if (candidate_pairs.empty()) {
+            return {};
+        }
+
+        ASSERT_(
+            cell_matrix_lifecycle_status_ ==
+                CellMatrixLifecycleStatus::kNeedsInitialAttachment ||
+            cell_matrix_lifecycle_status_ ==
+                CellMatrixLifecycleStatus::kInitialAttachmentRetry,
+            "Initial attachment pair weighting requires an "
+            "uninitialised or retrying cell"
+        );
+
+        ASSERT_(
+            attachment_records_.empty(),
+            "Initial attachment pair weighting requires no existing "
+            "attachment records"
+        );
+
+        ASSERT_(
+            std::isfinite(distance_sensitivity) &&
+            distance_sensitivity >= 0.0,
+            "Initial attachment pair distance sensitivity must be "
+            "finite and non-negative"
+        );
+
+        const bdm::Double3 cell_position =
+            this->GetPosition();
+
+        std::vector<double> pair_midpoint_distances;
+
+        pair_midpoint_distances.reserve(
+            candidate_pairs.size()
+        );
+
+        // -------------------------------------------------------------------------
+        // Calculate pair-midpoint distances from the current cell centre
+        // -------------------------------------------------------------------------
+
+        for (const auto& pair : candidate_pairs) {
+
+            ASSERT_(
+                pair.first != pair.second,
+                "Initial attachment pair weighting received duplicate node IDs"
+            );
+
+            ASSERT_(
+                active_scaffold.HasNode(pair.first) &&
+                active_scaffold.HasNode(pair.second),
+                "Initial attachment pair weighting received an unknown scaffold node"
+            );
+
+            const bdm::Double3& position_a =
+                active_scaffold.GetNodePosition(
+                    pair.first
+                );
+
+            const bdm::Double3& position_b =
+                active_scaffold.GetNodePosition(
+                    pair.second
+                );
+
+            const bdm::Double3 pair_midpoint =
+                (
+                    position_a +
+                    position_b
+                ) * 0.5;
+
+            const double midpoint_distance =
+                L2norm(
+                    pair_midpoint -
+                    cell_position
+                );
+
+            ASSERT_(
+                std::isfinite(midpoint_distance) &&
+                midpoint_distance >= 0.0,
+                "Initial attachment pair weighting calculated an invalid "
+                "midpoint distance"
+            );
+
+            pair_midpoint_distances.push_back(
+                midpoint_distance
+            );
+        }
+
+        // -------------------------------------------------------------------------
+        // Determine the distance range across the candidate pairs
+        // -------------------------------------------------------------------------
+
+        const auto distance_limits =
+            std::minmax_element(
+                pair_midpoint_distances.begin(),
+                pair_midpoint_distances.end()
+            );
+
+        const double minimum_midpoint_distance =
+            *distance_limits.first;
+
+        const double maximum_midpoint_distance =
+            *distance_limits.second;
+
+        // -------------------------------------------------------------------------
+        // Convert midpoint distances into bounded weights
+        // -------------------------------------------------------------------------
+
+        std::vector<double> pair_weights;
+
+        pair_weights.reserve(
+            candidate_pairs.size()
+        );
+
+        for (const double midpoint_distance :
+            pair_midpoint_distances) {
+
+            pair_weights.push_back(
+                this->CalculateCandidateDistanceWeight(
+                    midpoint_distance,
+                    minimum_midpoint_distance,
+                    maximum_midpoint_distance,
+                    distance_sensitivity
+                )
+            );
+        }
+
+        ASSERT_(
+            pair_weights.size() ==
+                candidate_pairs.size(),
+            "Initial attachment pair and weight counts do not match"
+        );
+
+        return pair_weights;
+    }
+
+    inline
+    void FilterInitialAttachmentPairsByScaffoldObstruction(
+        const ObstacleScaffold& active_scaffold,
+        const std::vector<std::pair<int, int>>& candidate_pairs,
+        const std::vector<double>& candidate_weights,
+        std::vector<std::pair<int, int>>& valid_pairs,
+        std::vector<double>& valid_weights) const {
+
+        /*
+        * Remove scaffold-obstructed pairs after cheap midpoint weighting but 
+        * prior to calculating candidate probabilities.
+        */
+
+
+        ASSERT_(
+            candidate_pairs.size() ==
+                candidate_weights.size(),
+            "Initial attachment pair and weight counts do not match"
+        );
+
+        valid_pairs.clear();
+        valid_weights.clear();
+
+        if (candidate_pairs.empty()) {
+            return;
+        }
+
+        const std::string& phenotype_name =
+            this->params()->get<std::string>(
+                "phenotype_ID/" +
+                std::to_string(
+                    this->GetPhenotype()
+                )
+            );
+
+        const std::string mech_base =
+            phenotype_name +
+            "/cell_matrix_mechanics";
+
+        const double strut_radius =
+            this->params()->get<double>(
+                mech_base +
+                "/strut_radius"
+            );
+
+        const double scaffold_clearance =
+            this->params()->get<double>(
+                mech_base +
+                "/candidate_scaffold_clearance"
+            );
+
+        const double endpoint_buffer_multiplier =
+            this->params()->get<double>(
+                mech_base + "/initial_attachment_obstruction_endpoint_buffer_multiplier"
+            );
+
+        ASSERT_(
+            std::isfinite(endpoint_buffer_multiplier) &&
+            endpoint_buffer_multiplier >= 0.0,
+            "Initial attachment endpoint-buffer multiplier must be non-negative"
+        );
+
+        ASSERT_(
+            std::isfinite(strut_radius) &&
+            strut_radius >= 0.0,
+            "Initial attachment obstruction check requires a valid strut radius"
+        );
+
+        ASSERT_(
+            std::isfinite(scaffold_clearance) &&
+            scaffold_clearance >= 0.0,
+            "Initial attachment scaffold clearance must be non-negative"
+        );
+
+        valid_pairs.reserve(
+            candidate_pairs.size()
+        );
+
+        valid_weights.reserve(
+            candidate_weights.size()
+        );
+
+        for (std::size_t pair_index = 0;
+            pair_index < candidate_pairs.size();
+            ++pair_index) {
+
+            const auto& pair =
+                candidate_pairs[pair_index];
+
+            ASSERT_(
+                pair.first > 0 &&
+                pair.second > 0 &&
+                pair.first != pair.second,
+                "Initial attachment obstruction check received an invalid pair"
+            );
+
+            ASSERT_(
+                active_scaffold.HasNode(pair.first) &&
+                active_scaffold.HasNode(pair.second),
+                "Initial attachment obstruction check received an unknown node"
+            );
+
+            const bdm::Double3& pair_start =
+                active_scaffold.GetNodePosition(
+                    pair.first
+                );
+
+            const bdm::Double3& pair_end =
+                active_scaffold.GetNodePosition(
+                    pair.second
+                );
+
+            const bdm::Double3 pair_vector = pair_end - pair_start;
+
+            const double pair_length = L2norm(pair_vector);
+
+            ASSERT_(
+                std::isfinite(pair_length) && pair_length > 0.0,
+                "Initial attachment pair must have positive length"
+            );
+
+            const double endpoint_buffer =
+                std::min(
+                    endpoint_buffer_multiplier * strut_radius,
+                    0.45 * pair_length
+                );
+
+            const bdm::Double3 pair_midpoint = (pair_start + pair_end) * 0.5;
+
+            const double search_radius = 0.5 * pair_length + strut_radius + scaffold_clearance;
+
+            const std::vector<int> nearby_segment_ids =
+                active_scaffold.GetNearbySegmentIds(
+                    pair_midpoint,
+                    search_radius
+                );
+
+            bool obstructed = false;
+
+            const std::vector<int> supporting_element_ids =
+                this->FindInitialAttachmentSupportingPath(
+                    active_scaffold,
+                    pair.first,
+                    pair.second,
+                    strut_radius
+                );
+
+            for (const int element_id : nearby_segment_ids) {
+
+                ASSERT_(
+                    active_scaffold.HasSegment(element_id),
+                    "Initial attachment obstruction check received an unknown element"
+                );
+
+                const auto& scaffold_segment = active_scaffold.GetSegment(element_id);
+
+                // Ignore elements directly connected to either selected
+                // attachment node.
+                if (scaffold_segment.node_id_1 == pair.first ||
+                    scaffold_segment.node_id_2 == pair.first ||
+                    scaffold_segment.node_id_1 == pair.second ||
+                    scaffold_segment.node_id_2 == pair.second) {
+                    continue;
+                }
+
+                // Elements forming the connected (near-)collinear scaffold path
+                // between the two attachment nodes support the attachment pair
+                // and must not be treated as obstructions.
+                if (std::find(
+                        supporting_element_ids.begin(),
+                        supporting_element_ids.end(),
+                        element_id
+                    ) != supporting_element_ids.end()) {
+                    continue;
+                }
+
+                double closest_pair_fraction = 0.0;
+
+                const double separation =
+                    this->SegmentDistance(
+                        pair_start,
+                        pair_end,
+                        scaffold_segment.vertex_0,
+                        scaffold_segment.vertex_1,
+                        &closest_pair_fraction
+                    );
+
+                ASSERT_(
+                    std::isfinite(closest_pair_fraction) &&
+                    closest_pair_fraction >= 0.0 &&
+                    closest_pair_fraction <= 1.0,
+                    "Initial attachment obstruction check calculated "
+                    "an invalid pair position"
+                );
+
+                const double distance_from_attachment_a = closest_pair_fraction * pair_length;
+
+                const double distance_from_attachment_b = (1.0 - closest_pair_fraction) * pair_length;
+
+                const bool inside_attachment_buffer =
+                    distance_from_attachment_a < endpoint_buffer ||
+                    distance_from_attachment_b < endpoint_buffer;
+
+                if (inside_attachment_buffer) {
+                    continue;
+                }
+
+                const double required_clearance =
+                    scaffold_segment.radius +
+                    scaffold_clearance;
+
+                const double tolerance =
+                    1.0e-12 *
+                    std::max(
+                        1.0,
+                        required_clearance
+                    );
+
+                if (separation <
+                    required_clearance -
+                    tolerance) {
+
+                    obstructed =
+                        true;
+
+                    break;
+                }
+            }
+
+            if (obstructed) {
+                continue;
+            }
+
+            valid_pairs.push_back(
+                pair
+            );
+
+            valid_weights.push_back(
+                candidate_weights[pair_index]
+            );
+        }
+
+        ASSERT_(
+            valid_pairs.size() ==
+                valid_weights.size(),
+            "Filtered initial attachment pair and weight counts do not match"
+        );
+    }
+    
+    inline
+    double CalculateSegmentDistance(
+        const bdm::Double3& segment_1_start,
+        const bdm::Double3& segment_1_end,
+        const bdm::Double3& segment_2_start,
+        const bdm::Double3& segment_2_end,
+        double* segment_1_fraction = nullptr) const {
+        return this->SegmentDistance(
+            segment_1_start,
+            segment_1_end,
+            segment_2_start,
+            segment_2_end,
+            segment_1_fraction
+        );
+    }
+
+    inline
+    std::vector<double>
+    CalculateInitialAttachmentPairSelectionProbabilities(
+        const std::vector<double>& pair_weights) const {
+        
+        /*
+        * Convert the initial attachment pair weights into selection probabilities. 
+        * this reuses the already implemented stochastic weighting rule, so initial 
+        * attachment pairs use the same `random_selection_strength` interpretation 
+        * without duplicating probability logic.
+        */
+        
+        if (pair_weights.empty()) {
+            return {};
+        }
+
+        const std::string& phenotype_name =
+            this->params()->get<std::string>(
+                "phenotype_ID/" +
+                std::to_string(
+                    this->GetPhenotype()
+                )
+            );
+
+        const std::string mech_base =
+            phenotype_name +
+            "/cell_matrix_mechanics";
+
+        const double random_selection_strength =
+            this->params()->get<double>(
+                mech_base +
+                "/random_selection_strength"
+            );
+
+        return this->CalculateCandidateSelectionProbabilities(
+            pair_weights,
+            random_selection_strength
+        );
+    }
+
+    inline
+    double GenerateInitialAttachmentRandomDraw(
+        const unsigned int draw_index) const{
+        
+            /*
+            * Generate a reproducible random draw for the initial attachment 
+            * selection process.
+            */
+        
+        
+        const std::string& phenotype_name =
+            this->params()->get<std::string>(
+                "phenotype_ID/" +
+                std::to_string(
+                    this->GetPhenotype()
+                )
+            );
+
+        const std::string mech_base =
+            phenotype_name +
+            "/cell_matrix_mechanics";
+
+        const int random_state =
+            this->params()->get<int>(
+                mech_base +
+                "/random_state"
+            );
+
+        ASSERT_(
+            random_state >= 0,
+            "Initial attachment random_state must be non-negative"
+        );
+
+        const unsigned int cell_uid =
+            static_cast<unsigned int>(
+                this->GetUid().GetIndex()
+            );
+
+        std::seed_seq seed_sequence = {
+            static_cast<unsigned int>(
+                random_state
+            ),
+            cell_uid,
+            draw_index
+        };
+
+        std::mt19937 random_generator(
+            seed_sequence
+        );
+
+        std::uniform_real_distribution<double>
+            uniform_distribution(
+                0.0,
+                1.0
+            );
+
+        const double random_draw =
+            uniform_distribution(
+                random_generator
+            );
+
+        ASSERT_(
+            std::isfinite(random_draw) &&
+            random_draw >= 0.0 &&
+            random_draw < 1.0,
+            "Initial attachment RNG produced an invalid random draw"
+        );
+
+        return random_draw;
+    }
+
+    inline
+    std::pair<int, int> SelectInitialAttachmentPair(
+        const std::vector<std::pair<int, int>>& candidate_pairs,
+        const std::vector<double>& selection_probabilities,
+        const unsigned int draw_index) const {
+
+        /*
+        * Select a single initial attachment pair from the candidate pairs using the
+        * supplied selection probabilities.
+        */
+
+        ASSERT_(
+            !candidate_pairs.empty(),
+            "Initial attachment pair selection requires at least one pair"
+        );
+
+        ASSERT_(
+            candidate_pairs.size() == selection_probabilities.size(),
+            "Initial attachment pair and probability counts do not match"
+        );
+
+        double probability_sum = 0.0;
+
+        for (std::size_t i = 0; i < candidate_pairs.size(); ++i) {
+
+            ASSERT_(
+                candidate_pairs[i].first > 0 &&
+                candidate_pairs[i].second > 0 &&
+                candidate_pairs[i].first !=
+                    candidate_pairs[i].second,
+                "Initial attachment pair selection received an invalid pair"
+            );
+
+            ASSERT_(
+                std::isfinite(
+                    selection_probabilities[i]
+                ) &&
+                selection_probabilities[i] >= 0.0 &&
+                selection_probabilities[i] <= 1.0,
+                "Initial attachment pair selection received an invalid probability"
+            );
+
+            probability_sum +=
+                selection_probabilities[i];
+        }
+
+        ASSERT_(
+            std::fabs(
+                probability_sum - 1.0
+            ) <= 1.0e-12,
+            "Initial attachment pair probabilities do not sum to 1"
+        );
+
+        // Avoid the RNG when selection is fully deterministic.
+        for (std::size_t i = 0; i < selection_probabilities.size(); ++i) {
+
+            if (selection_probabilities[i] == 1.0) {
+                return candidate_pairs[i];
+            }
+        }
+
+        const double random_draw =
+            this->GenerateInitialAttachmentRandomDraw(
+                draw_index
+            );
+
+        double cumulative_probability = 0.0;
+
+        for (std::size_t i = 0; i < candidate_pairs.size(); ++i) {
+
+            cumulative_probability +=
+                selection_probabilities[i];
+
+            if (random_draw <
+                cumulative_probability) {
+
+                return candidate_pairs[i];
+            }
+        }
+
+        // Floating-point safety fallback.
+        return candidate_pairs.back();
+    }
+
+    inline
+    void ApplySelectedInitialAttachmentPair(
+        const ObstacleScaffold& active_scaffold,
+        const std::pair<int, int>& selected_pair) {
+
+        /*
+        * Turn the selected initial attachment pair into persistent ABM attachment record.
+        */
+
+        ASSERT_(
+            cell_matrix_lifecycle_status_ ==
+                CellMatrixLifecycleStatus::kNeedsInitialAttachment ||
+            cell_matrix_lifecycle_status_ ==
+                CellMatrixLifecycleStatus::kInitialAttachmentRetry,
+            "Initial attachment application requires an "
+            "uninitialised or retrying cell"
+        );
+
+        ASSERT_(
+            attachment_records_.empty(),
+            "Initial attachment application requires no existing attachments"
+        );
+
+        ASSERT_(
+            selected_pair.first > 0 &&
+            selected_pair.second > 0 &&
+            selected_pair.first !=
+                selected_pair.second,
+            "Initial attachment application received an invalid node pair"
+        );
+
+        ASSERT_(
+            active_scaffold.HasNode(
+                selected_pair.first
+            ) &&
+            active_scaffold.HasNode(
+                selected_pair.second
+            ),
+            "Initial attachment application received an unknown scaffold node"
+        );
+
+        const bdm::Double3& position_a =
+            active_scaffold.GetNodePosition(
+                selected_pair.first
+            );
+
+        const bdm::Double3& position_b =
+            active_scaffold.GetNodePosition(
+                selected_pair.second
+            );
+
+        const bdm::Double3 attachment_midpoint =
+            (
+                position_a +
+                position_b
+            ) * 0.5;
+
+        // Preserve the previous FEM behaviour:
+        // place the cell centre between its two initial attachments.
+        this->SetPosition(
+            attachment_midpoint
+        );
+
+        const std::vector<int> attachment_node_ids = {
+            selected_pair.first,
+            selected_pair.second
+        };
+
+        this->InitialiseAttachmentRecordsFromNodeIds(
+            active_scaffold,
+            attachment_node_ids
+        );
+
+        ASSERT_(
+            this->GetNumberOfAttachmentRecords() == 2,
+            "Initial attachment application did not create two attachments"
+        );
+
+        ASSERT_(
+            this->GetNumberOfPairMechanicsRecords() == 1,
+            "Initial attachment application did not create one pair mechanics record"
+        );
+
+        this->ValidateCellMatrixState();
     }
     
     // =============================================================================
@@ -342,6 +1483,197 @@ public:
         attachment_records_ = records;
     }
 
+    void InitialiseAttachmentRecordsFromNodeIds(
+        const ObstacleScaffold& active_scaffold,
+        const std::vector<int>& attachment_node_ids) {
+
+        /*
+        * Create the initial persistent attachment state directly from a supplied
+        * set of scaffold node IDs.
+        *
+        * This provides a common entry point for both:
+        *   1. attachments loaded from an initial-attachment file;
+        *   2. attachments generated directly by the ABM.
+        */
+
+        // Validate the initial state
+        ASSERT_(
+            cell_matrix_lifecycle_status_ == CellMatrixLifecycleStatus::kNeedsInitialAttachment ||
+            cell_matrix_lifecycle_status_ == CellMatrixLifecycleStatus::kInitialAttachmentRetry,
+            "Initial attachment assignment requires a cell awaiting initial attachment"
+        );
+
+        ASSERT_(
+            attachment_records_.empty(),
+            "Initial attachment assignment requires an empty attachment record set"
+        );
+
+        ASSERT_(
+            pair_mechanics_records_.empty(),
+            "Initial attachment assignment requires an empty pair-mechanics record set"
+        );
+
+        ASSERT_(
+            !attachment_node_ids.empty(),
+            "Initial attachment assignment received no scaffold node IDs"
+        );
+
+        // Build persistent attachment records
+         std::vector<AttachmentRecord> initial_attachments;
+
+        initial_attachments.reserve(
+            attachment_node_ids.size()
+        );
+
+        for (std::size_t i = 0;
+            i < attachment_node_ids.size();
+            ++i) {
+
+            const int node_id = attachment_node_ids[i];
+
+            ASSERT_(
+                node_id > 0,
+                "Initial attachment assignment received a non-positive scaffold node ID"
+            );
+
+            ASSERT_(
+                active_scaffold.HasNode(node_id),
+                "Initial attachment assignment could not find scaffold node ID "
+                + std::to_string(node_id)
+            );
+
+            // Prevent duplicate attachment nodes.
+            for (std::size_t j = 0; j < i; ++j) {
+
+                ASSERT_(
+                    attachment_node_ids[j] != node_id,
+                    "Initial attachment assignment contains duplicate scaffold node ID "
+                    + std::to_string(node_id)
+                );
+            }
+
+            AttachmentRecord record;
+            record.node_id = node_id;
+
+            record.position =
+                active_scaffold.GetNodePosition(
+                    node_id
+                );
+
+            record.newly_formed = true;
+
+            record.attachment_age = 0.0;
+
+            record.detachment_threshold =
+                this->GenerateAttachmentDetachmentThreshold();
+
+            initial_attachments.push_back(
+                record
+            );
+        }
+
+        // Store the initial attachment state
+        this->SetAttachmentRecords(
+            initial_attachments
+        );
+
+        // The ABM now owns a valid attachment set.
+        this->SetCellMatrixLifecycleStatus(
+            CellMatrixLifecycleStatus::kEstablished
+        );
+
+        // Initialise pair mechanics
+        ASSERT_(
+            this->params() != nullptr,
+            "Initial attachment assignment requires valid model parameters"
+        );
+
+        ASSERT_(
+            this->GetPhenotype() > 0,
+            "Initial attachment assignment requires a positive phenotype ID"
+        );
+
+        const std::string& phenotype_name =
+            this->params()->get<std::string>(
+                "phenotype_ID/" +
+                std::to_string(
+                    this->GetPhenotype()
+                )
+            );
+
+        const std::string mech_base =
+            phenotype_name + "/cell_matrix_mechanics";
+
+        const double min_contractile_force =
+            this->params()->get<double>(
+                mech_base +
+                "/min_contractile_force"
+            );
+
+        ASSERT_(
+            std::isfinite(min_contractile_force) && min_contractile_force >= 0.0,
+            "Initial attachment assignment received an invalid minimum "
+            "contractile force"
+        );
+
+        this->SynchronizePairMechanicsWithAttachments();
+
+        // The new attachment geometry has not yet been processed by the FEM.
+        this->MarkMechanicsForRecalculation();
+
+        // Validate the resulting state
+        ASSERT_(
+            this->GetNumberOfAttachmentRecords() ==
+                attachment_node_ids.size(),
+            "Initial attachment assignment produced an inconsistent attachment count"
+        );
+
+        const std::size_t expected_pair_count =
+            attachment_node_ids.size() *
+            (attachment_node_ids.size() - 1) /
+            2;
+
+        ASSERT_(
+            this->GetNumberOfPairMechanicsRecords() ==
+                expected_pair_count,
+            "Initial attachment assignment produced an inconsistent pair count"
+        );
+
+        for (std::size_t pair_index = 0;
+            pair_index < this->GetNumberOfPairMechanicsRecords();
+            ++pair_index) {
+
+            const PairMechanicsRecord& pair_record =
+                this->GetPairMechanicsRecord(
+                    pair_index
+                );
+
+            ASSERT_(
+                pair_record.node_id_a > 0 &&
+                pair_record.node_id_b > 0 &&
+                pair_record.node_id_a != pair_record.node_id_b,
+                "Initial pair mechanics contains invalid node IDs"
+            );
+
+            ASSERT_(
+                pair_record.k_ce == 0.0,
+                "Initial pair mechanics must start with k_ce = 0"
+            );
+
+            ASSERT_(
+                !pair_record.has_valid_k_ce,
+                "Initial pair mechanics cannot contain valid k_ce before FEM calculation"
+            );
+
+            ASSERT_(
+                pair_record.contractile_force == min_contractile_force,
+                "Initial pair mechanics did not use min_contractile_force"
+            );
+        }
+
+        this->ValidateCellMatrixState();
+    }
+
     void UpdateAttachmentRecordsFromAbm(
         const std::vector<AttachmentRecord>& records) {
         /*
@@ -375,6 +1707,17 @@ public:
 
         // Mark the cell-level mechanics as outdated
         MarkMechanicsForRecalculation();
+    }
+
+    inline
+    void AddInitialSelectedAttachment(
+        const ObstacleScaffold& active_scaffold,
+        const int selected_node_id)
+    {
+        this->AddSelectedAttachment(
+            active_scaffold,
+            selected_node_id
+        );
     }
 
     const std::vector<AttachmentRecord>& GetAttachmentRecords() const {
@@ -1081,7 +2424,7 @@ public:
     void Set2DeleteProtrusions();
     //
     //
-    private:
+private:
     //
     void CheckAndFixDiameter();
     bool CheckProtrusionAxis(bdm::Double3 axis);
@@ -2093,7 +3436,8 @@ public:
         const bdm::Double3& segment_1_start,
         const bdm::Double3& segment_1_end,
         const bdm::Double3& segment_2_start,
-        const bdm::Double3& segment_2_end) const {
+        const bdm::Double3& segment_2_end,
+        double* segment_1_fraction = nullptr) const {
         /*
         * Function goal
         * -------------
@@ -2248,6 +3592,10 @@ public:
             std::fabs(s_numerator) < tolerance
                 ? 0.0
                 : s_numerator / s_denominator;
+
+        if (segment_1_fraction != nullptr) {
+            *segment_1_fraction = s;
+        }
 
         const double t =
             std::fabs(t_numerator) < tolerance

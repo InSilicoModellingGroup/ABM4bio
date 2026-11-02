@@ -78,10 +78,12 @@ class ObstacleScaffold : public Obstacle {
   // ---------------------------------------------------------------------------
 
   struct ScaffoldNode {
-    int id;
-    bdm::Double3 position;
-    double radius;
-    std::vector<int> connected_node_ids;
+      int id;
+      bdm::Double3 position;
+      double radius;
+
+      std::vector<int> connected_node_ids;
+      std::vector<int> connected_element_ids;
   };
 
   // ---------------------------------------------------------------------------
@@ -381,7 +383,9 @@ class ObstacleScaffold : public Obstacle {
       // -----------------------------------------------------------------------
 
       node_1_it->second.connected_node_ids.push_back(node_id_2);
+      node_1_it->second.connected_element_ids.push_back(element_id);
       node_2_it->second.connected_node_ids.push_back(node_id_1);
+      node_2_it->second.connected_element_ids.push_back(element_id);
 
       // -----------------------------------------------------------------------
       // Step 5b: Preserve the existing segment representation
@@ -441,6 +445,11 @@ class ObstacleScaffold : public Obstacle {
   inline const std::vector<int>& GetConnectedNodeIds(
       const int node_id) const {
     return GetNode(node_id).connected_node_ids;
+  }
+
+  inline const std::vector<int>& GetConnectedElementIds(
+      const int node_id) const {
+    return GetNode(node_id).connected_element_ids;
   }
 
   inline bool HasSegment(const int element_id) const {

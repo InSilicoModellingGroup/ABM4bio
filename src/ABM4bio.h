@@ -231,6 +231,10 @@ void read_csv_file(const std::string& fn,
     ABORT_("fatal error; parameter \"output_directory\" not inserted");
   if (!params.have_parameter<std::string>("simulation_title"))
     ABORT_("fatal error; parameter \"simulation_title\" not inserted");
+  // Define path for attached cell positions - only used when cell-matrix interacting
+  if (!params.have_parameter<std::string>("initial_attachment_file")) {
+    params.set<std::string>("initial_attachment_file") = "";
+  }
   // create the simulation directory and sub-directories
   {
     std::string cmd;
@@ -1842,8 +1846,64 @@ void init_cells(bdm::Simulation& sim,
           }
 
           // ---------------------------------------------------------------------
+          // Initial attachment parameters
+          // ---------------------------------------------------------------------
+
+          if (!params.have_parameter<int>(
+                  mech_base +
+                  "/initial_attachment_max_strut_candidates")) {
+
+              params.set<int>(
+                  mech_base +
+                  "/initial_attachment_max_strut_candidates"
+              ) = 25;
+          }
+
+          if (!params.have_parameter<int>(
+                  mech_base +
+                  "/initial_attachment_positions_per_strut")) {
+
+              params.set<int>(
+                  mech_base +
+                  "/initial_attachment_positions_per_strut"
+              ) = 12;
+          }
+          
+          // ---------------------------------------------------------------------
           // Candidate attachment parameters
           // ---------------------------------------------------------------------
+
+          const int initial_attachment_max_strut_candidates =
+            params.get<int>(
+                mech_base +
+                "/initial_attachment_max_strut_candidates"
+            );
+
+          const int initial_attachment_positions_per_strut =
+            params.get<int>(
+                mech_base +
+                "/initial_attachment_positions_per_strut"
+            );
+
+          if (initial_attachment_max_strut_candidates <= 0) {
+
+              ABORT_(
+                  "model parameter \"" +
+                  mech_base +
+                  "/initial_attachment_max_strut_candidates\" "
+                  "must be greater than zero"
+              );
+          }
+
+          if (initial_attachment_positions_per_strut <= 0) {
+
+              ABORT_(
+                  "model parameter \"" +
+                  mech_base +
+                  "/initial_attachment_positions_per_strut\" "
+                  "must be greater than zero"
+              );
+          }
 
           // Prevent outdated parameter names from being silently ignored.
           if (params.have_parameter<double>(
@@ -1928,6 +1988,17 @@ void init_cells(bdm::Simulation& sim,
                 mech_base +
                 "/candidate_cell_clearance"
             ) = 0.0;
+          }
+
+          if (!params.have_parameter<double>(
+            mech_base +
+            "/initial_attachment_obstruction_endpoint_buffer_multiplier")) {
+
+            params.set<double>(
+                mech_base +
+                "/initial_attachment_obstruction_endpoint_buffer_multiplier"
+            ) = 2.0;
+
           }
 
           // ---------------------------------------------------------------------
@@ -2033,9 +2104,26 @@ void init_cells(bdm::Simulation& sim,
                 "must be finite and between 0 and 1"
             );
           }
+
+          const double initial_attachment_obstruction_endpoint_buffer_multiplier =
+              params.get<double>(
+                  mech_base +
+                  "/initial_attachment_obstruction_endpoint_buffer_multiplier"
+              );
+
+          if (
+            !std::isfinite(initial_attachment_obstruction_endpoint_buffer_multiplier) ||
+              initial_attachment_obstruction_endpoint_buffer_multiplier < 0.0) {
+
+              ABORT_(
+                  "model parameter \"" + mech_base +
+                  "/initial_attachment_obstruction_endpoint_buffer_multiplier\" "
+                  "must be finite and non-negative"
+              );
+          }
         
           if (!params.have_parameter<bool>(mech_base + "/verbose"))
-          params.set<bool>(mech_base + "/verbose") = false;
+            params.set<bool>(mech_base + "/verbose") = false;
       }
       //
       // ...end of cell phenotypes loop
@@ -5605,7 +5693,29 @@ int simulate(const std::string& fname, const int seed)
   // load all vessels in the simulation
   init_vessels(sim, biochem);
   // load all cells in the simulation
-  init_cells(sim, cells, biochem); 
+  init_cells(sim, cells, biochem);
+  
+  // Initial cell-scaffold attachment (START) ----------------------------------------------------------
+
+  // Build the reusable scaffold spatial indices once for initial attachment.
+  cell_matrix_interaction.PrepareActiveScaffoldSpatialIndex(cells, obstacles.scaffold);
+  // Retrieve initial attachment file path 
+  const std::string initial_attachment_file = params.get<std::string>("initial_attachment_file");
+  // Reuse a previously saved configuration when one is provided.
+  if (!initial_attachment_file.empty()) {
+    cell_matrix_interaction.ImportInitialAttachmentConfiguration(sim, obstacles.scaffold);
+  }
+// Existing imported cells seed the caches.
+// Cells without imported attachments generate new attachments.
+const auto initial_attachment_result =
+    cell_matrix_interaction.GenerateInitialAttachmentsForPopulation(
+        sim, cells, obstacles.scaffold
+    );
+// Always save the final configuration used by this simulation.
+cell_matrix_interaction.ExportInitialAttachmentConfiguration(sim);
+
+  // Initial cell-scaffold attachment (END) ----------------------------------------------------------
+  
   // if mechanics is enabled, then save the setup config for the cell-matrix interaction
   save_mechanics_setup(cells);
   // save the initial mechanical snapshot of the simulation
@@ -5626,8 +5736,7 @@ int simulate(const std::string& fname, const int seed)
             viz_step = params.get<int>("visualization_interval");
   const double time_step = params.get<double>("time_step");
   
-  for (int time=1; time<=n_time; time++)
-    { 
+  for (int time=1; time<=n_time; time++){ 
       
       params.set<int>("index time") = time;
       const double TIME = time*time_step;
