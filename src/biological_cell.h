@@ -2048,7 +2048,7 @@ public:
             updated_records
         );
     }
-
+    
     void SetPairContractileForce(
         const std::size_t index,
         const double contractile_force) {

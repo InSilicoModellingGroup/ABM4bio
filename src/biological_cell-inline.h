@@ -2420,36 +2420,40 @@ bool bdm::BiologicalCell::CheckMigration()
               random_selection_strength
           );
 
-          if (formed_attachment_count > 0) {
+      if (formed_attachment_count > 0) {
 
-            // Reposition once using the final expanded attachment set.
-            const bdm::Double3 position_before_repositioning =
-                this->GetPosition();
+        // Reposition once using the final expanded attachment set.
+        const bdm::Double3 position_before_repositioning =
+            this->GetPosition();
 
-            const bool formation_repositioned =
-                this->RepositionFromAttachments(
-                    active_scaffold,
-                    position_before_repositioning
-                );
+        const bool formation_repositioned =
+            this->RepositionFromAttachments(
+                active_scaffold,
+                position_before_repositioning
+            );
 
-            if (!formation_repositioned) {
-              return false;
-            }
+        if (!formation_repositioned) {
+          return false;
+        }
 
-            std::cout
-              << "[FORMATION REPOSITION] cell="
-              << this->GetUid().GetIndex()
-              << " attachments="
-              << this->GetNumberOfAttachmentRecords()
-              << " displacement="
-              << L2norm(
-                  this->GetPosition() -
-                  position_before_repositioning
-              )
-              << std::endl;
+        if (this->params()->get<bool>(
+            mech_base + "/verbose")) {
 
-            repositioned = true;
-          }
+          std::cout
+            << "[FORMATION REPOSITION] cell="
+            << this->GetUid().GetIndex()
+            << " attachments="
+            << this->GetNumberOfAttachmentRecords()
+            << " displacement="
+            << L2norm(
+                this->GetPosition() -
+                position_before_repositioning
+            )
+            << std::endl;
+
+          repositioned = true;
+        }
+      }
     }
 
     // -----------------------------------------------------------------------

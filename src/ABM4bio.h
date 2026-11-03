@@ -5705,14 +5705,14 @@ int simulate(const std::string& fname, const int seed)
   if (!initial_attachment_file.empty()) {
     cell_matrix_interaction.ImportInitialAttachmentConfiguration(sim, obstacles.scaffold);
   }
-// Existing imported cells seed the caches.
-// Cells without imported attachments generate new attachments.
-const auto initial_attachment_result =
-    cell_matrix_interaction.GenerateInitialAttachmentsForPopulation(
-        sim, cells, obstacles.scaffold
-    );
-// Always save the final configuration used by this simulation.
-cell_matrix_interaction.ExportInitialAttachmentConfiguration(sim);
+  // Existing imported cells seed the caches.
+  // Cells without imported attachments generate new attachments.
+  const auto initial_attachment_result =
+      cell_matrix_interaction.GenerateInitialAttachmentsForPopulation(
+          sim, cells, obstacles.scaffold
+      );
+  // Always save the final configuration used by this simulation.
+  cell_matrix_interaction.ExportInitialAttachmentConfiguration(sim);
 
   // Initial cell-scaffold attachment (END) ----------------------------------------------------------
   

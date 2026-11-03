@@ -7234,7 +7234,6 @@ class CellMatrixInteraction {
 
             // Do not update cell_state here.
             // cell_state_ represents the last ABM-to-FEM state exported by ABM.
-            
             imported_flag_it->second = true;
 
             if (mechanics_verbose && i < debug_cells_to_print) {
