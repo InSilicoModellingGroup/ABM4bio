@@ -2392,16 +2392,6 @@ bool bdm::BiologicalCell::CheckMigration()
               "/random_selection_strength"
           );
 
-      /*
-       * When detachment caused repositioning, use that displacement as the
-       * directional-persistence reference. Otherwise there was no new
-       * attachment-driven movement during this timestep.
-       */
-
-      // Use the cell's last movement as the persistence direction.
-      const bdm::Double3 recent_movement =
-        this->last_migration_displacement_;
-
       // ---------------------------------------------------------------------
       // Step 5: Attempt the requested attachment additions
       // ---------------------------------------------------------------------
@@ -2410,7 +2400,6 @@ bool bdm::BiologicalCell::CheckMigration()
           this->AttemptAttachmentFormation(
               active_scaffold,
               requested_addition_count,
-              recent_movement,
               min_attachment_separation,
               max_attachment_separation,
               candidate_scaffold_clearance,
@@ -2459,24 +2448,6 @@ bool bdm::BiologicalCell::CheckMigration()
     // -----------------------------------------------------------------------
     // Step 6: Stop legacy migration when attachment turnover changed the cell
     // -----------------------------------------------------------------------
-
-    // Store the overall attachment-driven movement for directional persistence.
-    if (attachments_detached ||
-        formed_attachment_count > 0) {
-
-      const bdm::Double3 attachment_displacement =
-          this->GetPosition() -
-          original_position;
-
-      if (L2norm(attachment_displacement) >
-          this->params()->get<double>(
-              "migration_tolerance"
-          )) {
-
-        this->last_migration_displacement_ =
-            attachment_displacement;
-      }
-    }
     
     if (attachments_detached ||
         formed_attachment_count > 0) {

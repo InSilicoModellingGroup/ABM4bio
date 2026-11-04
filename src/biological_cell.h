@@ -2507,6 +2507,10 @@ private:
     // coordinate and associated local mechanics state.
     std::vector<AttachmentRecord> attachment_records_;
 
+    // Direction from the cell centre toward the most recently formed attachment.
+    // Used only for directional persistence during future attachment formation.
+    bdm::Double3 last_attachment_direction_ = {0.0, 0.0, 0.0};
+
     // Persistent pairwise mechanics records.
     //
     // Each record stores the two attachment node IDs and the FEM-calculated
@@ -4458,7 +4462,6 @@ private:
     std::vector<double> CalculateAttachmentCandidateWeights(
         const ObstacleScaffold& active_scaffold,
         const std::vector<int>& candidate_node_ids,
-        const bdm::Double3& recent_movement,
         const double distance_sensitivity,
         const double persistence_sensitivity) const {
         /*
@@ -4573,7 +4576,7 @@ private:
             const double persistence_weight =
                 this->CalculateCandidatePersistenceWeight(
                     candidate_position,
-                    recent_movement,
+                    last_attachment_direction_,
                     persistence_sensitivity
                 );
 
@@ -4940,7 +4943,7 @@ private:
 
         this->UpdateAttachmentRecordsFromAbm(
             updated_attachments
-        );
+        );     
 
         // Validate the updated cell-matrix state
         ASSERT_(
@@ -4961,7 +4964,6 @@ private:
     std::size_t AttemptAttachmentFormation(
         const ObstacleScaffold& active_scaffold,
         const std::size_t requested_addition_count,
-        const bdm::Double3& recent_movement,
         const double min_attachment_separation,
         const double max_attachment_separation,
         const double candidate_scaffold_clearance,
@@ -5026,7 +5028,6 @@ private:
                 this->CalculateAttachmentCandidateWeights(
                     active_scaffold,
                     candidate_node_ids,
-                    recent_movement,
                     cell_distance_sensitivity,
                     persistence_sensitivity
                 );
@@ -5057,12 +5058,73 @@ private:
                     selection_probabilities
                 );
 
+            // Store the direction toward the dynamically selected attachment.
+            bdm::Double3 selected_attachment_direction =
+                active_scaffold.GetNodePosition(
+                    selected_node_id
+                ) - this->GetPosition();
+
+            const double selected_attachment_direction_magnitude =
+                L2norm(
+                    selected_attachment_direction
+                );
+
+            // Commit the new attachment.
             this->AddSelectedAttachment(
                 active_scaffold,
                 selected_node_id
             );
 
+            // Update directional persistence only for dynamic attachment formation.
+            if (
+                selected_attachment_direction_magnitude >
+                this->params()->get<double>(
+                    "migration_tolerance"
+                )
+            ) {
+
+                selected_attachment_direction /=
+                    selected_attachment_direction_magnitude;
+
+                last_attachment_direction_ =
+                    selected_attachment_direction;
+
+            } else {
+
+                last_attachment_direction_ = {
+                    0.0,
+                    0.0,
+                    0.0
+                };
+            }
+
+            if (this->params()->get<bool>(
+                this->params()->get<std::string>(
+                    "phenotype_ID/" +
+                    std::to_string(
+                        this->GetPhenotype()
+                    )
+                ) +
+                "/cell_matrix_mechanics/verbose"
+            )) {
+
+            std::cout
+                << "[ATTACHMENT PERSISTENCE] cell="
+                << this->GetUid().GetIndex()
+                << " selected_node="
+                << selected_node_id
+                << " direction=("
+                << last_attachment_direction_[0]
+                << ", "
+                << last_attachment_direction_[1]
+                << ", "
+                << last_attachment_direction_[2]
+                << ")"
+                << std::endl;
+        }
+
             ++formed_attachment_count;
+
         }
 
         // Validate the final attachment state
