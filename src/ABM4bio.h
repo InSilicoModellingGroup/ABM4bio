@@ -1458,9 +1458,9 @@ void init_cells(bdm::Simulation& sim,
               + "/mechanics_outputs";
 
           const std::string mkdir_command =
-              "mkdir -p \"" +
-              mechanics_output_directory +
-              "\"";
+            "mkdir -p \"" +
+            mechanics_output_directory +
+            "/vtu\"";
 
           ASSERT_(
               0 == std::system(mkdir_command.c_str()),
@@ -4576,8 +4576,11 @@ void save_mechanics_snapshot(
         << "attachment_coordinates,"
         << "min_pairwise_distance,"
         << "max_pairwise_distance,"
-        << "k_ce,"
-        << "contractile_force"
+        << "pair_node_ids,"
+        << "pair_distances,"
+        << "pair_k_ce,"
+        << "pair_k_ce_valid,"
+        << "pair_contractile_force"
         << std::endl;
   }
 
@@ -4636,21 +4639,6 @@ void save_mechanics_snapshot(
         << position[1] << ","
         << position[2]
         << "]\",";
-
-    // At step 0 the cells have not yet interacted with the scaffold.
-    if (step == 0) {
-
-      fout
-          << "\"[]\","
-          << "\"[]\","
-          << 0.0 << ","
-          << 0.0 << ","
-          << 0.0 << ","
-          << 0.0
-          << std::endl;
-
-      continue;
-    }
 
     const auto& attachments = cell->GetAttachmentRecords();
 
@@ -4720,11 +4708,100 @@ void save_mechanics_snapshot(
     fout << min_pairwise_distance << ",";
     fout << max_pairwise_distance << ",";
 
-    // Cell-level mechanics.
+    
+    // Pairwise mechanics.
+    const auto& pair_records = cell->GetPairMechanicsRecords();
+
+    const std::size_t n = attachments.size();
+    const std::size_t expected_pairs = n >= 2 ? n * (n - 1) / 2 : 0;
+
+    ASSERT_(
+        pair_records.size() == expected_pairs,
+        "Unexpected pair mechanics record count for cell " + std::to_string(cell_id)
+    );
+
+    // Prepare aligned pair data.
+    std::ostringstream pair_ids;
+    std::ostringstream pair_distances;
+    std::ostringstream pair_k_ce;
+    std::ostringstream pair_valid;
+    std::ostringstream pair_forces;
+
+    pair_ids << "[";
+    pair_distances << "[";
+    pair_k_ce << "[";
+    pair_valid << "[";
+    pair_forces << "[";
+
+    bool first_pair = true;
+
+    for (std::size_t i = 0; i < n; ++i) {
+      for (std::size_t j = i + 1; j < n; ++j) {
+
+        const int node_a = std::min(
+            attachments[i].node_id,
+            attachments[j].node_id
+        );
+
+        const int node_b = std::max(
+            attachments[i].node_id,
+            attachments[j].node_id
+        );
+
+        // Find the corresponding unordered mechanics record.
+        std::size_t match_index = pair_records.size();
+        int matches = 0;
+
+        for (std::size_t r = 0; r < pair_records.size(); ++r) {
+
+          const auto& record = pair_records[r];
+
+          if (std::min(record.node_id_a, record.node_id_b) == node_a &&
+              std::max(record.node_id_a, record.node_id_b) == node_b) {
+
+            match_index = r;
+            ++matches;
+          }
+        }
+
+        ASSERT_(
+            matches == 1,
+            "Expected exactly one mechanics record for cell "
+            + std::to_string(cell_id)
+        );
+
+        const auto& record = pair_records[match_index];
+
+        // Calculate current attachment-pair distance.
+        const auto difference =
+            attachments[i].position - attachments[j].position;
+
+        const double distance = std::sqrt(
+            difference[0] * difference[0] +
+            difference[1] * difference[1] +
+            difference[2] * difference[2]
+        );
+
+        const char* separator = first_pair ? "" : ",";
+
+        pair_ids << separator << "[" << node_a << "," << node_b << "]";
+        pair_distances << separator << distance;
+        pair_k_ce << separator << record.k_ce;
+        pair_valid << separator << (record.has_valid_k_ce ? 1 : 0);
+        pair_forces << separator << record.contractile_force;
+
+        first_pair = false;
+      }
+    }
+
     fout
-        << cell->GetKce() << ","
-        << cell->GetContractileForce()
+        << "\"" << pair_ids.str() << "]\","
+        << "\"" << pair_distances.str() << "]\","
+        << "\"" << pair_k_ce.str() << "]\","
+        << "\"" << pair_valid.str() << "]\","
+        << "\"" << pair_forces.str() << "]\""
         << std::endl;
+
   }
 
   fout.close();
@@ -4781,7 +4858,7 @@ void save_mechanics_snapshot(
       pvd_file
           << "  <DataSet timestep=\""
           << output_time
-          << "\" group=\"\" part=\"0\" file=\"cells."
+          << "\" group=\"\" part=\"0\" file=\"vtu/cells."
           << t
           << ".vtu\"/>"
           << std::endl;
@@ -4809,8 +4886,7 @@ void save_mechanics_snapshot(
   std::vector<int> point_phenotype;
   std::vector<double> point_diameter;
   std::vector<double> point_trail;
-  std::vector<double> point_k_ce;
-  std::vector<double> point_contractile_force;
+  
   std::vector<int> point_n_attachments;
   std::vector<int> point_attachment_node_id;
 
@@ -4825,10 +4901,25 @@ void save_mechanics_snapshot(
   // VTK cell data.
   std::vector<int> geometry_cell_id;
   std::vector<int> geometry_type;
-  std::vector<double> geometry_k_ce;
+  std::vector<double> geometry_pair_distance;
+  std::vector<double> geometry_pair_k_ce;
+  std::vector<int> geometry_pair_k_ce_valid;
+  std::vector<double> geometry_pair_contractile_force;
   std::vector<int> geometry_attachment_node_id;
   std::vector<int> geometry_attachment_node_id_A;
   std::vector<int> geometry_attachment_node_id_B;
+
+  const double no_pair_value =
+    std::numeric_limits<double>::quiet_NaN();
+
+  auto append_nonpair_mechanics = [&]() {
+
+    geometry_pair_distance.push_back(no_pair_value);
+    geometry_pair_k_ce.push_back(no_pair_value);
+    geometry_pair_k_ce_valid.push_back(0);
+    geometry_pair_contractile_force.push_back(no_pair_value);
+
+  };
 
   // Build the geometry one cell at a time.
   for (const auto* cell : biological_cells) {
@@ -4838,17 +4929,9 @@ void save_mechanics_snapshot(
     const double diameter = cell->GetDiameter();
     const double trail = cell->GetTrail();
 
-    // Step 0 contains no cell-matrix mechanics yet.
-    double k_ce = 0.0;
-    double contractile_force = 0.0;
-    int n_attachments = 0;
-
-    if (step != 0) {
-
-      k_ce = cell->GetKce();
-      contractile_force = cell->GetContractileForce();
-      n_attachments = static_cast<int>(cell->GetNumberOfAttachmentRecords());
-    }
+    const int n_attachments = static_cast<int>(
+        cell->GetNumberOfAttachmentRecords()
+    );
 
     // Add the cell-centre 
     const int centre_point_index = static_cast<int>(vtk_points.size());
@@ -4859,8 +4942,6 @@ void save_mechanics_snapshot(
     point_phenotype.push_back(phenotype);
     point_diameter.push_back(diameter);
     point_trail.push_back(trail);
-    point_k_ce.push_back(k_ce);
-    point_contractile_force.push_back(contractile_force);
     point_n_attachments.push_back(n_attachments);
     point_attachment_node_id.push_back(-1);
 
@@ -4872,14 +4953,13 @@ void save_mechanics_snapshot(
 
     geometry_cell_id.push_back(cell_id);
     geometry_type.push_back(0);
-    geometry_k_ce.push_back(k_ce);
+    append_nonpair_mechanics();
     geometry_attachment_node_id.push_back(-1);
     geometry_attachment_node_id_A.push_back(-1);
     geometry_attachment_node_id_B.push_back(-1);
 
-    // At step 0 there is no attachment geometry.
-    if (step != 0) {
-
+    // Generate geometry for all existing attachments.
+    {
       const auto& attachments = cell->GetAttachmentRecords();
 
       // Store the VTK point index for each attachment.
@@ -4899,8 +4979,7 @@ void save_mechanics_snapshot(
         point_phenotype.push_back(phenotype);
         point_diameter.push_back(diameter);
         point_trail.push_back(trail);
-        point_k_ce.push_back(k_ce);
-        point_contractile_force.push_back(contractile_force);
+
         point_n_attachments.push_back(n_attachments);
         point_attachment_node_id.push_back(attachment.node_id);
 
@@ -4917,7 +4996,7 @@ void save_mechanics_snapshot(
 
         geometry_cell_id.push_back(cell_id);
         geometry_type.push_back(1);
-        geometry_k_ce.push_back(k_ce);
+        append_nonpair_mechanics();
         geometry_attachment_node_id.push_back(attachment.node_id);
 
         geometry_attachment_node_id_A.push_back(-1);
@@ -4925,7 +5004,7 @@ void save_mechanics_snapshot(
 
       }
 
-      // Add attachment-to-attachment (stress-fibre?) lines
+      // Add attachment-to-attachment contractile pair (stress-fibre?) lines
       
       for (std::size_t i = 0; i < attachments.size(); ++i) {
 
@@ -4941,16 +5020,68 @@ void save_mechanics_snapshot(
           // VTK_LINE = 3.
           vtk_types.push_back(3);
 
+          
+          const int node_a = std::min(
+              attachments[i].node_id,
+              attachments[j].node_id
+          );
+
+          const int node_b = std::max(
+              attachments[i].node_id,
+              attachments[j].node_id
+          );
+
+          // Find the corresponding unordered pair record.
+          const auto& records = cell->GetPairMechanicsRecords();
+
+          const bdm::BiologicalCell::PairMechanicsRecord* pair_record = nullptr;
+          int matches = 0;
+
+          for (const auto& record : records) {
+
+            if (std::min(record.node_id_a, record.node_id_b) == node_a &&
+                std::max(record.node_id_a, record.node_id_b) == node_b) {
+
+              pair_record = &record;
+              ++matches;
+            }
+          }
+
+          ASSERT_(
+              matches == 1,
+              "Expected exactly one pair mechanics record for cell "
+              + std::to_string(cell_id)
+          );
+
+          // Current pair distance.
+          const auto difference =
+              attachments[i].position - attachments[j].position;
+
+          const double distance = std::sqrt(
+              difference[0] * difference[0] +
+              difference[1] * difference[1] +
+              difference[2] * difference[2]
+          );
+
+          // Store pair-specific mechanics.
           geometry_cell_id.push_back(cell_id);
           geometry_type.push_back(2);
-          geometry_k_ce.push_back(k_ce);
+
+          geometry_pair_distance.push_back(distance);
+          geometry_pair_k_ce.push_back(pair_record->k_ce);
+          geometry_pair_k_ce_valid.push_back(
+              pair_record->has_valid_k_ce ? 1 : 0
+          );
+          geometry_pair_contractile_force.push_back(
+              pair_record->contractile_force
+          );
 
           // These fields apply only to centre-to-attachment lines.
           geometry_attachment_node_id.push_back(-1);
 
-          // Store both attachment IDs for the stress fibre.
-          geometry_attachment_node_id_A.push_back(attachments[i].node_id);
-          geometry_attachment_node_id_B.push_back(attachments[j].node_id);
+          // Store both scaffold node IDs defining the contractile pair.
+          geometry_attachment_node_id_A.push_back(node_a);
+          geometry_attachment_node_id_B.push_back(node_b);
 
         }
       }
@@ -4985,8 +5116,6 @@ void save_mechanics_snapshot(
       point_phenotype.push_back(phenotype);
       point_diameter.push_back(diameter);
       point_trail.push_back(trail);
-      point_k_ce.push_back(k_ce);
-      point_contractile_force.push_back(contractile_force);
       point_n_attachments.push_back(n_attachments);
       point_attachment_node_id.push_back(-1);
 
@@ -5011,8 +5140,6 @@ void save_mechanics_snapshot(
           point_phenotype.push_back(phenotype);
           point_diameter.push_back(diameter);
           point_trail.push_back(trail);
-          point_k_ce.push_back(k_ce);
-          point_contractile_force.push_back(contractile_force);
           point_n_attachments.push_back(n_attachments);
           point_attachment_node_id.push_back(-1);
         }
@@ -5030,8 +5157,6 @@ void save_mechanics_snapshot(
       point_phenotype.push_back(phenotype);
       point_diameter.push_back(diameter);
       point_trail.push_back(trail);
-      point_k_ce.push_back(k_ce);
-      point_contractile_force.push_back(contractile_force);
       point_n_attachments.push_back(n_attachments);
       point_attachment_node_id.push_back(-1);
       
@@ -5061,7 +5186,7 @@ void save_mechanics_snapshot(
 
         geometry_cell_id.push_back(cell_id);
         geometry_type.push_back(3);
-        geometry_k_ce.push_back(k_ce);
+        append_nonpair_mechanics();
         geometry_attachment_node_id.push_back(-1);
         geometry_attachment_node_id_A.push_back(-1);
         geometry_attachment_node_id_B.push_back(-1);
@@ -5091,7 +5216,7 @@ void save_mechanics_snapshot(
 
           geometry_cell_id.push_back(cell_id);
           geometry_type.push_back(3);
-          geometry_k_ce.push_back(k_ce);
+          append_nonpair_mechanics();
           geometry_attachment_node_id.push_back(-1);
           geometry_attachment_node_id_A.push_back(-1);
           geometry_attachment_node_id_B.push_back(-1);
@@ -5101,7 +5226,7 @@ void save_mechanics_snapshot(
 
           geometry_cell_id.push_back(cell_id);
           geometry_type.push_back(3);
-          geometry_k_ce.push_back(k_ce);
+          append_nonpair_mechanics();
           geometry_attachment_node_id.push_back(-1);
           geometry_attachment_node_id_A.push_back(-1);
           geometry_attachment_node_id_B.push_back(-1);
@@ -5125,7 +5250,7 @@ void save_mechanics_snapshot(
 
         geometry_cell_id.push_back(cell_id);
         geometry_type.push_back(3);
-        geometry_k_ce.push_back(k_ce);
+        append_nonpair_mechanics();
         geometry_attachment_node_id.push_back(-1);
         geometry_attachment_node_id_A.push_back(-1);
         geometry_attachment_node_id_B.push_back(-1);
@@ -5139,7 +5264,11 @@ void save_mechanics_snapshot(
   // Write the VTU file for this step
   // ----------------------------------------------------------------
 
-  const std::string vtu_file_name = mechanics_output_directory + "/cells." + std::to_string(step) + ".vtu";
+  const std::string vtu_file_name =
+    mechanics_output_directory
+    + "/vtu/cells."
+    + std::to_string(step)
+    + ".vtu";
   
   std::ofstream vtu_file(vtu_file_name);
 
@@ -5267,30 +5396,6 @@ void save_mechanics_snapshot(
       << std::endl;
 
   vtu_file
-      << "        <DataArray type=\"Float64\" "
-      << "Name=\"k_ce\" format=\"ascii\">";
-
-  for (const auto value : point_k_ce) {
-    vtu_file << " " << value;
-  }
-
-  vtu_file
-      << " </DataArray>"
-      << std::endl;
-
-  vtu_file
-      << "        <DataArray type=\"Float64\" "
-      << "Name=\"contractile_force\" format=\"ascii\">";
-
-  for (const auto value : point_contractile_force) {
-    vtu_file << " " << value;
-  }
-
-  vtu_file
-      << " </DataArray>"
-      << std::endl;
-
-  vtu_file
       << "        <DataArray type=\"Int32\" "
       << "Name=\"n_attachments\" format=\"ascii\">";
 
@@ -5299,8 +5404,8 @@ void save_mechanics_snapshot(
   }
 
   vtu_file
-      << " </DataArray>"
-      << std::endl;
+    << " </DataArray>"
+    << std::endl;
 
   vtu_file
       << "        <DataArray type=\"Int32\" "
@@ -5406,18 +5511,38 @@ void save_mechanics_snapshot(
   vtu_file
       << " </DataArray>"
       << std::endl;
+  
+  auto write_double_array = [&](const char* name,
+                                const std::vector<double>& values) {
 
-  vtu_file
-      << "        <DataArray type=\"Float64\" "
-      << "Name=\"k_ce\" format=\"ascii\">";
+    vtu_file << "        <DataArray type=\"Float64\" Name=\""
+            << name << "\" format=\"ascii\">";
 
-  for (const auto value : geometry_k_ce) {
-    vtu_file << " " << value;
-  }
+    for (const double value : values) {
+      vtu_file << " " << value;
+    }
 
-  vtu_file
-      << " </DataArray>"
-      << std::endl;
+    vtu_file << " </DataArray>\n";
+  };
+
+  auto write_int_array = [&](const char* name,
+                            const std::vector<int>& values) {
+
+    vtu_file << "        <DataArray type=\"Int32\" Name=\""
+            << name << "\" format=\"ascii\">";
+
+    for (const int value : values) {
+      vtu_file << " " << value;
+    }
+
+    vtu_file << " </DataArray>\n";
+  };
+
+  write_double_array("pair_distance", geometry_pair_distance);
+  write_double_array("pair_k_ce", geometry_pair_k_ce);
+  write_int_array("pair_k_ce_valid", geometry_pair_k_ce_valid);
+  write_double_array("pair_contractile_force", geometry_pair_contractile_force);
+
 
   vtu_file
       << "        <DataArray type=\"Int32\" "
@@ -5511,7 +5636,7 @@ void save_mechanics_snapshot(
       const double output_time = t * time_step;
 
       pvd_file << "  <DataSet timestep=\"" << output_time
-              << "\" group=\"\" part=\"0\" file=\"scaffold."
+              << "\" group=\"\" part=\"0\" file=\"vtu/scaffold."
               << t << ".vtu\"/>\n";
     }
 
@@ -5539,7 +5664,11 @@ void save_mechanics_snapshot(
   }
 
   // Write the scaffold VTU file for current step
-  const std::string scaffold_vtu_file_name = mechanics_output_directory + "/scaffold." + std::to_string(step) + ".vtu";
+  const std::string scaffold_vtu_file_name =
+    mechanics_output_directory
+    + "/vtu/scaffold."
+    + std::to_string(step)
+    + ".vtu";
 
   std::ofstream scaffold_vtu(scaffold_vtu_file_name);
 
@@ -5654,6 +5783,7 @@ void save_mechanics_snapshot(
   scaffold_vtu.close();
 
 }
+
 // =============================================================================
 inline
 int simulate(const std::string& fname, const int seed)
