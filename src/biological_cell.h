@@ -38,6 +38,7 @@ public:
     phenotype_ = p;
     phase_ = BiologicalCell::Phase::I0;
     age_ = 1;
+    cycle_time_ = 0;
     polarize_ = eye();
     can_apoptose_ = can_grow_ = can_divide_ = can_migrate_ = can_transform_ = can_polarize_ = can_protrude_ = false;
     monitor_cycle_ = false;
@@ -56,6 +57,7 @@ public:
             phenotype_ = mother->GetPhenotype();
             phase_ = BiologicalCell::Phase::I0;
             SetAge(); // ...age cannot be inherited
+            ResetCycleTime();
             polarize_ = mother->GetPolarization();
             can_apoptose_  = mother->GetCanApoptose();
             can_grow_      = mother->GetCanGrow();
@@ -86,6 +88,10 @@ public:
   void SetAge(unsigned int a =1) { age_ = a; }
   int  GetAge() const { return age_; }
   void IncrementAge() { age_++; }
+  //
+  void ResetCycleTime() { cycle_time_ = 0; }
+  int GetCycleTime() const { return cycle_time_; }
+  void IncrementCycleTime() { cycle_time_ += 1; }
   //
   void SetPolarization(const bdm::Double3x3& p) { polarize_ = p; }
   const bdm::Double3x3& GetPolarization() const { return polarize_; }
@@ -164,8 +170,8 @@ private:
   int phenotype_ = 0; // WARNING: phenotype ID must be >=0
   // cell circle phase
   BiologicalCell::Phase phase_ = BiologicalCell::Phase::I0;
-  // cell age (non-fractional time)
-  int age_ = 1;
+  // cell age (non-fractional time) and cell-cycle time
+  int age_ = 1, cycle_time_ = 0;
   // cell polarization axes
   bdm::Double3x3 polarize_ = eye();
   // flags to designate (individual) cell behaviour
