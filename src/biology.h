@@ -47,6 +47,21 @@ public:
   //
 };
 // -----------------------------------------------------------------------------
+struct Biology4BiologicalCell_12 : public bdm::Behavior {
+BDM_BEHAVIOR_HEADER(Biology4BiologicalCell_12, bdm::Behavior, 1);
+//
+public:
+  Biology4BiologicalCell_12() { AlwaysCopyToNew(); }
+  virtual ~Biology4BiologicalCell_12() {}
+  //
+  void Initialize(const bdm::NewAgentEvent& event) override {
+    Base::Initialize(event);
+  }
+  //
+  void Run(bdm::Agent* a) override;
+  //
+};
+// -----------------------------------------------------------------------------
 struct Biology4Vessel : public bdm::Behavior {
 BDM_BEHAVIOR_HEADER(Biology4Vessel, bdm::Behavior, 1);
 //

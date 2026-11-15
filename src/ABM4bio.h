@@ -1498,7 +1498,7 @@ void init_cells(bdm::Simulation& sim,
               int ccp = 0;
               // by default the necrotic cells have ID equal to zero
               if (CP_ID) // hence, we ignore taking the stats below
-                if (11==mo)
+                if (11==mo || 12==mo)
                   {
                     // check if the total number of cells for each
                     // cell cycle phase has been initiated, otherwise
@@ -1564,6 +1564,8 @@ void init_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
               else if (11==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
+              else if (12==mo)
+                cell->AddBehavior(new bdm::Biology4BiologicalCell_12());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // store this cell into BioDynaMo's resource manager
@@ -1706,6 +1708,8 @@ void init_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
               else if (11==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
+              else if (12==mo)
+                cell->AddBehavior(new bdm::Biology4BiologicalCell_12());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // store this cell into BioDynaMo's resource manager
@@ -2003,6 +2007,8 @@ void reinit_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
               else if (11==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
+              else if (12==mo)
+                cell->AddBehavior(new bdm::Biology4BiologicalCell_12());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // store this cell into BioDynaMo's resource manager
@@ -3168,6 +3174,8 @@ void ioflux_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
               else if (11==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
+              else if (12==mo)
+                cell->AddBehavior(new bdm::Biology4BiologicalCell_12());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
               // store this cell into BioDynaMo's resource manager

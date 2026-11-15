@@ -178,6 +178,11 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
   else
     ABORT_("an exception is caught");
 }
+// -----------------------------------------------------------------------------
+inline
+void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
+{
+}
 // =============================================================================
 #endif // _BIOLOGY4BIOLOGICALCELL_INLINE_H_
 // =============================================================================
