@@ -899,6 +899,9 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "bFGF" ) bc = Biochemical::bFGF;
         // cancer-related biochemical cues
         else if ( BC_name == "TNF"  ) bc = Biochemical::TNF;
+        else if ( BC_name == "IL4"  ) bc = Biochemical::IL4;
+        else if ( BC_name == "IL10" ) bc = Biochemical::IL10;
+        else if ( BC_name == "IFNG" ) bc = Biochemical::IFNG;
         // neuron-related biochemical cues
         else if ( BC_name == "NGF"  ) bc = Biochemical::NGF;
         else if ( BC_name == "BDNF" ) bc = Biochemical::BDNF;
@@ -1163,6 +1166,8 @@ void init_cells(bdm::Simulation& sim,
   const double safe_distance = (min_radius + max_radius)
                              * params.get<double>("safe_distance_ratio");
   //
+  params.set<int>("regulatory_network/number_of_species/max") = 0;
+  //
   // iterate for all cell phenotypes
   for ( std::map<int, std::string>::const_iterator
         ci=cells.begin(); ci!=cells.end(); ci++ )
@@ -1261,6 +1266,25 @@ void init_cells(bdm::Simulation& sim,
           if (! params.have_parameter<double>(CP_name+"/can_protrude/branch/probability"))
             params.set<double>(CP_name+"/can_protrude/branch/probability") = 0.0;
         }
+      //
+      // fundamental parameters of the regulatory network
+      params.set<double>(CP_name+"/regulatory_network/time_step") = 0.0;
+      params.set<int>(CP_name+"/regulatory_network/time_step_subdivision") = 100;
+      params.set<int>(CP_name+"/regulatory_network/number_of_species") = 0;
+      //
+      RegulatoryNetworkData rn;
+      if (params.have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
+        {
+          const std::string fn = params.get<std::string>(CP_name+"/regulatory_network/from_file");
+          params.set<int>(CP_name+"/regulatory_network/number_of_species") =
+            read_regulatory_network_data(fn, rn);
+          params.set<double>(CP_name+"/regulatory_network/time_step") = rn.time_step;
+          params.set<int>(CP_name+"/regulatory_network/time_step_subdivision") = rn.time_step_subdivision;
+        }
+      //
+      params.set<int>("regulatory_network/number_of_species/max") =
+        std::max( params.get<int>(CP_name+"/regulatory_network/number_of_species"),
+                  params.get<int>("regulatory_network/number_of_species/max") );
       //
       if (CP_ID>0) // ignore necrotic cell whose default phenotype ID = 0
         {
@@ -1569,6 +1593,8 @@ void init_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
+              if ( params.get<int>(CP_name+"/regulatory_network/number_of_species") )
+                cell->SetRegulatoryNetworkData() = rn; // copy regulatory network data
               // store this cell into BioDynaMo's resource manager
               rm->AddAgent(cell);
             }
@@ -1711,6 +1737,8 @@ void init_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
+              if ( params.get<int>(CP_name+"/regulatory_network/number_of_species") )
+                cell->SetRegulatoryNetworkData() = rn; // copy regulatory network data
               // store this cell into BioDynaMo's resource manager
               rm->AddAgent(cell);
             }
@@ -2008,6 +2036,10 @@ void reinit_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
+              if (params.have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
+                read_regulatory_network_data(
+                  params.get<std::string>(CP_name+"/regulatory_network/from_file"),
+                  cell->SetRegulatoryNetworkData() );
               // store this cell into BioDynaMo's resource manager
               rm->AddAgent(cell);
             }
@@ -2283,6 +2315,28 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       });
       fout << std::endl
            << "        </DataArray>" << std::endl;
+      //++++++++++++++++++++++++
+      if ( ! simplify_output ) {
+      //++++++++++++++++++++++++
+      const int max_number_of_species = params.get<int>("regulatory_network/number_of_species/max");
+      const std::string s = std::to_string(max_number_of_species);
+      fout << "        <DataArray type=\"Float64\" Name=\"reg_net\" NumberOfComponents=\""<<s<<"\" format=\"ascii\">" << std::endl;
+      rm->ForEachAgent([&] (bdm::Agent* a) {
+        if (auto* cell = dynamic_cast<bdm::BiologicalCell*>(a))
+          {
+            const int N = cell->SetRegulatoryNetworkData().current_species.size();
+            for (int l=0; l<N; l++)
+              fout << ' ' << cell->SetRegulatoryNetworkData().current_species[l];
+            if (N<max_number_of_species)
+              for (int l=N; l<max_number_of_species; l++)
+                fout << ' ' << 0.0;
+          }
+      });
+      fout << std::endl
+           << "        </DataArray>" << std::endl;
+      //++++++++++++++++++++++++
+      } // ...end if-statement
+      //++++++++++++++++++++++++
       fout << "      </PointData>" << std::endl;
       fout << "      <Cells>" << std::endl;
       fout << "        <DataArray type=\"Int32\" Name=\"offsets\" NumberOfComponents=\"1\" format=\"ascii\">" << std::endl;
@@ -3173,6 +3227,10 @@ void ioflux_cells(bdm::Simulation& sim,
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_11());
               else
                 ABORT_("\""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\" has unrecognized behavior");
+              if (params.have_parameter<std::string>(CP_name+"/regulatory_network/from_file"))
+                read_regulatory_network_data(
+                  params.get<std::string>(CP_name+"/regulatory_network/from_file"),
+                  cell->SetRegulatoryNetworkData() );
               // store this cell into BioDynaMo's resource manager
               rm->AddAgent(cell);
             }
