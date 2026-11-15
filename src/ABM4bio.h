@@ -2360,24 +2360,25 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       int offset = 0;
       for (unsigned int ipnt=0; ipnt<n_VTK_points; ipnt++)
         {
-          // VTK_POLY_VERTEX
+          // VTK_VERTEX
           ++offset;
+          fout << ' ' << offset;
         }
-      fout << ' ' << offset;
       fout << std::endl
            << "        </DataArray>" << std::endl;
       fout << "        <DataArray type=\"Int32\" Name=\"connectivity\" NumberOfComponents=\"1\" format=\"ascii\">" << std::endl;
       for (unsigned int ipnt=0; ipnt<n_VTK_points; ipnt++)
         {
-          // VTK_POLY_VERTEX
+          // VTK_VERTEX
           fout << ' ' << ipnt;
         }
       fout << std::endl
            << "        </DataArray>" << std::endl;
       fout << "        <DataArray type=\"Int32\" Name=\"types\" NumberOfComponents=\"1\" format=\"ascii\">" << std::endl;
+      for (unsigned int ipnt=0; ipnt<n_VTK_points; ipnt++)
         {
-          // VTK_POLY_VERTEX
-          fout << ' ' << 2;
+          // VTK_ERTEX
+          fout << ' ' << 1;
         }
       fout << std::endl
            << "        </DataArray>" << std::endl;
