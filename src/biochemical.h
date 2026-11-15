@@ -21,9 +21,10 @@ enum Biochemical {
   OH_ = 1, O2 = 2, O3 = 3, H2O = 4, H2O2 = 5, N2 = 6, NO_ = 7, NO2 = 8, NO3 = 9,
   Gluc = 20,
   VEGF = 21, PDGF = 22, PlGF = 23, Ang1 = 24, Ang2 = 25, EGF = 26, TGFa = 27, TGFb = 28, bFGF = 29,
-  TNF  = 41,
+  TNF  = 41, IFNG = 42,
   NGF  = 61, BDNF = 62,
   Drug_1 = 101, Drug_2 = 102, Drug_3 = 103,
+  IL4 = 504, IL10 = 510,
   ECM = 999
 };
 // =============================================================================

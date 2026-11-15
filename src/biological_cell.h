@@ -19,6 +19,7 @@
 #include "./cell_protrusion.h"
 #include "./obstacles.h"
 #include "./io_flux.h"
+#include "./regulatory_network.h"
 // =============================================================================
 namespace bdm {
 // =============================================================================
@@ -73,6 +74,8 @@ public:
             n_protrusions_ = 0; // ...index is initialized
             params_ = mother->params_; // copy parameters pointer...
             CheckAndFixDiameter(); mother->CheckAndFixDiameter();
+            rn_ = mother->rn_; // copy all member data
+            rn_.time = 0.0; // ...but reset the time of the regulatory network
           }
         else
           ABORT_("an exception is caught");
@@ -142,6 +145,10 @@ public:
   void SetParametersPointer(Parameters* p) { params_ = p; }
   Parameters* params() const { return params_; }
   //
+  RegulatoryNetworkData& SetRegulatoryNetworkData () { return rn_; }
+  const RegulatoryNetworkData& GetRegulatoryNetworkData () const { return rn_; }
+  //
+  void RunRegulatoryNetwork();
   void RunBiochemics();
   bool CheckPositionValidity();
   bool CheckApoptosisAging();
@@ -189,6 +196,8 @@ private:
   Parameters* params_ = 0;
   // list of cell protrusions (filopodia or neurites)
   std::vector<bdm::Double3> protrusions_;
+  // data of the cell's regulatory network
+  RegulatoryNetworkData rn_;
 };
 // =============================================================================
 } // ...end of namespace

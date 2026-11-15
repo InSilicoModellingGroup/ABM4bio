@@ -14,6 +14,94 @@
 #define _BIOLOGICAL_CELL_INLINE_H_
 // =============================================================================
 inline
+void bdm::BiologicalCell::RunRegulatoryNetwork()
+{
+  // by design only viable (non-necrotic) cells could have a regulatory network
+  if (!this->GetPhenotype()) return;
+  //
+  // check if any of the state vectors of the regulatory network species is empty
+  if (this->rn_.previous_species.empty() || this->rn_.current_species.empty())
+    return;
+  // check if the basic parameters vector of the regulatory network is empty
+  if (this->rn_.params.empty())
+    return;
+  //
+  const size_t N = this->rn_.current_species.size();
+  // check if state vectors' dimension of the regulatory network species is valid
+  if (N != this->rn_.previous_species.size())
+    ABORT_("state vectors' dimension of the regulatory network species is invalid");
+  // update the previous solution
+  this->rn_.previous_species = this->rn_.current_species;
+  // define the type of integrator used
+  typedef boost::numeric::odeint::runge_kutta_dopri5<bvector_t> ode_int;
+  // set-up the Runge-Kutta integrator
+  auto stepper =
+    boost::numeric::odeint::make_dense_output<ode_int>(1e-6,1e-6);
+  //
+  // regulatory network model based on the work of L.Mendoza & I.Xenarios (2006):
+  //   https://doi.org/10.1186/1742-4682-3-13
+  auto rhs = [&](const bvector_t& x, bvector_t& dxdt, real_t t)
+  {
+    const real_t h = this->rn_.params[0];
+    const real_t exp_h2 = exp(0.5 * h);
+    for (size_t i=0; i<N; i++)
+      {
+        real_t gamma = this->rn_.params[1+i];
+        //
+        real_t omega = 0.0;
+        if (!this->rn_.params_a.empty() && !this->rn_.params_i.empty())
+          {
+            double sum_a_x = 0.0;
+            for (size_t j=0; j<N; j++)
+              sum_a_x += this->rn_.params_a[j] * x[j];
+            double sum_a = this->rn_.params_a[N];
+            //
+            double sum_b_x = 0.0;
+            for (size_t j=0; j<N; j++)
+              sum_b_x += this->rn_.params_i[j] * x[j];
+            double sum_b = this->rn_.params_i[N];
+            //
+            omega = ((1.0+sum_a)/sum_a) * (sum_a_x/(1.0+sum_a_x))
+                  * (1.0 - ((1.0+sum_b)/sum_b) * (sum_b_x/(1.0+sum_b_x)));
+          }
+        else if (!this->rn_.params_a.empty())
+          {
+            double sum_a_x = 0.0;
+            for (size_t j=0; j<N; j++)
+              sum_a_x += this->rn_.params_a[j] * x[j];
+            double sum_a = this->rn_.params_a[N];
+            //
+            omega = ((1.0+sum_a)/sum_a) * (sum_a_x/(1.0+sum_a_x));
+          }
+        else if (!this->rn_.params_i.empty())
+          {
+            double sum_b_x = 0.0;
+            for (size_t j=0; j<N; j++)
+              sum_b_x += this->rn_.params_i[j] * x[j];
+            double sum_b = this->rn_.params_i[N];
+            //
+            omega = (1.0 - ((1.0+sum_b)/sum_b) * (sum_b_x/(1.0+sum_b_x)));
+          }
+        else
+          ABORT_("an exception is caught");
+        //
+        const real_t exp_h2_homega = exp(h*(0.5-omega));
+        // formulate the right-hand-side component of this specie
+        dxdt[i] = (exp_h2_homega-exp_h2) / (1.0-exp_h2) / (1.0+exp_h2_homega)
+                - gamma * x[i];
+      }
+  };
+  // perform the time-integration
+  const int N_DT = this->rn_.time_step_subdivision;
+  const double DT = this->rn_.time_step;
+  const double T = this->rn_.time;
+  integrate_const(stepper, rhs, this->rn_.current_species, T, T+DT, DT/N_DT);
+  // update the time of the regulatory network
+  this->rn_.time += this->rn_.time_step;
+  //...end of cell regulatory network
+}
+// -----------------------------------------------------------------------------
+inline
 void bdm::BiologicalCell::RunBiochemics()
 {
   // by design only viable (non-necrotic) cells could secrete biochemicals
@@ -811,9 +899,32 @@ bool bdm::BiologicalCell::CheckApoptosis()
               // since cell has apoptosed, then it must be removed from simulation
               return true;
             }
+          // ...end of threshold check
         }
       //...end of substances loop
     }
+  //
+  // iterate for all species of the regulatory network
+  for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
+    {
+      std::string RN_specie = std::to_string(s);
+      //
+      if (! this->params()->have_parameter<double>(CP_name+"/can_apoptose/regulatory_network/"+RN_specie+"/threshold"))
+        continue;
+      //
+      const double level = this->GetRegulatoryNetworkData().current_species[s],
+                   threshold = this->params()->get<double>(CP_name+"/can_apoptose/regulatory_network/"+RN_specie+"/threshold");
+      //
+      if ( ( threshold > 0.0 && level > +threshold ) ||
+           ( threshold < 0.0 && level < -threshold ) )
+        {
+          // since cell has apoptosed, then it must be removed from simulation
+          return true;
+          // ...end of threshold check
+        }
+      //...end of species loop
+    }
+  //
   // since cell has not been through apoptosis, then it can do other things
   return false;
   //...end of cell apoptosis
@@ -929,7 +1040,6 @@ bool bdm::BiologicalCell::CheckMigration()
   // check if cell migrates actively due to some inherent random-walk or
   // a biochemical stimulus, i.e. chemotaxis
   if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/probability"))
-    /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
     {
       //
       const int index_time = this->params()->get<int>("index time");
@@ -994,68 +1104,68 @@ bool bdm::BiologicalCell::CheckMigration()
                 //
                 if ( ( threshold > 0.0 && concentration > +threshold ) ||
                      ( threshold < 0.0 && concentration < -threshold ) )
-                {
-                  if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability"))
-                    {
-                      bdm::Double3 dvec = {0.0, 0.0, 0.0};
-                      int n_random_point = 0;
-                      for (int random_point=0; random_point<20; random_point++)
-                        {
-                          const double radius      = rg->Uniform(0.0,1.5) * this->GetDiameter(),
-                                       inclination = this->params()->get<bool>("simulation_domain_is_2D")
-                                                   ? 0.5*bdm::Math::kPi : rg->Uniform(0.0,bdm::Math::kPi),
-                                       azimuth     = rg->Uniform(0.0,2.0*bdm::Math::kPi);
-                          const double x = radius * sin(inclination) * cos(azimuth),
-                                       y = radius * sin(inclination) * sin(azimuth),
-                                       z = radius * cos(inclination);
-                          bdm::Double3 point = {x,y,z};
-                          point += this->GetPosition();
-                          // check spatial coordinates
-                          if (point[0]<minCOORD||point[1]<minCOORD||point[2]<minCOORD||
-                              point[0]>maxCOORD||point[1]>maxCOORD||point[2]>maxCOORD) continue;
-                          //
-                          bdm::Double3 gradS;
-                          dg->GetGradient(point, &gradS);
-                          //
-                          if (L2norm(gradS)<=1.0e-6) continue;
-                          //
-                          dvec += gradS;
-                          ++n_random_point; // increment this index
-                        }
-                      // average out the space vector
-                      if (n_random_point) dvec /= n_random_point;
-                      //
-                      if (this->params()->get<bool>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/normalize_gradient"))
-                        {
-                          auto m = L2norm(dvec);
-                          if (m>1.0e-6) dvec /= m;
-                        }
-                      // scale gradient vector accordingly
-                      dvec *= chemotaxis;
-                      //
-                      const double d_magn = L2norm(dvec);
-                      // check if distance covered is above a minimum, else ignore
-                      if (d_magn > this->params()->get<double>("migration_tolerance"))
-                        {
-                          // update the (cell) displacement vector
-                          this->active_displacement_ += dvec;
-                          // update this flag
-                          has_migrated = true;
-                          //
-                          // check if to allow moving any further or skip any potential migration
-                          if (! this->params()->get<bool>(CP_name+"/can_migrate/accumulate_path"))
-                            break;
-                        }
-                      // ...end of propability check
-                    }
-                }
+                  {
+                    if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability"))
+                      {
+                        bdm::Double3 dvec = {0.0, 0.0, 0.0};
+                        int n_random_point = 0;
+                        for (int random_point=0; random_point<20; random_point++)
+                          {
+                            const double radius      = rg->Uniform(0.0,1.5) * this->GetDiameter(),
+                                         inclination = this->params()->get<bool>("simulation_domain_is_2D")
+                                                     ? 0.5*bdm::Math::kPi : rg->Uniform(0.0,bdm::Math::kPi),
+                                         azimuth     = rg->Uniform(0.0,2.0*bdm::Math::kPi);
+                            const double x = radius * sin(inclination) * cos(azimuth),
+                                         y = radius * sin(inclination) * sin(azimuth),
+                                         z = radius * cos(inclination);
+                            bdm::Double3 point = {x,y,z};
+                            point += this->GetPosition();
+                            // check spatial coordinates
+                            if (point[0]<minCOORD||point[1]<minCOORD||point[2]<minCOORD||
+                                point[0]>maxCOORD||point[1]>maxCOORD||point[2]>maxCOORD) continue;
+                            //
+                            bdm::Double3 gradS;
+                            dg->GetGradient(point, &gradS);
+                            //
+                            if (L2norm(gradS)<=1.0e-6) continue;
+                            //
+                            dvec += gradS;
+                            ++n_random_point; // increment this index
+                          }
+                        // average out the space vector
+                        if (n_random_point) dvec /= n_random_point;
+                        //
+                        if (this->params()->get<bool>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/normalize_gradient"))
+                          {
+                            auto m = L2norm(dvec);
+                            if (m>1.0e-6) dvec /= m;
+                          }
+                        // scale gradient vector accordingly
+                        dvec *= chemotaxis;
+                        //
+                        const double d_magn = L2norm(dvec);
+                        // check if distance covered is above a minimum, else ignore
+                        if (d_magn > this->params()->get<double>("migration_tolerance"))
+                          {
+                            // update the (cell) displacement vector
+                            this->active_displacement_ += dvec;
+                            // update this flag
+                            has_migrated = true;
+                            //
+                            // check if to allow moving any further or skip any potential migration
+                            if (! this->params()->get<bool>(CP_name+"/can_migrate/accumulate_path"))
+                              break;
+                          }
+                        // ...end of propability check
+                      }
+                    // ...end of threshold check
+                  }
                 //...end of substances loop
               }
           //
         } //   --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
       //
     }
-    /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ /// \\\ ///
   //
   // check if cell has migrated, if so then revise its spatial coordinates and trail
   if ( has_migrated )
@@ -1067,27 +1177,27 @@ bool bdm::BiologicalCell::CheckMigration()
   // check if cell has migrated, if so then revise the spatial coordinates
   // of the cell protrusions; however, check for current algorithmic limitations!!!
   if ( has_migrated && this->GetNumberOfProtrusions() )
-  // current implementation assumes that cell migration cannot be applied when
-  // a cell has produced protrusions that have created sprouts or/and branches
-  {
-    if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
-      ABORT_("an internal error occurred");
-
-    // iterate for all (existing) protrusions of this cell
-    for (int p=0; p<this->GetNumberOfProtrusions(); p++)
     {
-      auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
-      // only a cell with filodia can be displaced (together with its migrating cell)
-      if ( protrusion->IsTerminal() )
+      // current implementation assumes that cell migration cannot be applied when
+      // a cell has produced protrusions that have created sprouts or/and branches
+      if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
+        ABORT_("an internal error occurred");
+
+      // iterate for all (existing) protrusions of this cell
+      for (int p=0; p<this->GetNumberOfProtrusions(); p++)
         {
-          const bdm::Double3 xyz = protrusion->GetPosition();
-          protrusion->SetPosition(xyz+this->GetDisplacement());
+          auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
+          // only a cell with filodia can be displaced (together with its migrating cell)
+          if ( protrusion->IsTerminal() )
+            {
+              const bdm::Double3 xyz = protrusion->GetPosition();
+              protrusion->SetPosition(xyz+this->GetDisplacement());
+            }
+          else
+            ABORT_("an exception is caught");
         }
-      else
-        ABORT_("an exception is caught");
+      // completed the cell protrusion displacement task
     }
-    // completed the cell protrusion displacement task
-  }
   //
   return has_migrated;
   //...end of cell migration
@@ -1139,9 +1249,10 @@ bool bdm::BiologicalCell::CheckTransformation()
            ( threshold < 0.0 && concentration < -threshold ) )
         {
           if (rg->Uniform(0.0,1.0) <= this->params()->get<double>(CP_name+"/can_transform/"+BC_name+"/probability"))
-            // now check if cell age is within an appropriate time-window to allow its transformation
-            if ( this->GetAge() >= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_open" ) &&
-                 this->GetAge() <= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_close") )
+            {
+              // now check if cell age is within an appropriate time-window to allow its transformation
+              if ( this->GetAge() >= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_open" ) &&
+                   this->GetAge() <= this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/time_window_close") )
                 {
                   const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform/"+BC_name+"/new_phenotype");
                   // firstly, the cell transforms
@@ -1189,23 +1300,112 @@ bool bdm::BiologicalCell::CheckTransformation()
                   // reset the cell behavior (mechanisms order) from old to new one
                   {
                     const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
-                    if (behavior.size()!=1)
-                      ABORT_("an internal error occurred");
+                    ASSERT_(behavior.size()==1, "an internal error occurred");
                     //
                     this->RemoveBehavior(behavior[0]);
                   }
-                  const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-                  if (10==mo)
+                  if      ( 10 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
                     this->AddBehavior(new Biology4BiologicalCell_10());
+                  else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+                    this->AddBehavior(new Biology4BiologicalCell_11());
                   else
                     ABORT_("an exception is caught");
+                  // setup the regulatory network data
+                  if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+                    read_regulatory_network_data(
+                      this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+                      this->SetRegulatoryNetworkData() );
                   // cell has transformed, then proceed to check if it can do other things
                   return true;
                 }
-            //
-          //
+            }
+          // ...end of threshold check
         }
       //...end of substances loop
+    }
+  //
+  // iterate for all species of the regulatory network
+  for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
+    {
+      std::string RN_specie = std::to_string(s);
+      //
+      if (! this->params()->have_parameter<int>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/new_phenotype"))
+        continue;
+      if (! this->params()->have_parameter<double>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/threshold"))
+        continue;
+      //
+      const double level = this->GetRegulatoryNetworkData().current_species[s],
+                   threshold = this->params()->get<double>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/threshold");
+      //
+      if ( ( threshold > 0.0 && level > +threshold ) ||
+           ( threshold < 0.0 && level < -threshold ) )
+        {
+          const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/new_phenotype");
+          // firstly, the cell transforms
+          this->SetPhenotype(new_phenotype);
+          // increment this index
+          this->IncrementNumberOfTrasformations();
+          // now reset the age of the cell
+          this->SetAge();
+          //
+          const std::string CP_new_name = // cell phenotype name
+            this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+          // principal directions of the cell polarization matrix
+          double p0, p1, p2;
+          if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
+            {
+              p0 = this->params()->get<double>(CP_new_name+"/principal/0");
+              p1 = this->params()->get<double>(CP_new_name+"/principal/1");
+              p2 = this->params()->get<double>(CP_new_name+"/principal/2");
+            }
+          //
+          this->SetCanApoptose(this->params()->get<bool>(CP_new_name+"/can_apoptose"));
+          this->SetCanGrow(this->params()->get<bool>(CP_new_name+"/can_grow"));
+          this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
+          this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
+          this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
+          this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+          this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+          // reset the cell polarization matrix
+          if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
+            this->SetPolarization(diag(p0, p1, p2));
+          // reset the cell protrusion phenotype
+          if ( this->GetNumberOfProtrusions() )
+            {
+              if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
+                ABORT_("an internal error occurred");
+              //
+              // iterate for all (existing) protrusions of this cell
+              for (int p=0; p<this->GetNumberOfProtrusions(); p++)
+                {
+                  auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
+                  // assign this cell (that is associated with) to the protrusion created
+                  protrusion->SetCell(this);
+                }
+            }
+          // reset the cell behavior (mechanisms order) from old to new one
+          {
+            const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
+            ASSERT_(behavior.size()==1, "an internal error occurred");
+            //
+            this->RemoveBehavior(behavior[0]);
+          }
+          if      ( 10 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+            this->AddBehavior(new Biology4BiologicalCell_10());
+          else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+            this->AddBehavior(new Biology4BiologicalCell_11());
+          else
+            ABORT_("an exception is caught");
+          // setup the regulatory network data
+          if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+            read_regulatory_network_data(
+              this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+              this->SetRegulatoryNetworkData() );
+          // cell has transformed, then proceed to check if it can do other things
+          return true;
+          // ...end of threshold check
+        }
+      //...end of species loop
     }
   // cell has not been through any transformation
   return false;
@@ -1238,9 +1438,6 @@ bool bdm::BiologicalCell::CheckPolarization()
   //
   if (rg->Uniform(0.0,1.0) > this->params()->get<double>(CP_name+"/can_polarize/probability"))
     return false;
-  //
-  const std::vector<std::string>& substances =
-    this->params()->get<std::vector<std::string>>("substances");
   //
   const double principal_min = this->params()->get<double>(CP_name+"/principal/min"),
                principal_max = this->params()->get<double>(CP_name+"/principal/max");
@@ -1311,6 +1508,8 @@ bool bdm::BiologicalCell::CheckPolarization()
         }
     }
   //
+  const std::vector<std::string>& substances =
+    this->params()->get<std::vector<std::string>>("substances");
   // ensure cell is well within the simulation domain!
   if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
     return false;
@@ -1367,6 +1566,7 @@ bool bdm::BiologicalCell::CheckPolarization()
           this->polarize_ = n0Xn0_p0 + n1Xn1_p1 + n2Xn2_p2;
           // cell has polarized, then proceed to check if it can do other things
           return true;
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -1420,6 +1620,7 @@ bool bdm::BiologicalCell::CheckProtrusion()
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
+  //
   // ensure cell is well within the simulation domain!
   if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
     return false;
@@ -1438,9 +1639,11 @@ bool bdm::BiologicalCell::CheckProtrusion()
            ( threshold < 0.0 && concentration < -threshold ) )
         {
           stimulate = true;
+          // ...end of threshold check
         }
       //...end of substances loop
     }
+  //
   // check if any biochemical stimulus leads towards cell protrusion generation
   if ( ! stimulate ) return false;
   //
@@ -1855,8 +2058,31 @@ bool bdm::BiologicalCell::CheckGrowth()
             {
               volume_rate += (0.5*TMath::Pi())*diameter_rate*pow2(diameter);
             }
+          // ...end of threshold check
         }
       //...end of substances loop
+    }
+  // iterate for all species of the regulatory network
+  for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
+    {
+      std::string RN_specie = std::to_string(s);
+      //
+      if (! this->params()->have_parameter<double>(CP_name+"/can_grow/regulatory_network/"+RN_specie+"/threshold"))
+        continue;
+      //
+      const double level = this->GetRegulatoryNetworkData().current_species[s],
+                   threshold = this->params()->get<double>(CP_name+"/can_grow/regulatory_network/"+RN_specie+"/threshold");
+      //
+      if ( ( threshold > 0.0 && level > +threshold ) ||
+           ( threshold < 0.0 && level < -threshold ) )
+        {
+          const double diameter_rate =
+            this->params()->get<double>(CP_name+"/can_grow/regulatory_network/"+RN_specie+"/diameter_rate");
+          //
+          volume_rate += (0.5*TMath::Pi())*diameter_rate*pow2(diameter);
+          // ...end of threshold check
+        }
+      //...end of species loop
     }
   //
   if ( ( diameter < diameter_max && volume_rate ) ||
@@ -2002,23 +2228,116 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
               // reset the cell behavior (mechanisms order) from old to new one
               {
                 const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
-                ASSERT_(1==behavior.size(),"an exception is caught");
+                ASSERT_(behavior.size()==1, "an internal error occurred");
                 //
                 this->RemoveBehavior(behavior[0]);
               }
-              const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-              if (10==mo)
+              if      ( 10 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
                 this->AddBehavior(new Biology4BiologicalCell_10());
+              else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+                this->AddBehavior(new Biology4BiologicalCell_11());
               else
                 ABORT_("an exception is caught");
+              // setup the regulatory network data
+              if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+                read_regulatory_network_data(
+                  this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+                  this->SetRegulatoryNetworkData() );
               // secondly, the cell divides
               this->Divide(volume_ratio, axis);
               // cell has transformed and divided, then proceed to check if it can do other things
               return true;
             }
+          // ...end of threshold check
         }
       //...end of substances loop
     }
+  // iterate for all species of the regulatory network
+  for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
+    {
+      std::string RN_specie = std::to_string(s);
+      //
+      if (! this->params()->have_parameter<int>(CP_name+"/can_transform_and_divide/regulatory_network/"+RN_specie+"/new_phenotype"))
+        continue;
+      if (! this->params()->have_parameter<double>(CP_name+"/can_transform_and_divide/regulatory_network/"+RN_specie+"/threshold"))
+        continue;
+      //
+      const double level = this->GetRegulatoryNetworkData().current_species[s],
+                   threshold = this->params()->get<double>(CP_name+"/can_transform_and_divide/regulatory_network/"+RN_specie+"/threshold");
+      //
+      if ( ( threshold > 0.0 && level > +threshold ) ||
+           ( threshold < 0.0 && level < -threshold ) )
+        {
+          const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform_and_divide/regulatory_network/"+RN_specie+"/new_phenotype");
+          // firstly, the cell transforms
+          this->SetPhenotype(new_phenotype);
+          // now reset the age of the cell
+          this->SetAge();
+          // increment this index
+          this->IncrementNumberOfTrasformations();
+          //
+          const std::string CP_new_name = // cell phenotype name
+            this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
+          // principal directions of the cell polarization matrix
+          double p0, p1, p2;
+          if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
+            {
+              p0 = this->params()->get<double>(CP_new_name+"/principal/0");
+              p1 = this->params()->get<double>(CP_new_name+"/principal/1");
+              p2 = this->params()->get<double>(CP_new_name+"/principal/2");
+            }
+          //
+          this->SetCanApoptose(this->params()->get<bool>(CP_new_name+"/can_apoptose"));
+          this->SetCanGrow(this->params()->get<bool>(CP_new_name+"/can_grow"));
+          this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
+          this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
+          this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
+          this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+          this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+          // reset the cell polarization matrix
+          if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
+            this->SetPolarization(diag(p0, p1, p2));
+          // reset the cell protrusion phenotype
+          if ( this->GetNumberOfProtrusions() )
+            {
+              if ( this->GetNumberOfProtrusions() != (int)this->daughters_.size() )
+                ABORT_("an internal error occurred");
+              //
+              // iterate for all (existing) protrusions of this cell
+              for (int p=0; p<this->GetNumberOfProtrusions(); p++)
+                {
+                  auto* protrusion = bdm::bdm_static_cast<CellProtrusion*>(this->daughters_[p].Get());
+                  // assign this cell (that is associated with) to the protrusion created
+                  protrusion->SetCell(this);
+                }
+            }
+          // reset the cell behavior (mechanisms order) from old to new one
+          {
+            const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
+            ASSERT_(behavior.size()==1, "an internal error occurred");
+            //
+            this->RemoveBehavior(behavior[0]);
+          }
+          if      ( 10 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+            this->AddBehavior(new Biology4BiologicalCell_10());
+          else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+            this->AddBehavior(new Biology4BiologicalCell_11());
+          else
+            ABORT_("an exception is caught");
+          // setup the regulatory network data
+          if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+            read_regulatory_network_data(
+              this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+              this->SetRegulatoryNetworkData() );
+          // secondly, the cell divides
+          this->Divide(volume_ratio, axis);
+          // cell has transformed and divided, then proceed to check if it can do other things
+          return true;
+          // ...end of threshold check
+        }
+      //...end of species loop
+    }
+  //
   // cell has not been through any division
   return false;
   //...end of cell division
@@ -2153,18 +2472,25 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
               // reset the cell behavior (mechanisms order) from old to new one
               {
                 const bdm::InlineVector<bdm::Behavior*,2>& behavior = this->GetAllBehaviors();
-                ASSERT_(1==behavior.size(),"an internal error occurred");
+                ASSERT_(behavior.size()==1, "an internal error occurred");
                 //
                 this->RemoveBehavior(behavior[0]);
               }
-              const int mo = this->params()->get<int>(CP_new_name+"/mechanism_order");
-              if (10==mo)
+              if      ( 10 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
                 this->AddBehavior(new Biology4BiologicalCell_10());
+              else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+                this->AddBehavior(new Biology4BiologicalCell_11());
               else
                 ABORT_("an exception is caught");
+              // setup the regulatory network data
+              if (this->params()->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
+                read_regulatory_network_data(
+                  this->params()->get<std::string>(CP_new_name+"/regulatory_network/from_file"),
+                  this->SetRegulatoryNetworkData() );
               // cell has divided and transformed, then proceed to check if it can do other things
               return true;
             }
+          // ...end of threshold check
         }
       //...end of substances loop
     }
@@ -2321,9 +2647,35 @@ bool bdm::BiologicalCell::CheckDivision() {
           this->Divide(volume_ratio, axis);
           // cell has divided, then proceed to check if it can do other things
           return true;
+          // ...end of threshold check
         }
       //...end of substances loop
     }
+  //
+  // iterate for all species of the regulatory network
+  for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
+    {
+      std::string RN_specie = std::to_string(s);
+      //
+      if (! this->params()->have_parameter<double>(CP_name+"/can_divide/regulatory_network/"+RN_specie+"/threshold"))
+        continue;
+      //
+      const double level = this->GetRegulatoryNetworkData().current_species[s],
+                   threshold = this->params()->get<double>(CP_name+"/can_divide/regulatory_network/"+RN_specie+"/threshold");
+      //
+      if ( ( threshold > 0.0 && level > +threshold ) ||
+           ( threshold < 0.0 && level < -threshold ) )
+        {
+          // since no symmetric (prior to cell transformation) or unsymmetric division
+          // has occurred, then cell divides conventionally
+          this->Divide(volume_ratio, axis);
+          // cell has divided, then proceed to check if it can do other things
+          return true;
+          // ...end of threshold check
+        }
+      //...end of species loop
+    }
+  //
   // cell has not been through any division
   return false;
   //...end of cell division

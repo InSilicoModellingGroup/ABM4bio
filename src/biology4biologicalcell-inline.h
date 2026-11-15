@@ -38,6 +38,8 @@ void bdm::Biology4BiologicalCell_10::Run(bdm::Agent* a)
         }
       // simply update the cell age
       cell->IncrementAge();
+      // cell executes is regulatory network
+      cell->RunRegulatoryNetwork();
       // cell produces/consumes substances
       cell->RunBiochemics();
       // now check if cell can migrate
@@ -102,6 +104,8 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
         }
       // simply update the cell age
       cell->IncrementAge();
+      // cell executes is regulatory network
+      cell->RunRegulatoryNetwork();
       // cell produces/consumes substances
       cell->RunBiochemics();
       //
