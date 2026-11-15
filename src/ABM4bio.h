@@ -413,7 +413,7 @@ void read_csv_file(const std::string& fn,
       const int CP_ID = ci->first;
       const std::string& CP_name = ci->second;
       // an important sanity check
-      ASSERT_(ID>=0,
+      ASSERT_(CP_ID>=0,
               "erroneous parameter value for: \""+CP_name+"/phenotype_ID\"");
       // ...by default necrotic cells (ID:0) are ignored!
       if (CP_ID<1) continue;

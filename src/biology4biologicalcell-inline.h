@@ -182,6 +182,7 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
 inline
 void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
 {
+  ABORT_("aborting here due to unfinished business...");
 }
 // =============================================================================
 #endif // _BIOLOGY4BIOLOGICALCELL_INLINE_H_
