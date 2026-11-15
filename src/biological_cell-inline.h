@@ -1421,7 +1421,8 @@ bool bdm::BiologicalCell::CheckProtrusion()
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -1446,8 +1447,8 @@ bool bdm::BiologicalCell::CheckProtrusion()
   const double protrusion_tol =
     ! this->params()->have_parameter<double>(CP_name+"/can_protrude/tolerance")
     ? tol :      this->params()->get<double>(CP_name+"/can_protrude/tolerance");
-  //
-  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), protrusion_tol))
+  // ensure cell is well within the simulation domain!
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
     return false;
   //
   CellProtrusion c_p;
@@ -1795,7 +1796,8 @@ bool bdm::BiologicalCell::CheckGrowth()
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
   // ensure cell is well within the simulation domain!
-  if (check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+  if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
+    return false;
   // iterate for all substances
   for ( std::vector<std::string>::const_iterator
         ci=substances.begin(); ci!=substances.end(); ci++ )
@@ -1931,7 +1933,6 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
-  //
   // ensure cell is well within the simulation domain!
   if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
     return false;
@@ -2085,7 +2086,6 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
-  //
   // ensure cell is well within the simulation domain!
   if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
     return false;
@@ -2298,7 +2298,6 @@ bool bdm::BiologicalCell::CheckDivision() {
   //
   const std::vector<std::string>& substances =
     this->params()->get<std::vector<std::string>>("substances");
-  //
   // ensure cell is well within the simulation domain!
   if (! check_agent_position_in_domain(minCOORD, maxCOORD, this->GetPosition(), tol))
     return false;
