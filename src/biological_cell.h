@@ -89,25 +89,25 @@ public:
   const bdm::Double3x3& GetPolarization() const { return polarize_; }
   const double& GetPolarization(size_t i, size_t j) const { return polarize_[i][j]; }
   //
-  void SetCanApoptose(bool apoptoses) { can_apoptose_ = apoptoses; }
+  void SetCanApoptose(bool flag) { can_apoptose_ = flag; }
   bool GetCanApoptose() const { return can_apoptose_; }
   //
-  void SetCanGrow(bool grows) { can_grow_ = grows; }
+  void SetCanGrow(bool flag) { can_grow_ = flag; }
   bool GetCanGrow() const { return can_grow_; }
   //
-  void SetCanDivide(bool divides) { can_divide_ = divides; }
+  void SetCanDivide(bool flag) { can_divide_ = flag; }
   bool GetCanDivide() const { return can_divide_; }
   //
-  void SetCanMigrate(bool migrates) { can_migrate_ = migrates; }
+  void SetCanMigrate(bool flag) { can_migrate_ = flag; }
   bool GetCanMigrate() const { return can_migrate_; }
   //
-  void SetCanTransform(bool transforms) { can_transform_ = transforms; }
+  void SetCanTransform(bool flag) { can_transform_ = flag; }
   bool GetCanTransform() const { return can_transform_; }
   //
-  void SetCanPolarize(bool polarizes) { can_polarize_ = polarizes; }
+  void SetCanPolarize(bool flag) { can_polarize_ = flag; }
   bool GetCanPolarize() const { return can_polarize_; }
   //
-  void SetCanProtrude(bool protrudes) { can_protrude_ = protrudes; }
+  void SetCanProtrude(bool flag) { can_protrude_ = flag; }
   bool GetCanProtrude() const { return can_protrude_; }
   //
   void ResetTrail() { trail_ = 0.0; }

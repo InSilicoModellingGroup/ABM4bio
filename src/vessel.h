@@ -62,13 +62,13 @@ public:
   int  GetAge() const { return age_; }
   void IncrementAge() { age_++; }
   //
-  void SetCanGrow(bool grows) { can_grow_ = grows; }
+  void SetCanGrow(bool flag) { can_grow_ = flag; }
   bool GetCanGrow() const { return can_grow_; }
   //
-  void SetCanBranch(bool branches) { can_branch_ = branches; }
+  void SetCanBranch(bool flag) { can_branch_ = flag; }
   bool GetCanBranch() { return can_branch_; }
   //
-  void SetCanSprout(bool sprouts) { can_sprout_ = sprouts; }
+  void SetCanSprout(bool flag) { can_sprout_ = flag; }
   bool GetCanSprout() { return can_sprout_; }
   //
   void SetVesselID(int ID) { vessel_ID_ = ID; }
