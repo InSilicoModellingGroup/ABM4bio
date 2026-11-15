@@ -1186,6 +1186,8 @@ void init_cells(bdm::Simulation& sim,
         params.set<bool>(CP_name+"/can_polarize") = false;
       if (! params.have_parameter<bool>(CP_name+"/can_protrude"))
         params.set<bool>(CP_name+"/can_protrude") = false;
+      if (! params.have_parameter<bool>(CP_name+"/monitor_cycle"))
+        params.set<bool>(CP_name+"/monitor_cycle") = false;
       // default parameter(s) value
       if (params.get<bool>(CP_name+"/can_apoptose"))
         {
@@ -1260,6 +1262,12 @@ void init_cells(bdm::Simulation& sim,
             params.set<double>(CP_name+"/can_protrude/dissect/probability") = 0.0;
           if (! params.have_parameter<double>(CP_name+"/can_protrude/branch/probability"))
             params.set<double>(CP_name+"/can_protrude/branch/probability") = 0.0;
+        }
+      // default parameter(s) value
+      if (CP_ID>0) // ignore necrotic cell whose default phenotype ID = 0
+      if (params.get<bool>(CP_name+"/monitor_cycle"))
+        {
+          ABORT_("aborting here due to unfinished business...");
         }
       //
       if (CP_ID>0) // ignore necrotic cell whose default phenotype ID = 0
@@ -1562,6 +1570,7 @@ void init_cells(bdm::Simulation& sim,
               cell->SetCanTransform(params.get<bool>(CP_name+"/can_transform"));
               cell->SetCanPolarize(params.get<bool>(CP_name+"/can_polarize"));
               cell->SetCanProtrude(params.get<bool>(CP_name+"/can_protrude"));
+              cell->SetMonitorCycle(params.get<bool>(CP_name+"/monitor_cycle"));
               cell->SetPolarization(pl_3x3);
               if      (10==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
@@ -1706,6 +1715,7 @@ void init_cells(bdm::Simulation& sim,
               cell->SetCanTransform(params.get<bool>(CP_name+"/can_transform"));
               cell->SetCanPolarize(params.get<bool>(CP_name+"/can_polarize"));
               cell->SetCanProtrude(params.get<bool>(CP_name+"/can_protrude"));
+              cell->SetMonitorCycle(params.get<bool>(CP_name+"/monitor_cycle"));
               cell->SetPolarization(pl_3x3);
               if      (10==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
@@ -2005,6 +2015,7 @@ void reinit_cells(bdm::Simulation& sim,
               cell->SetCanTransform(params.get<bool>(CP_name+"/can_transform"));
               cell->SetCanPolarize(params.get<bool>(CP_name+"/can_polarize"));
               cell->SetCanProtrude(params.get<bool>(CP_name+"/can_protrude"));
+              cell->SetMonitorCycle(params.get<bool>(CP_name+"/monitor_cycle"));              
               cell->SetPolarization(pl_3x3);
               if      (10==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());
@@ -3172,6 +3183,7 @@ void ioflux_cells(bdm::Simulation& sim,
               cell->SetCanTransform(params.get<bool>(CP_name+"/can_transform"));
               cell->SetCanPolarize(params.get<bool>(CP_name+"/can_polarize"));
               cell->SetCanProtrude(params.get<bool>(CP_name+"/can_protrude"));
+              cell->SetMonitorCycle(params.get<bool>(CP_name+"/monitor_cycle"));
               cell->SetPolarization(pl_3x3);
               if      (10==mo)
                 cell->AddBehavior(new bdm::Biology4BiologicalCell_10());

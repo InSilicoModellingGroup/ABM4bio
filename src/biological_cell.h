@@ -40,6 +40,7 @@ public:
     age_ = 1;
     polarize_ = eye();
     can_apoptose_ = can_grow_ = can_divide_ = can_migrate_ = can_transform_ = can_polarize_ = can_protrude_ = false;
+    monitor_cycle_ = false;
     trail_ = 0.0;
     n_divisions_ = n_trasformations_ = n_protrusions_ = 0;
     params_ = 0; // nullify pointer...
@@ -63,6 +64,7 @@ public:
             can_transform_ = mother->GetCanTransform();
             can_polarize_  = mother->GetCanPolarize();
             can_protrude_  = mother->GetCanProtrude();
+            monitor_cycle_ = mother->GetMonitorCycle();
             ResetTrail(); // ...trail cannot be inherited
             n_divisions_ = 0; mother->IncrementNumberOfDivisions();
             n_trasformations_ = 0; // ...index is initialized
@@ -109,6 +111,9 @@ public:
   //
   void SetCanProtrude(bool flag) { can_protrude_ = flag; }
   bool GetCanProtrude() const { return can_protrude_; }
+  //
+  void SetMonitorCycle(bool flag) { monitor_cycle_ = flag; }
+  bool GetMonitorCycle() const { return monitor_cycle_; }
   //
   void ResetTrail() { trail_ = 0.0; }
   void UpdateTrail(double d) { trail_ += d; }
@@ -165,6 +170,7 @@ private:
   bdm::Double3x3 polarize_ = eye();
   // flags to designate (individual) cell behaviour
   bool can_apoptose_, can_grow_, can_divide_, can_migrate_, can_transform_, can_polarize_, can_protrude_;
+  bool monitor_cycle_;
   // total cell trail (displacement) between user-defined time points
   double trail_ = 0.0;
   bdm::Double3 active_displacement_ = {0.0, 0.0, 0.0};
