@@ -1278,8 +1278,9 @@ bool bdm::BiologicalCell::CheckTransformation()
                   this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
                   this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
                   this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
-                  this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
                   this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+                  this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+                  this->SetMonitorCycle(this->params()->get<bool>(CP_new_name+"/monitor_cycle"));              
                   // reset the cell polarization matrix
                   if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
                     this->SetPolarization(diag(p0, p1, p2));
@@ -1308,6 +1309,8 @@ bool bdm::BiologicalCell::CheckTransformation()
                     this->AddBehavior(new Biology4BiologicalCell_10());
                   else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
                     this->AddBehavior(new Biology4BiologicalCell_11());
+                  else if ( 12 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+                    this->AddBehavior(new Biology4BiologicalCell_12());
                   else
                     ABORT_("an exception is caught");
                   // setup the regulatory network data
@@ -1364,8 +1367,9 @@ bool bdm::BiologicalCell::CheckTransformation()
           this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
           this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
           this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
-          this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
           this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+          this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+          this->SetMonitorCycle(this->params()->get<bool>(CP_new_name+"/monitor_cycle"));              
           // reset the cell polarization matrix
           if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
             this->SetPolarization(diag(p0, p1, p2));
@@ -1394,6 +1398,8 @@ bool bdm::BiologicalCell::CheckTransformation()
             this->AddBehavior(new Biology4BiologicalCell_10());
           else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
             this->AddBehavior(new Biology4BiologicalCell_11());
+          else if ( 12 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+            this->AddBehavior(new Biology4BiologicalCell_12());
           else
             ABORT_("an exception is caught");
           // setup the regulatory network data
@@ -2206,8 +2212,9 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
               this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
               this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
               this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
-              this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
               this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+              this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+              this->SetMonitorCycle(this->params()->get<bool>(CP_new_name+"/monitor_cycle"));              
               // reset the cell polarization matrix
               if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
                 this->SetPolarization(diag(p0, p1, p2));
@@ -2236,6 +2243,8 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
                 this->AddBehavior(new Biology4BiologicalCell_10());
               else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
                 this->AddBehavior(new Biology4BiologicalCell_11());
+              else if ( 12 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+                this->AddBehavior(new Biology4BiologicalCell_12());
               else
                 ABORT_("an exception is caught");
               // setup the regulatory network data
@@ -2292,8 +2301,9 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
           this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
           this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
           this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
-          this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
           this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+          this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+          this->SetMonitorCycle(this->params()->get<bool>(CP_new_name+"/monitor_cycle"));              
           // reset the cell polarization matrix
           if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
             this->SetPolarization(diag(p0, p1, p2));
@@ -2322,6 +2332,8 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
             this->AddBehavior(new Biology4BiologicalCell_10());
           else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
             this->AddBehavior(new Biology4BiologicalCell_11());
+          else if ( 12 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+            this->AddBehavior(new Biology4BiologicalCell_12());
           else
             ABORT_("an exception is caught");
           // setup the regulatory network data
@@ -2340,7 +2352,7 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
   //
   // cell has not been through any division
   return false;
-  //...end of cell division
+  //...end of cell transformation & division
 }
 // -----------------------------------------------------------------------------
 inline
@@ -2451,8 +2463,9 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
               this->SetCanDivide(this->params()->get<bool>(CP_new_name+"/can_divide"));
               this->SetCanMigrate(this->params()->get<bool>(CP_new_name+"/can_migrate"));
               this->SetCanTransform(this->params()->get<bool>(CP_new_name+"/can_transform"));
-              this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
               this->SetCanPolarize(this->params()->get<bool>(CP_new_name+"/can_polarize"));
+              this->SetCanProtrude(this->params()->get<bool>(CP_new_name+"/can_protrude"));
+              this->SetMonitorCycle(this->params()->get<bool>(CP_new_name+"/monitor_cycle"));              
               // reset the cell polarization matrix
               if (this->GetPhenotype()) // ...only viable (non-necrotic) cell phenotype
                 this->SetPolarization(diag(p0, p1, p2));
@@ -2480,6 +2493,8 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
                 this->AddBehavior(new Biology4BiologicalCell_10());
               else if ( 11 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
                 this->AddBehavior(new Biology4BiologicalCell_11());
+              else if ( 12 == this->params()->get<int>(CP_new_name+"/mechanism_order") )
+                this->AddBehavior(new Biology4BiologicalCell_12());
               else
                 ABORT_("an exception is caught");
               // setup the regulatory network data
@@ -2496,7 +2511,7 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
     }
   // cell has not been through any division
   return false;
-  //...end of cell division
+  //...end of cell asymmetric division
 }
 // -----------------------------------------------------------------------------
 inline
