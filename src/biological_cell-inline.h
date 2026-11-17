@@ -907,7 +907,7 @@ bool bdm::BiologicalCell::CheckApoptosis()
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
-      std::string RN_specie = std::to_string(s);
+      const std::string RN_specie = std::to_string(s);
       //
       if (! this->params()->have_parameter<double>(CP_name+"/can_apoptose/regulatory_network/"+RN_specie+"/threshold"))
         continue;
@@ -1259,8 +1259,11 @@ bool bdm::BiologicalCell::CheckTransformation()
                   this->SetPhenotype(new_phenotype);
                   // increment this index
                   this->IncrementNumberOfTrasformations();
-                  // now reset the age of the cell
+                  // now reset the age and cell-cycle of the cell
                   this->SetAge();
+                  this->ResetCycleTime();
+                  // reset the phase
+                  this->SetPhase(bdm::BiologicalCell::Phase::G1);
                   //
                   const std::string CP_new_name = // cell phenotype name
                     this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
@@ -1330,7 +1333,7 @@ bool bdm::BiologicalCell::CheckTransformation()
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
-      std::string RN_specie = std::to_string(s);
+      const std::string RN_specie = std::to_string(s);
       //
       if (! this->params()->have_parameter<int>(CP_name+"/can_transform/regulatory_network/"+RN_specie+"/new_phenotype"))
         continue;
@@ -1348,8 +1351,11 @@ bool bdm::BiologicalCell::CheckTransformation()
           this->SetPhenotype(new_phenotype);
           // increment this index
           this->IncrementNumberOfTrasformations();
-          // now reset the age of the cell
+          // now reset the age and cell-cycle of the cell
           this->SetAge();
+          this->ResetCycleTime();
+          // reset the phase
+          this->SetPhase(bdm::BiologicalCell::Phase::G1);
           //
           const std::string CP_new_name = // cell phenotype name
             this->params()->get<std::string>("phenotype_ID/"+std::to_string(this->GetPhenotype()));
@@ -2071,7 +2077,7 @@ bool bdm::BiologicalCell::CheckGrowth()
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
-      std::string RN_specie = std::to_string(s);
+      const std::string RN_specie = std::to_string(s);
       //
       if (! this->params()->have_parameter<double>(CP_name+"/can_grow/regulatory_network/"+RN_specie+"/threshold"))
         continue;
@@ -2191,8 +2197,11 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
               const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform_and_divide/"+BC_name+"/new_phenotype");
               // firstly, the cell transforms
               this->SetPhenotype(new_phenotype);
-              // now reset the age of the cell
+              // now reset the age and cell-cycle of the cell
               this->SetAge();
+              this->ResetCycleTime();
+              // reset the phase
+              this->SetPhase(bdm::BiologicalCell::Phase::G1);
               // increment this index
               this->IncrementNumberOfTrasformations();
               //
@@ -2264,7 +2273,7 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
-      std::string RN_specie = std::to_string(s);
+      const std::string RN_specie = std::to_string(s);
       //
       if (! this->params()->have_parameter<int>(CP_name+"/can_transform_and_divide/regulatory_network/"+RN_specie+"/new_phenotype"))
         continue;
@@ -2280,8 +2289,11 @@ bool bdm::BiologicalCell::CheckTransformationAndDivision()
           const int new_phenotype = this->params()->get<int>(CP_name+"/can_transform_and_divide/regulatory_network/"+RN_specie+"/new_phenotype");
           // firstly, the cell transforms
           this->SetPhenotype(new_phenotype);
-          // now reset the age of the cell
+          // now reset the age and cell-cycle of the cell
           this->SetAge();
+          this->ResetCycleTime();
+          // reset the phase
+          this->SetPhase(bdm::BiologicalCell::Phase::G1);
           // increment this index
           this->IncrementNumberOfTrasformations();
           //
@@ -2442,8 +2454,11 @@ bool bdm::BiologicalCell::CheckAsymmetricDivision()
               this->Divide(volume_ratio, axis);
               // secondly, the cell transforms
               this->SetPhenotype(new_phenotype);
-              // now reset the age of the cell
+              // now reset the age and cell-cycle of the cell
               this->SetAge();
+              this->ResetCycleTime();
+              // reset the phase
+              this->SetPhase(bdm::BiologicalCell::Phase::G1);
               // increment this index
               this->IncrementNumberOfTrasformations();
               //
@@ -2670,7 +2685,7 @@ bool bdm::BiologicalCell::CheckDivision() {
   // iterate for all species of the regulatory network
   for (int s=0; s<this->params()->get<int>(CP_name+"/regulatory_network/number_of_species"); s++)
     {
-      std::string RN_specie = std::to_string(s);
+      const std::string RN_specie = std::to_string(s);
       //
       if (! this->params()->have_parameter<double>(CP_name+"/can_divide/regulatory_network/"+RN_specie+"/threshold"))
         continue;
