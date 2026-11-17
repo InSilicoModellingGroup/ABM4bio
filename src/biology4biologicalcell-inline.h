@@ -186,6 +186,43 @@ void bdm::Biology4BiologicalCell_11::Run(bdm::Agent* a)
 inline
 void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
 {
+  if (auto* cell = dynamic_cast<bdm::BiologicalCell*>(a))
+    {
+      if (bdm::BiologicalCell::Phase::I0==cell->GetPhase())
+        ABORT_("an internal error occurred");
+      if (bdm::BiologicalCell::Phase::Tr==cell->GetPhase())
+        ABORT_("an internal error occurred");
+      // we should check if cell is inside the simulation domain
+      if (!cell->CheckPositionValidity())
+        {
+          cell->Set2DeleteProtrusions();
+          cell->RemoveBehavior(this);
+          cell->RemoveFromSimulation();
+          return;
+        }
+      // check if cell is already in apoptotic phase
+      if (bdm::BiologicalCell::Phase::Ap==cell->GetPhase())
+        return;
+      // simply update the cell age
+      cell->IncrementAge();
+      // cell produces/consumes substances
+      cell->RunBiochemics();
+      //
+
+      // ...WIP
+
+      // we should check if cell is inside the simulation domain
+      if (!cell->CheckPositionValidity())
+        {
+          cell->Set2DeleteProtrusions();
+          cell->RemoveBehavior(this);
+          cell->RemoveFromSimulation();
+          return;
+        }
+    }
+  else
+    ABORT_("an exception is caught");
+
   ABORT_("aborting here due to unfinished business...");
 }
 // =============================================================================
