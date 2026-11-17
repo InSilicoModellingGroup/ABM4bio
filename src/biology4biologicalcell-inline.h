@@ -189,7 +189,7 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
   if (auto* cell = dynamic_cast<bdm::BiologicalCell*>(a))
     {
       if (bdm::BiologicalCell::Phase::I0==cell->GetPhase())
-        ABORT_("an internal error occurred");
+        cell->SetPhase(bdm::BiologicalCell::Phase::G1);
       if (bdm::BiologicalCell::Phase::Tr==cell->GetPhase())
         ABORT_("an internal error occurred");
       // we should check if cell is inside the simulation domain
@@ -205,12 +205,37 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
         return;
       // simply update the cell age
       cell->IncrementAge();
+      // update the cell-cycle phase
+      cell->IncrementCycleTime();
       // cell produces/consumes substances
       cell->RunBiochemics();
-      //
+      // we check if cell can migrate
+      if (cell->CheckMigration())
+        {
+          if (!cell->CheckPositionValidity())
+            {
+              cell->Set2DeleteProtrusions();
+              cell->RemoveBehavior(this);
+              cell->RemoveFromSimulation();
+              return;
+            }
+        }
+      // we check for cell apoptosis
+      if (cell->GetCanApoptose()) {
 
-      // ...WIP
+      }
+      // check if cell can transform
+      if (cell->GetCanTransform()) {
 
+      }
+      // check if cell can grow
+      if (cell->GetCanGrow()) {
+
+      }
+      // check if cell can divide (summetrically)
+      if (cell->GetCanDivide()) {
+
+      }
       // we should check if cell is inside the simulation domain
       if (!cell->CheckPositionValidity())
         {
