@@ -1569,6 +1569,10 @@ void init_cells(bdm::Simulation& sim,
                         ccp = 5;
                       }
                   }
+              // cell cycle time
+              int cct = 0;
+              if (12==mo)
+                ABORT_("need to implement algorithm to provide cell-cycle time");
               // cell diameter
               const double dia = ( CP_ID==0 ? (min_radius+max_radius)
                                  : rg->Uniform(params.get<double>(CP_name+"/diameter/min"),
@@ -1582,6 +1586,7 @@ void init_cells(bdm::Simulation& sim,
               //
               bdm::BiologicalCell* cell = new bdm::BiologicalCell(CP_ID, xyz);
               cell->SetPhase(ccp);
+              cell->SetCycleTime(cct);
               cell->SetDiameter(dia);
               cell->SetAdherence(0.0);
               if (params.have_parameter<double>(CP_name+"/density"))
@@ -1687,6 +1692,14 @@ void init_cells(bdm::Simulation& sim,
               // cell cycle phase
               int ccp;
               fin >> ccp;
+              // cell cycle time
+              int cct = 0;
+              if (12==mo)
+                {
+                  if (ccp>0)
+                    fin >> cct;
+                }
+              ASSERT_(cct>=0, "invalid cycle time for cell \""+CP_name+"\" with phenotype ID \""+std::to_string(CP_ID)+"\"");
               // important checks before uploading this cell
               if ( xyz[0] < minCOORD+tol || xyz[0] > maxCOORD-tol )
                 continue;
@@ -1729,6 +1742,7 @@ void init_cells(bdm::Simulation& sim,
               //
               bdm::BiologicalCell* cell = new bdm::BiologicalCell(CP_ID, xyz);
               cell->SetPhase(ccp);
+              cell->SetCycleTime(cct);
               cell->SetDiameter(dia);
               cell->SetAdherence(0.0);
               if (params.have_parameter<double>(CP_name+"/density"))
@@ -2019,6 +2033,10 @@ void reinit_cells(bdm::Simulation& sim,
               const bdm::Double3 xyz = {x, y, z};
               // cell cycle phase
               const int ccp = escaped_cells_phase[icell];
+              // cell cycle time
+              int cct = 0;
+              if (12==mo)
+                ABORT_("need to implement algorithm to provide cell-cycle time");
               // cell diameter
               const double dia = rg->Uniform(params.get<double>(CP_name+"/diameter/min"),
                                              params.get<double>(CP_name+"/diameter/max"));
@@ -2031,6 +2049,7 @@ void reinit_cells(bdm::Simulation& sim,
               //
               bdm::BiologicalCell* cell = new bdm::BiologicalCell(CP_ID, xyz);
               cell->SetPhase(ccp);
+              cell->SetCycleTime(cct);
               cell->SetDiameter(dia);
               cell->SetAdherence(0.0);
               if (params.have_parameter<double>(CP_name+"/density"))
@@ -3213,6 +3232,8 @@ void ioflux_cells(bdm::Simulation& sim,
             {
               // cell position
               const bdm::Double3 xyz = p;
+              // order of mechanisms that define behaviour
+              const int mo = params.get<int>(CP_name+"/mechanism_order");
               // cell cycle phase
               int ccp;
               {
@@ -3221,11 +3242,13 @@ void ioflux_cells(bdm::Simulation& sim,
                           range = max_ccp - min_ccp + 1;
                 ccp = rand() % range + min_ccp;
               }
+              // cell cycle time
+              int cct = 0;
+              if (12==mo)
+                ABORT_("need to implement algorithm to provide cell-cycle time");
               // cell diameter
               const double dia = rg->Uniform(params.get<double>(CP_name+"/diameter/min"),
                                              params.get<double>(CP_name+"/diameter/max"));
-              // order of mechanisms that define behaviour
-              const int mo = params.get<int>(CP_name+"/mechanism_order");
               // principal directions of the cell polarization matrix
               const double pd0 = params.get<double>(CP_name+"/principal/0"),
                            pd1 = params.get<double>(CP_name+"/principal/1"),
@@ -3235,6 +3258,7 @@ void ioflux_cells(bdm::Simulation& sim,
               //
               bdm::BiologicalCell* cell = new bdm::BiologicalCell(CP_ID, xyz);
               cell->SetPhase(ccp);
+              cell->SetCycleTime(cct);
               cell->SetDiameter(dia);
               cell->SetAdherence(0.0);
               if (params.have_parameter<double>(CP_name+"/density"))
