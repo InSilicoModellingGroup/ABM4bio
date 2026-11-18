@@ -93,7 +93,8 @@ public:
   void IncrementAge() { age_++; }
   //
   void ResetCycleTime() { cycle_time_ = 0; }
-  int GetCycleTime() const { return cycle_time_; }
+  void SetCycleTime(unsigned int a =0) { cycle_time_ = a; }
+  int  GetCycleTime() const { return cycle_time_; }
   void IncrementCycleTime() { cycle_time_ += 1; }
   //
   void SetPolarization(const bdm::Double3x3& p) { polarize_ = p; }
