@@ -2170,6 +2170,15 @@ void save_snapshot(bdm::Simulation& sim, const int time = 0)
       });
       fout << std::endl
            << "        </DataArray>" << std::endl;
+      fout << "        <DataArray type=\"Int32\" Name=\"cycle_time\" NumberOfComponents=\"1\" format=\"ascii\">" << std::endl;
+      rm->ForEachAgent([&] (bdm::Agent* a) {
+        if (auto* cell = dynamic_cast<bdm::BiologicalCell*>(a))
+          {
+            fout << ' ' << cell->GetCycleTime();
+          }
+      });
+      fout << std::endl
+           << "        </DataArray>" << std::endl;
       fout << "        <DataArray type=\"Float64\" Name=\"diameter\" NumberOfComponents=\"1\" format=\"ascii\">" << std::endl;
       rm->ForEachAgent([&] (bdm::Agent* a) {
         if (auto* cell = dynamic_cast<bdm::BiologicalCell*>(a))
