@@ -215,8 +215,8 @@ void bdm::BiologicalCell::RunBiochemics()
                 }
               // decreased concentration
             }
-          // ...exit function normally
-          return;
+          // then skip the subsequent calculations for "dependency"
+          continue;
         }
       //
       // check for positive or negative feedback loop from other substances
