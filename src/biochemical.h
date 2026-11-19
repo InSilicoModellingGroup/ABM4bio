@@ -18,7 +18,7 @@
 enum Biochemical {
   N_A = -1,
   RAD = 0,
-  OH_ = 1, O2 = 2, O3 = 3, H2O = 4, H2O2 = 5, N2 = 6, NO_ = 7, NO2 = 8, NO3 = 9,
+  OH_ = 1, O2 = 2, O3 = 3, H2O = 4, H2O2 = 5, N2 = 6, NO_ = 7, NO2 = 8, NO2_ = 9,
   Gluc = 20,
   VEGF = 21, PDGF = 22, PlGF = 23, Ang1 = 24, Ang2 = 25, EGF = 26, TGFa = 27, TGFb = 28, bFGF = 29,
   TNF  = 41, IFNG = 42,

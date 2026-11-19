@@ -885,7 +885,7 @@ void init_biochemicals(bdm::Simulation& sim,
         else if ( BC_name == "N2"   ) bc = Biochemical::N2;
         else if ( BC_name == "NO_"  ) bc = Biochemical::NO_;
         else if ( BC_name == "NO2"  ) bc = Biochemical::NO2;
-        else if ( BC_name == "NO3"  ) bc = Biochemical::NO3;
+        else if ( BC_name == "NO2_" ) bc = Biochemical::NO2_;
         else if ( BC_name == "Gluc" ) bc = Biochemical::Gluc;
         // epidermal-/vessel-related biochemical cues
         else if ( BC_name == "VEGF" ) bc = Biochemical::VEGF;
