@@ -204,7 +204,6 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
       // make sure that the cell is never in this phase
       if (cell->GetPhase() == bdm::BiologicalCell::Phase::I0)
         {
-          ABORT_("an internal error occurred");
           // set the phase
           cell->SetPhase(bdm::BiologicalCell::Phase::G1);
           // reset the cell-cycle
@@ -235,6 +234,8 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
               cell->RemoveFromSimulation();
               return;
             }
+          // now skip running all subsequent cell mechanisms
+          return;
         }
       // cell produces/consumes substances
       cell->RunBiochemics();
