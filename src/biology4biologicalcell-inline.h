@@ -228,7 +228,7 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
       // check if cell is already in apoptotic phase
       if (cell->GetPhase() == bdm::BiologicalCell::Phase::Ap)
         {
-          if (cell->GetAge() >= p->get<int>(CP_name+"/can_apoptose/keep/duration"))
+          if (cell->GetAge() >= p->get<int>(CP_name+"/after_apoptosis/duration"))
             {
               cell->Set2DeleteProtrusions();
               cell->RemoveBehavior(this);
@@ -266,7 +266,7 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
         }
       else if (cell->GetPhase() == bdm::BiologicalCell::Phase::Di)
         {
-          if (cell->GetCycleTime()>=p->get<int>(CP_name+"/can_grow/G1_to_Di/duration"))
+          if (cell->GetCycleTime()>=p->get<int>(CP_name+"/G1_to_Di/duration"))
             {
               // update the phase
               cell->SetPhase(bdm::BiologicalCell::Phase::G1);
@@ -439,7 +439,7 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
                           ASSERT_(0==cell->GetNumberOfProtrusions(),
                                   "an exception is caught");
                           //
-                          ASSERT_(12!=p->get<int>(CP_new_name+"/mechanism_order"),
+                          ASSERT_(12==p->get<int>(CP_new_name+"/mechanism_order"),
                                   "an exception is caught");
                           // setup the regulatory network data
                           if (p->have_parameter<std::string>(CP_new_name+"/regulatory_network/from_file"))
@@ -560,7 +560,7 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
       // make sure that the cell is the right phase
       if ( ( cell->GetPhase() == bdm::BiologicalCell::Phase::G1 ||
              cell->GetPhase() == bdm::BiologicalCell::Phase::Sy ) &&
-           cell->GetCycleTime() < p->get<int>(CP_name+"/can_grow/G1_to_Sy/duration") )
+           cell->GetCycleTime() < p->get<int>(CP_name+"/G1_to_Sy/duration") )
         {
           // check if cell size is within acceptable (upper limit) before proceeding with growth
           if ( cell->GetDiameter() < p->get<double>(CP_name+"/diameter/max") &&
@@ -638,7 +638,7 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
             }
           else
             {
-              if (cell->GetCycleTime() < p->get<int>(CP_name+"/can_grow/G1/duration"))
+              if (cell->GetCycleTime() < p->get<int>(CP_name+"/G1/duration"))
                 {
                   // set the phase
                   cell->SetPhase(bdm::BiologicalCell::Phase::G1);
@@ -646,7 +646,7 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
                   has_grown = true;
 
                 }
-              else if (cell->GetCycleTime() < p->get<int>(CP_name+"/can_grow/G1_to_Sy/duration"))
+              else if (cell->GetCycleTime() < p->get<int>(CP_name+"/G1_to_Sy/duration"))
                 {
                   // update the phase
                   cell->SetPhase(bdm::BiologicalCell::Phase::Sy);
@@ -678,7 +678,7 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
       // ++++++++++++++++++++++++++++++++++++++++++++++++++
       // make sure that the cell is the right phase
       if ( cell->GetPhase() == bdm::BiologicalCell::Phase::Sy &&
-           cell->GetCycleTime() >= p->get<int>(CP_name+"/can_grow/G1_to_Sy/duration") )
+           cell->GetCycleTime() >= p->get<int>(CP_name+"/G1_to_Sy/duration") )
         {
           // check if number of cell divisions is below an acceptable upper limit before proceeding
           if ( cell->GetNumberOfDivisions() < p->get<int>(CP_name+"/can_divide/max") &&
