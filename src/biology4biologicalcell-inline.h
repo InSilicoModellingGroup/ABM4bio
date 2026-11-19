@@ -243,7 +243,129 @@ void bdm::Biology4BiologicalCell_12::Run(bdm::Agent* a)
       bool has_migrated = false;
       if (cell->GetCanMigrate())
         {
-          ABORT_("aborting here due to unfinished business...");
+          bdm::Double3 active_d = {0.0, 0.0, 0.0};
+          //
+          if (p->have_parameter<double>(CP_name+"/can_migrate/brownian"))
+            {
+              const double brownian = fabs(p->get<double>(CP_name+"/can_migrate/brownian"));
+              //
+              if (rg->Uniform(0.0,1.0) <= p->get<double>(CP_name+"/can_migrate/brownian/probability"))
+                {
+                  // produce the displacement vector
+                  bdm::Double3 dvec = {0.0, 0.0, 0.0};
+                  dvec[0] = rg->Uniform(-brownian,+brownian);
+                  dvec[1] = rg->Uniform(-brownian,+brownian);
+                  dvec[2] = p->get<bool>("simulation_domain_is_2D")
+                          ? 0.0 : rg->Uniform(-brownian,+brownian);
+                  //
+                  const double d_magn = L2norm(dvec);
+                  // check if distance covered is above a minimum, else ignore
+                  if (d_magn > p->get<double>("migration_tolerance"))
+                    {
+                      // update the (cell) displacement vector
+                      active_d += dvec;
+                      // update this flag
+                      has_migrated = true;
+                    }
+                  // ...end of propability check
+                }
+              //
+            }
+          //
+          const std::vector<std::string>& substances =
+            p->get<std::vector<std::string>>("substances");
+          // iterate for all substances
+          for ( std::vector<std::string>::const_iterator
+                ci=substances.begin(); ci!=substances.end(); ci++ )
+            {
+              // access the BioDynaMo diffusion grid
+              auto* dg = rm->GetDiffusionGrid(*ci);
+              const std::string BC_name = dg->GetContinuumName(); // biochemical name
+              //
+              if (! p->have_parameter<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name))
+                continue;
+              //
+              const double chemotaxis = p->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name);
+              if (! chemotaxis) continue;
+              //
+              const double concentration = dg->GetValue(cell->GetPosition()),
+                           threshold = p->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/threshold");
+              //
+              if ( ( threshold > 0.0 && concentration > +threshold ) ||
+                   ( threshold < 0.0 && concentration < -threshold ) )
+                {
+                  if (rg->Uniform(0.0,1.0) <= p->get<double>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/probability"))
+                    {
+                      // min and max boundaries of the BioDynaMo simulation 3D/2D domain
+                      const double minCOORD = p->get<double>("min_boundary"),
+                                   maxCOORD = p->get<double>("max_boundary");
+                      bdm::Double3 dvec = {0.0, 0.0, 0.0};
+                      int n_random_point = 0;
+                      for (int random_point=0; random_point<20; random_point++)
+                        {
+                          const double radius      = rg->Uniform(0.0,1.5) * cell->GetDiameter(),
+                                       inclination = p->get<bool>("simulation_domain_is_2D")
+                                                   ? 0.5*bdm::Math::kPi : rg->Uniform(0.0,bdm::Math::kPi),
+                                       azimuth     = rg->Uniform(0.0,2.0*bdm::Math::kPi);
+                          const double x = radius * sin(inclination) * cos(azimuth),
+                                       y = radius * sin(inclination) * sin(azimuth),
+                                       z = radius * cos(inclination);
+                          bdm::Double3 point = {x,y,z};
+                          point += cell->GetPosition();
+                          // check spatial coordinates
+                          if (point[0]<minCOORD||point[1]<minCOORD||point[2]<minCOORD||
+                              point[0]>maxCOORD||point[1]>maxCOORD||point[2]>maxCOORD) continue;
+                          //
+                          bdm::Double3 gradS;
+                          dg->GetGradient(point, &gradS);
+                          //
+                          if (L2norm(gradS)<=1.0e-6) continue;
+                          //
+                          dvec += gradS;
+                          ++n_random_point; // increment this index
+                        }
+                      // average out the space vector
+                      if (n_random_point) dvec /= n_random_point;
+                      //
+                      if (p->get<bool>(CP_name+"/can_migrate/chemotaxis/"+BC_name+"/normalize_gradient"))
+                        {
+                          auto m = L2norm(dvec);
+                          if (m>1.0e-6) dvec /= m;
+                        }
+                      // scale gradient vector accordingly
+                      dvec *= chemotaxis;
+                      //
+                      const double d_magn = L2norm(dvec);
+                      // check if distance covered is above a minimum, else ignore
+                      if (d_magn > p->get<double>("migration_tolerance"))
+                        {
+                          // update the (cell) displacement vector
+                          active_d += dvec;
+                          // update this flag
+                          has_migrated = true;
+                          //
+                          // check if to allow moving any further or skip any potential migration
+                          if (! p->get<bool>(CP_name+"/can_migrate/accumulate_path"))
+                            break;
+                        }
+                      // ...end of propability check
+                    }
+                  // ...end of threshold check
+                }
+              //...end of substances loop
+            }
+          //
+          // check if cell has migrated, if so then revise its spatial coordinates and trail
+          if (has_migrated)
+            {
+              cell->UpdatePosition(active_d);
+              cell->UpdateTrail(L2norm(active_d));
+            }
+          //
+          // check if cell has migrated, if so then revise the spatial coordinates
+          // of the cell protrusions; however, check for current algorithmic limitations!!!
+          if (has_migrated && cell->GetNumberOfProtrusions())
+            ABORT_("aborting here due to unfinished business...");
         }
       //
       if (has_migrated)
