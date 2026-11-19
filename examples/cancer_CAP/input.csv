@@ -1,0 +1,176 @@
+parameter_name, type, parameter_value
+### START , ### , ###
+output_directory,               string, results
+simulation_title,               string, ABM4bio
+#,#,#
+number_of_time_steps,           int,    480
+time_step,                      float,  0.100000e-0
+visualization_interval,         int,    1
+#,#,#
+min_boundary,                   float, -500.0
+max_boundary,                   float, +500.0
+domain_tolerance,               float, 5.0
+migration_tolerance,            float, 0.001
+safe_distance_ratio,            float, 0.999000
+simulation_domain_is_2D,         bool, true
+simulation_domain_is_polar,      bool, true
+simulation_domain_is_bounded,    bool, true
+simulation_domain_is_periodic,   bool, false
+simulation_models_vessels,       bool, false
+simulation_obstacles,             int, 0
+#,#,#
+#,#,#
+cell/phenotypes,                   string, necrotic alive_CC early_apopt_CC late_apopt_CC
+cell/max_displacement,              float, 10.0
+diffusion_grid/biochemicals,       string, Gluc H2O2 NO2_
+diffusion_grid/spatial_resolution,    int, 80
+#,#,#
+### Gluc , ### , ###
+Gluc/diffusion_coefficient,   float, 0.000000e-0
+Gluc/dissipation_coefficient, float, 0.000000e-0
+Gluc/initial_value/min,       float, 0.999999e-0
+Gluc/initial_value/max,       float, 1.000000e-0
+#,#,#
+### H2O2 , ### , ###
+H2O2/diffusion_coefficient,   float, 0.000000e-0
+H2O2/dissipation_coefficient, float, 0.000000e-0
+H2O2/initial_value/min,       float, 1.000000e-0
+H2O2/initial_value/max,       float, 1.000000e-0
+#,#,#
+### NO2_ , ### , ###
+NO2_/diffusion_coefficient,   float, 0.000000e-0
+NO2_/dissipation_coefficient, float, 0.000000e-0
+NO2_/initial_value/min,       float, 1.000000e-0
+NO2_/initial_value/max,       float, 1.000000e-0
+#,#,#
+### necrotic , ### , ###
+necrotic/phenotype_ID, int, 0
+necrotic/initial_population, int, 0
+necrotic/mechanism_order, int, 10
+#,#,#
+### late apoptotic cancer cell , ### , ###
+late_apopt_CC/phenotype_ID, int, 3
+late_apopt_CC/initial_population, int, 0
+late_apopt_CC/mechanism_order, int, 12
+late_apopt_CC/Gluc/secretion/dependency,         bool, false
+late_apopt_CC/Gluc/secretion/net_balance,       float, 0.0000000
+late_apopt_CC/Gluc/secretion/net_balance/std,   float, 0
+late_apopt_CC/Gluc/secretion/saturation,        float, 0
+late_apopt_CC/H2O2/secretion/dependency,       bool, false
+late_apopt_CC/H2O2/secretion/net_balance,     float, 0.0000000
+late_apopt_CC/H2O2/secretion/net_balance/std, float, 0
+late_apopt_CC/H2O2/secretion/saturation,      float, 0
+late_apopt_CC/NO2_/secretion/dependency,       bool, false
+late_apopt_CC/NO2_/secretion/net_balance,     float, 0.0000000
+late_apopt_CC/NO2_/secretion/net_balance/std, float, 0
+late_apopt_CC/NO2_/secretion/saturation,      float, 0
+late_apopt_CC/diameter/min,  float, 15.000e-0
+late_apopt_CC/diameter/max,  float, 25.000e-0
+late_apopt_CC/principal/0,   float, 1.00
+late_apopt_CC/principal/1,   float, 1.00
+late_apopt_CC/principal/2,   float, 1.00
+late_apopt_CC/principal/min, float, 0.999
+late_apopt_CC/principal/max, float, 1.001
+#,#,#
+### early apoptotic cancer cell , ### , ###
+early_apopt_CC/phenotype_ID, int, 2
+early_apopt_CC/initial_population, int, 0
+early_apopt_CC/mechanism_order, int, 12
+early_apopt_CC/Gluc/secretion/dependency,       bool, false
+early_apopt_CC/Gluc/secretion/net_balance,     float, 0.0000000
+early_apopt_CC/Gluc/secretion/net_balance/std, float, 0
+early_apopt_CC/Gluc/secretion/saturation,      float, 0
+early_apopt_CC/H2O2/secretion/dependency,       bool, false
+early_apopt_CC/H2O2/secretion/net_balance,     float, 0.0000000
+early_apopt_CC/H2O2/secretion/net_balance/std, float, 0
+early_apopt_CC/H2O2/secretion/saturation,      float, 0
+early_apopt_CC/NO2_/secretion/dependency,       bool, false
+early_apopt_CC/NO2_/secretion/net_balance,     float, 0.0000000
+early_apopt_CC/NO2_/secretion/net_balance/std, float, 0
+early_apopt_CC/NO2_/secretion/saturation,      float, 0
+early_apopt_CC/diameter/min,  float, 15.000e-0
+early_apopt_CC/diameter/max,  float, 25.000e-0
+early_apopt_CC/principal/0,   float, 1.00
+early_apopt_CC/principal/1,   float, 1.00
+early_apopt_CC/principal/2,   float, 1.00
+early_apopt_CC/principal/min, float, 0.999
+early_apopt_CC/principal/max, float, 1.001
+early_apopt_CC/can_transform, bool, true
+early_apopt_CC/can_transform/H2O2/new_phenotype,     int, 3
+early_apopt_CC/can_transform/H2O2/threshold,       float,+0.800000
+early_apopt_CC/can_transform/H2O2/probability,     float, 0.0100000
+early_apopt_CC/can_transform/H2O2/time_window_open,  int, 20
+early_apopt_CC/can_transform/H2O2/time_window_close, int, 11111111
+early_apopt_CC/can_transform/NO2_/new_phenotype,     int, 3
+early_apopt_CC/can_transform/NO2_/threshold,       float,+0.800000
+early_apopt_CC/can_transform/NO2_/probability,     float, 0.0100000
+early_apopt_CC/can_transform/NO2_/time_window_open,  int, 20
+early_apopt_CC/can_transform/NO2_/time_window_close, int, 11111111
+early_apopt_CC/can_migrate, bool, true
+early_apopt_CC/can_migrate/brownian,             float, 1.0
+early_apopt_CC/can_migrate/brownian/probability, float, 1.0000000
+early_apopt_CC/can_migrate/chemotaxis/Gluc,      float, 0.0
+early_apopt_CC/can_migrate/chemotaxis/H2O2,      float, 0.0
+early_apopt_CC/can_migrate/chemotaxis/NO2_,      float, 0.0
+early_apopt_CC/can_migrate/accumulate_path,       bool, true
+#,#,#
+### alive cancer cell , ### , ###
+alive_CC/phenotype_ID, int, 1
+alive_CC/initial_population, int, 0
+alive_CC/initial_population/from_file, string, cells.dat
+alive_CC/mechanism_order, int, 12
+alive_CC/Gluc/secretion/dependency,       bool, false
+alive_CC/Gluc/secretion/net_balance,     float, 0.0000000
+alive_CC/Gluc/secretion/net_balance/std, float, 0
+alive_CC/Gluc/secretion/saturation,      float, 0
+alive_CC/H2O2/secretion/dependency,       bool, false
+alive_CC/H2O2/secretion/net_balance,     float,-0.0010000
+alive_CC/H2O2/secretion/net_balance/std, float, 0
+alive_CC/H2O2/secretion/saturation,      float, 0
+alive_CC/NO2_/secretion/dependency,       bool, false
+alive_CC/NO2_/secretion/net_balance,     float,-0.0010000
+alive_CC/NO2_/secretion/net_balance/std, float, 0
+alive_CC/NO2_/secretion/saturation,      float, 0
+alive_CC/diameter/min,  float, 15.000e-0
+alive_CC/diameter/max,  float, 25.000e-0
+alive_CC/principal/0,   float, 1.00
+alive_CC/principal/1,   float, 1.00
+alive_CC/principal/2,   float, 1.00
+alive_CC/principal/min, float, 0.999
+alive_CC/principal/max, float, 1.001
+alive_CC/G1/duration,       int, 20
+alive_CC/G1_to_Sy/duration, int, 50
+alive_CC/G1_to_Di/duration, int, 70
+alive_CC/can_migrate, bool, true
+alive_CC/can_migrate/brownian,             float, 3.0
+alive_CC/can_migrate/brownian/probability, float, 1.0000000
+alive_CC/can_migrate/chemotaxis/Gluc,      float, 0.0
+alive_CC/can_migrate/chemotaxis/H2O2,      float, 0.0
+alive_CC/can_migrate/chemotaxis/NO2_,      float, 0.0
+alive_CC/can_migrate/accumulate_path,       bool, true
+alive_CC/can_grow, bool, true
+alive_CC/can_grow/probability,        float, 1.0000000
+alive_CC/can_grow/diameter_rate,      float, 5.000e-0
+alive_CC/can_grow/Gluc/threshold,     float, 0
+alive_CC/can_grow/H2O2/threshold,     float, 0
+alive_CC/can_grow/NO2_/threshold,     float, 0
+alive_CC/can_divide, bool, true
+alive_CC/can_divide/max,               int, 111
+alive_CC/can_divide/influence_ratio, float, 0
+alive_CC/can_divide/probability,     float, 1.0000000
+alive_CC/can_divide/Gluc/threshold,  float,+0.850000
+alive_CC/can_divide/H2O2/threshold,  float, 0
+alive_CC/can_divide/NO2_/threshold,  float, 0
+alive_CC/can_transform, bool, true
+alive_CC/can_transform/H2O2/new_phenotype,     int, 2
+alive_CC/can_transform/H2O2/threshold,       float,+0.800000
+alive_CC/can_transform/H2O2/probability,     float, 0.0100000
+alive_CC/can_transform/H2O2/time_window_open,  int, 50
+alive_CC/can_transform/H2O2/time_window_close, int, 11111111
+alive_CC/can_transform/NO2_/new_phenotype,     int, 2
+alive_CC/can_transform/NO2_/threshold,       float,+0.800000
+alive_CC/can_transform/NO2_/probability,     float, 0.0100000
+alive_CC/can_transform/NO2_/time_window_open,  int, 50
+alive_CC/can_transform/NO2_/time_window_close, int, 11111111
+#,#,#
+### END , ### , ###
